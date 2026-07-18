@@ -6,7 +6,7 @@ from typing import Any
 from packaging.version import Version
 
 
-APPLICATION_VERSION = "1.3.0"
+APPLICATION_VERSION = "1.3.1"
 
 
 @dataclass(frozen=True)

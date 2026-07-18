@@ -26,7 +26,7 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
             }
         )
 
-    add("可安装应用版本", APPLICATION_VERSION == "1.3.0", APPLICATION_VERSION)
+    add("可安装应用版本", APPLICATION_VERSION == "1.3.1", APPLICATION_VERSION)
     add(
         "标准 src 包结构",
         (root / "src/paperflow/cli.py").exists(),

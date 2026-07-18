@@ -309,6 +309,14 @@ async function main() {
   global.localStorage = { getItem: () => "zh-CN" };
   assert.equal(AutomationPlugin.__test.isChinese(), true);
   assert.equal(AutomationPlugin.__test.text("中文", "English"), "中文");
+  assert.equal(
+    Object.keys(AutomationPlugin.__test.PAPER_PROPERTY_LABELS_ZH).length,
+    78
+  );
+  const propertyCss = AutomationPlugin.__test.propertyLabelCss();
+  assert.match(propertyCss, /data-property-key="paper_title"/);
+  assert.match(propertyCss, /content:"论文标题"/);
+  assert.match(propertyCss, /metadata-property-key-input:focus/);
   global.localStorage = { getItem: () => "en" };
   assert.equal(AutomationPlugin.__test.isChinese(), false);
   assert.equal(AutomationPlugin.__test.text("中文", "English"), "English");

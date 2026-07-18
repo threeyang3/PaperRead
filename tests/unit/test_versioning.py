@@ -14,7 +14,7 @@ from paperflow.versioning import (
 
 
 def test_version_contract_is_explicit_and_independent() -> None:
-    assert APPLICATION_VERSION == "1.3.0"
+    assert APPLICATION_VERSION == "1.3.1"
     assert VERSIONS.workspace_schema_version == 1
     assert VERSIONS.raw_data_schema_version == 1
     assert VERSIONS.ai_analysis_schema_version == 1
@@ -43,7 +43,7 @@ def test_cli_exposes_application_version() -> None:
 
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == "1.3.0"
+    assert result.stdout.strip() == "1.3.1"
 
 
 def test_cli_does_not_offer_windows_scheduler_install_or_run() -> None:

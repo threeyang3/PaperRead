@@ -16,6 +16,87 @@ const path = require("path");
 
 const TIME_ZONE = "Asia/Shanghai";
 const CONTROL_VIEW_TYPE = "paperflow-control-center";
+const PROPERTY_LABEL_STYLE_ID = "paperflow-property-labels-zh";
+const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
+  type: "类型",
+  title: "标题",
+  aliases: "别名",
+  tags: "标签",
+  schema_version: "数据架构版本",
+  system_template_version: "模板版本",
+  system_pipeline_version: "流程版本",
+  system_content_hash: "内容校验值",
+  system_error: "系统错误",
+  system_import_method: "导入方式",
+  system_imported_at: "导入时间",
+  system_last_synced_at: "最近同步时间",
+  system_requires_manual_review: "需要人工审核",
+  paper_uid: "论文唯一标识",
+  paper_title: "论文标题",
+  paper_authors: "作者",
+  paper_first_author: "第一作者",
+  paper_year: "年份",
+  paper_source: "来源",
+  paper_arxiv_id: "arXiv 编号",
+  paper_arxiv_version: "arXiv 版本",
+  paper_doi: "DOI",
+  paper_submitted_date: "提交日期",
+  paper_updated_date: "更新日期",
+  paper_published_venue: "发表场所",
+  paper_primary_category: "主要分类",
+  paper_categories: "分类",
+  paper_abstract: "摘要",
+  paper_pdf_url: "PDF 链接",
+  paper_abs_url: "摘要页链接",
+  paper_pdf_path: "本地 PDF",
+  paper_project_url: "项目主页",
+  paper_code_url: "代码链接",
+  paper_dataset_url: "数据集链接",
+  paper_has_code: "有开源代码",
+  paper_has_dataset: "有公开数据集",
+  paper_has_project_page: "有项目主页",
+  ai_analysis_status: "AI 分析状态",
+  ai_analysis_provider: "AI 提供方",
+  ai_analysis_model: "AI 模型",
+  ai_analysis_profile: "AI 分析配置",
+  ai_analysis_prompt_version: "Prompt 版本",
+  ai_analyzed_at: "AI 分析时间",
+  ai_summary_short: "简短总结",
+  ai_recommendation: "阅读建议",
+  ai_relevance_score: "相关性评分",
+  ai_relevance_reason: "相关性依据",
+  ai_topic_primary: "主要主题",
+  ai_topics: "主题",
+  ai_method_family: "方法类别",
+  ai_task_types: "任务类型",
+  ai_robot_platforms: "机器人平台",
+  ai_datasets: "数据集",
+  ai_baselines: "对比基线",
+  ai_code_level: "代码开放程度",
+  ai_math_level: "数学难度",
+  ai_difficulty: "阅读难度",
+  ai_estimated_reading_priority: "建议阅读优先级",
+  ai_novelty_score: "创新性评分",
+  ai_novelty_confidence: "创新性置信度",
+  ai_novelty_reason: "创新性依据",
+  ai_completeness_score: "完成度评分",
+  ai_completeness_confidence: "完成度置信度",
+  ai_completeness_reason: "完成度依据",
+  ai_reproducibility_score: "可复现性评分",
+  ai_reproducibility_confidence: "可复现性置信度",
+  ai_reproducibility_reason: "可复现性依据",
+  ai_overall_score: "综合评分",
+  ai_overall_confidence: "综合置信度",
+  user_added_tags: "用户标签",
+  user_favorite: "收藏",
+  user_priority: "优先级",
+  user_rating: "个人评分",
+  user_reading_status: "阅读状态",
+  user_learning_status: "学习状态",
+  user_reproduction_status: "复现状态",
+  user_last_read_at: "最近阅读时间",
+  user_next_review_at: "下次复习时间"
+});
 
 function beijingClock(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -455,6 +536,56 @@ function text(zh, en) {
   return isChinese() ? zh : en;
 }
 
+function propertyLabelCss(labels = PAPER_PROPERTY_LABELS_ZH) {
+  const entries = Object.entries(labels);
+  const selectors = entries.map(
+    ([key]) => `.metadata-property[data-property-key="${key}"] > .metadata-property-key`
+  );
+  const inputSelectors = selectors.map(
+    (selector) => `${selector} > .metadata-property-key-input`
+  );
+  const focusInputSelectors = inputSelectors.map(
+    (selector) => `${selector}:focus`
+  );
+  const focusLabelSelectors = selectors.map(
+    (selector) => `${selector}:has(.metadata-property-key-input:focus)::after`
+  );
+  const labelRules = entries.map(([key, label]) => (
+    `.metadata-property[data-property-key="${key}"] > .metadata-property-key::after` +
+    `{content:${JSON.stringify(label)};}`
+  ));
+  return `
+${selectors.join(",\n")} {
+  position: relative;
+}
+${inputSelectors.join(",\n")} {
+  color: transparent !important;
+  text-shadow: none !important;
+}
+${selectors.map((selector) => `${selector}::after`).join(",\n")} {
+  position: absolute;
+  inset-inline-start: 30px;
+  inset-inline-end: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-tight);
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+${focusLabelSelectors.join(",\n")} {
+  display: none;
+}
+${focusInputSelectors.join(",\n")} {
+  color: var(--text-normal) !important;
+}
+${labelRules.join("\n")}
+`;
+}
+
 function mergedSettings(value) {
   return {
     ...DEFAULT_SETTINGS,
@@ -477,6 +608,8 @@ class PaperFlowAutomationPlugin extends Plugin {
     this.inboxEventTimer = null;
     this.controlSaveTimer = null;
     this.started = false;
+    this.propertyLabelStyle = null;
+    this.installLocalizedPropertyLabels();
     this.statusBar = this.addStatusBarItem();
     this.updateStatus(text("PaperFlow 自动化：等待启动", "PaperFlow automation: waiting"));
 
@@ -531,6 +664,8 @@ class PaperFlowAutomationPlugin extends Plugin {
 
   onunload() {
     this.started = false;
+    this.propertyLabelStyle?.remove();
+    this.propertyLabelStyle = null;
     if (this.inboxEventTimer !== null) {
       window.clearTimeout(this.inboxEventTimer);
       this.inboxEventTimer = null;
@@ -541,6 +676,16 @@ class PaperFlowAutomationPlugin extends Plugin {
     }
     this.app.workspace.detachLeavesOfType?.(CONTROL_VIEW_TYPE);
     this.updateStatus(text("PaperFlow 自动化：已停止", "PaperFlow automation: stopped"));
+  }
+
+  installLocalizedPropertyLabels() {
+    if (!isChinese() || !globalThis.document?.head) return;
+    globalThis.document.getElementById(PROPERTY_LABEL_STYLE_ID)?.remove();
+    const style = globalThis.document.createElement("style");
+    style.id = PROPERTY_LABEL_STYLE_ID;
+    style.textContent = propertyLabelCss();
+    globalThis.document.head.appendChild(style);
+    this.propertyLabelStyle = style;
   }
 
   async saveSettings() {
@@ -2081,11 +2226,13 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
 
 module.exports = PaperFlowAutomationPlugin;
 module.exports.__test = {
+  PAPER_PROPERTY_LABELS_ZH,
   controlCommands,
   githubUrl,
   isInboxRequestPath,
   mergedSettings,
   intervalDue,
   isChinese,
+  propertyLabelCss,
   text
 };

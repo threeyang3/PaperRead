@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 - 2026-07-18
+
+- Added Chinese display labels for all 78 generated paper properties in
+  Obsidian's native Properties panel when the application language is Chinese.
+- Kept the stable English YAML keys unchanged for migrations, queries, Bases,
+  public Feeds, and interoperability; focusing a property name reveals its
+  underlying key.
+
 ## 1.3.0 - 2026-07-18
 
 - Added Obsidian-native scheduled synchronization for all explicitly enabled

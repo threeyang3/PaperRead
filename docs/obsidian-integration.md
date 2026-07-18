@@ -20,7 +20,7 @@ debounces Form Flow request writes, performs a startup pass, keeps a five-minute
 fallback interval, and checks the daily `Asia/Shanghai` schedule once per
 minute. Windows Task Scheduler is neither installed nor required.
 
-PaperFlow Automation 1.3.0 also provides a ribbon-accessible Control Center
+PaperFlow Automation 1.3.1 also provides a ribbon-accessible Control Center
 for paper import, AI profile configuration, GitHub Feed subscriptions,
 synchronization, publication preflight, and controlled Git commit/push. See
 [PaperFlow Control Center](control-center.md).

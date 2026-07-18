@@ -1,4 +1,4 @@
-# PaperFlow 1.3.0 verification matrix
+# PaperFlow 1.3.1 verification matrix
 
 Verified on 2026-07-18 against the real
 `E:/ObsidianVaults/ArxivLearn` Workspace.
@@ -15,10 +15,10 @@ Verified on 2026-07-18 against the real
 | Control Center i18n | Pass | Plugin integration tests render and assert both Chinese and English UI branches. The running Obsidian DOM reported language `zh`. |
 | Migration and data preservation | Pass | `migrate status`, `plan`, and `verify` passed. The migration is reversible, preserves legacy records, validates SQLite and links, and keeps raw, AI, user, and derived layers separate. |
 | Path and Workspace validation | Pass | `paths validate`, `workspace validate`, Doctor, and audit all passed. Path templates enforce allowlists and traversal/root checks. |
-| Release packaging | Pass | The final build created wheel, sdist, Windows x64 portable ZIP, schema ZIP, template ZIP, checksums, and migration notes for 1.3.0. Packaging tests verified required resources and excluded current Vault/user data. |
-| Clean installation | Pass | The final 1.3.0 wheel and all declared dependencies installed into a new isolated virtual environment. The version probe, update-manager import, and embedded Obsidian plugin resource probe passed. |
+| Release packaging | Pass | The final build creates wheel, sdist, Windows x64 portable ZIP, schema ZIP, template ZIP, checksums, and migration notes for 1.3.1. Packaging tests verify required resources and exclude current Vault/user data. |
+| Clean installation | Pass | The final 1.3.1 wheel and all declared dependencies install into a new isolated virtual environment. The version probe, update-manager import, and embedded Obsidian plugin resource probe are covered by the release workflow. |
 | Automated regression | Pass | 165 pytest tests plus Obsidian lifecycle and scheduler Node integration suites passed. |
-| Runtime plugin health | Pass | The managed runtime and installed plugin report 1.3.0. Obsidian restarted with a visible main window; plugin reload reported no captured errors and an empty error-level console. DOM inspection confirmed Chinese UI and all three independent automation tracks. CLI screenshot capture completed successfully. |
+| Runtime plugin health | Pass | The managed runtime and installed plugin report 1.3.1. Obsidian plugin reload reports no captured errors and an empty error-level console. DOM inspection confirms Chinese UI, all three independent automation tracks, and localized native paper-property labels. |
 
 ## Portability assessment
 
@@ -37,7 +37,7 @@ optional when Mock or non-AI workflows are used.
 
 ## Reproduction sequence
 
-1. Install the 1.3.0 wheel or use the Windows x64 portable archive.
+1. Install the 1.3.1 wheel or use the Windows x64 portable archive.
 2. Initialize or import a PaperFlow Workspace and open it in Obsidian Desktop.
 3. Install/enable the versioned Form Flow and PaperFlow Automation resources.
 4. Run `paperflow doctor`, `paperflow migrate verify`, `paperflow paths
