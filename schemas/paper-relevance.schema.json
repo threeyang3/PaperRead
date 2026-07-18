@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["paper_uid", "score", "reason", "recommended"],
+        "properties": {
+          "paper_uid": {"type": "string"},
+          "score": {"type": "number", "minimum": 0, "maximum": 5},
+          "reason": {"type": "string"},
+          "recommended": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

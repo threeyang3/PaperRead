@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ai_analysis_status", "ai_relevance_score", "ai_relevance_reason", "ai_topic_primary", "ai_topics", "ai_method_family", "ai_task_types", "ai_robot_platforms", "ai_datasets", "ai_baselines", "ai_novelty_score", "ai_novelty_confidence", "ai_novelty_reason", "ai_completeness_score", "ai_completeness_confidence", "ai_completeness_reason", "ai_reproducibility_score", "ai_reproducibility_confidence", "ai_reproducibility_reason", "ai_overall_score", "ai_overall_confidence", "ai_recommendation", "ai_summary_short", "ai_difficulty", "ai_math_level", "ai_code_level", "ai_estimated_reading_priority", "sections"],
+  "properties": {
+    "ai_analysis_status": {"enum": ["pending", "complete", "failed", "skipped"]},
+    "ai_relevance_score": {"type": "number", "minimum": 0, "maximum": 5},
+    "ai_relevance_reason": {"type": "string"}, "ai_topic_primary": {"type": "string"},
+    "ai_topics": {"type": "array", "items": {"type": "string"}}, "ai_method_family": {"type": "array", "items": {"type": "string"}},
+    "ai_task_types": {"type": "array", "items": {"type": "string"}}, "ai_robot_platforms": {"type": "array", "items": {"type": "string"}},
+    "ai_datasets": {"type": "array", "items": {"type": "string"}}, "ai_baselines": {"type": "array", "items": {"type": "string"}},
+    "ai_novelty_score": {"type": "integer", "minimum": 1, "maximum": 5}, "ai_novelty_confidence": {"type": "number", "minimum": 0, "maximum": 1}, "ai_novelty_reason": {"type": "string"},
+    "ai_completeness_score": {"type": "integer", "minimum": 1, "maximum": 5}, "ai_completeness_confidence": {"type": "number", "minimum": 0, "maximum": 1}, "ai_completeness_reason": {"type": "string"},
+    "ai_reproducibility_score": {"type": "integer", "minimum": 1, "maximum": 5}, "ai_reproducibility_confidence": {"type": "number", "minimum": 0, "maximum": 1}, "ai_reproducibility_reason": {"type": "string"},
+    "ai_overall_score": {"type": "number"}, "ai_overall_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "ai_recommendation": {"type": "string"}, "ai_summary_short": {"type": "string"},
+    "ai_difficulty": {"enum": ["easy", "medium", "hard"]}, "ai_math_level": {"enum": ["low", "medium", "high"]}, "ai_code_level": {"enum": ["low", "medium", "high"]},
+    "ai_estimated_reading_priority": {"type": "integer", "minimum": 0, "maximum": 5},
+    "sections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["problem", "contributions", "method", "experiments", "results", "limitations"],
+      "properties": {
+        "problem": {"type": "string"},
+        "contributions": {"type": "array", "items": {"type": "string"}},
+        "method": {"type": "string"},
+        "experiments": {"type": "string"},
+        "results": {"type": "string"},
+        "limitations": {"type": "string"}
+      }
+    }
+  }
+}

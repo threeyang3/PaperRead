@@ -1,0 +1,35 @@
+.env
+.paperflow/.venv/
+.paperflow/cache/**
+.paperflow/logs/**
+.paperflow/runtime/**
+.paperflow/state/**
+.paperflow/state/*.db*
+.paperflow/backups/**
+.paperflow/data/papers/**
+.paperflow/data/raw/**
+.paperflow/data/ai/**
+.paperflow/data/user/**
+.paperflow/data/derived/**
+.paperflow/workspace.yaml
+.paperflow/workspace.local.yaml
+.paperflow/publish/**
+paperflow.yaml
+.obsidian/
+00 Dashboard/
+10 Papers/
+20 Topics/
+30 Reading Notes/
+40 Daily Briefs/
+50 Inbox/
+80 Attachments/
+90 System/
+dist/
+build/
+*.pyc
+__pycache__/
+.pytest_cache/
+80 Attachments/Papers/**/*.pdf
+!.paperflow/cache/.gitkeep
+!.paperflow/logs/.gitkeep
+!.paperflow/runtime/.gitkeep

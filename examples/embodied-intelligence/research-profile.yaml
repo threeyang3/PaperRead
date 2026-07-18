@@ -1,0 +1,13 @@
+profile_id: embodied-intelligence
+name: Embodied Intelligence
+arxiv_categories:
+  - cs.RO
+  - cs.AI
+  - cs.CV
+keywords:
+  - robot learning
+  - manipulation
+  - tactile sensing
+  - vision-language-action
+  - world model
+default_topic: Embodied Intelligence

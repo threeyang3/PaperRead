@@ -1,0 +1,15 @@
+workspace_name: Minimal PaperFlow Workspace
+timezone: Asia/Shanghai
+language: auto
+language_fallback: zh-CN
+research_profile: embodied-intelligence
+ai:
+  profiles:
+    full_analysis:
+      provider: mock
+      model: deterministic-v1
+publishing:
+  enabled: false
+  data_license: ""
+subscriptions:
+  sources: []

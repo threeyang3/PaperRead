@@ -1,0 +1,785 @@
+.paperflow-control-center {
+  --pf-ink: var(--text-normal);
+  --pf-muted: var(--text-muted);
+  --pf-line: color-mix(in srgb, var(--text-normal) 14%, transparent);
+  --pf-panel: color-mix(in srgb, var(--background-primary) 88%, var(--text-normal) 2%);
+  --pf-orange: #e56f2d;
+  --pf-blue: #387c9d;
+  --pf-red: #c94e49;
+  --pf-green: #4e8a65;
+  --pf-shadow: 0 16px 46px color-mix(in srgb, #000 18%, transparent);
+  box-sizing: border-box;
+  container-type: inline-size;
+  overflow: auto;
+  padding: clamp(18px, 3vw, 42px);
+  background:
+    linear-gradient(var(--pf-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--pf-line) 1px, transparent 1px),
+    radial-gradient(circle at 92% 3%, color-mix(in srgb, var(--pf-orange) 15%, transparent), transparent 34%),
+    var(--background-primary);
+  background-size: 38px 38px, 38px 38px, auto, auto;
+  color: var(--pf-ink);
+}
+
+.paperflow-control-center *,
+.paperflow-confirm-modal * {
+  box-sizing: border-box;
+}
+
+.paperflow-control-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 26px;
+  max-width: 1220px;
+  margin: 0 auto 22px;
+  padding: clamp(22px, 4vw, 48px);
+  overflow: hidden;
+  border: 1px solid var(--pf-line);
+  border-top: 5px solid var(--pf-orange);
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--background-primary) 96%, transparent), color-mix(in srgb, var(--background-secondary) 86%, transparent));
+  box-shadow: var(--pf-shadow);
+}
+
+.paperflow-control-hero::after {
+  content: "RAW  /  AI  /  USER  /  DERIVED";
+  position: absolute;
+  right: -14px;
+  bottom: 7px;
+  color: color-mix(in srgb, var(--pf-ink) 8%, transparent);
+  font: 800 clamp(18px, 3.3vw, 48px)/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .08em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.paperflow-eyebrow {
+  margin-bottom: 12px;
+  color: var(--pf-orange);
+  font: 750 11px/1.2 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+}
+
+.paperflow-control-hero h1 {
+  max-width: 780px;
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: clamp(34px, 5.6vw, 74px);
+  font-weight: 600;
+  line-height: .98;
+  letter-spacing: -.045em;
+}
+
+.paperflow-control-hero p {
+  max-width: 700px;
+  margin: 18px 0 0;
+  color: var(--pf-muted);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.paperflow-hero-seal {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 92px;
+  height: 92px;
+  place-content: center;
+  border: 1px solid var(--pf-line);
+  border-radius: 50%;
+  background: var(--background-primary);
+  text-align: center;
+}
+
+.paperflow-hero-seal span {
+  color: var(--pf-orange);
+  font: 700 30px/1 "Iowan Old Style", serif;
+}
+
+.paperflow-hero-seal small {
+  margin-top: 7px;
+  color: var(--pf-muted);
+  font: 700 8px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .18em;
+}
+
+.paperflow-badge-row,
+.paperflow-quick-strip,
+.paperflow-control-grid {
+  width: min(1220px, 100%);
+  margin-inline: auto;
+}
+
+.paperflow-badge-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-line);
+}
+
+.paperflow-badge {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--background-primary);
+}
+
+.paperflow-badge span {
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.paperflow-badge strong {
+  font: 800 10px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .1em;
+}
+
+.paperflow-badge.live strong { color: var(--pf-green); }
+.paperflow-badge.safe strong { color: var(--pf-blue); }
+
+.paperflow-quick-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--pf-line);
+  background: color-mix(in srgb, var(--background-secondary) 90%, transparent);
+}
+
+.paperflow-quick-label {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  color: var(--pf-muted);
+  font: 800 10px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+
+.paperflow-control-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.paperflow-card {
+  grid-column: span 6;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-panel);
+  box-shadow: 0 8px 30px color-mix(in srgb, #000 9%, transparent);
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.paperflow-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--pf-orange) 40%, var(--pf-line));
+}
+
+.paperflow-card-accent { border-top: 3px solid var(--pf-orange); }
+.paperflow-card-blue { border-top: 3px solid var(--pf-blue); }
+.paperflow-card-dark { grid-column: span 7; border-top: 3px solid var(--pf-red); }
+.paperflow-card-output { grid-column: span 5; }
+
+.paperflow-card-header {
+  display: grid;
+  grid-template-columns: 45px 1fr;
+  gap: 14px;
+  align-items: start;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--pf-line);
+}
+
+.paperflow-card-index {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-content: center;
+  border: 1px solid var(--pf-line);
+  color: var(--pf-orange);
+  font: 800 11px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .08em;
+}
+
+.paperflow-card-header h3 {
+  margin: 0 0 4px;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+}
+
+.paperflow-card-header p {
+  margin: 0;
+  color: var(--pf-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.paperflow-card-body {
+  padding: 18px 20px 22px;
+}
+
+.paperflow-field {
+  margin-bottom: 13px;
+}
+
+.paperflow-field label,
+.paperflow-toggle-row {
+  display: grid;
+  gap: 7px;
+}
+
+.paperflow-field label > span,
+.paperflow-toggle-row span {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.paperflow-field small,
+.paperflow-toggle-row small {
+  color: var(--pf-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.paperflow-field input,
+.paperflow-field select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--pf-line);
+  border-radius: 0;
+  background: var(--background-primary);
+  color: var(--pf-ink);
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.paperflow-field input:focus,
+.paperflow-field select:focus {
+  border-color: var(--pf-orange);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pf-orange) 20%, transparent);
+}
+
+.paperflow-field-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.paperflow-toggle-row {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  margin: 7px 0 14px;
+  cursor: pointer;
+}
+
+.paperflow-toggle-row input {
+  margin-top: 2px;
+  accent-color: var(--pf-orange);
+}
+
+.paperflow-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+button.paperflow-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid var(--pf-line);
+  border-radius: 0;
+  background: var(--background-primary);
+  color: var(--pf-ink);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 650;
+  transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
+}
+
+button.paperflow-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+button.paperflow-action:hover {
+  border-color: var(--pf-orange);
+  background: color-mix(in srgb, var(--pf-orange) 8%, var(--background-primary));
+}
+
+button.paperflow-action.primary {
+  border-color: var(--pf-orange);
+  background: var(--pf-orange);
+  color: #fff;
+}
+
+button.paperflow-action.primary:hover {
+  background: color-mix(in srgb, var(--pf-orange) 84%, #000);
+}
+
+button.paperflow-action.danger {
+  border-color: color-mix(in srgb, var(--pf-red) 65%, var(--pf-line));
+  color: var(--pf-red);
+}
+
+.paperflow-caution {
+  margin: -2px 0 14px;
+  padding: 9px 11px;
+  border-left: 3px solid var(--pf-red);
+  background: color-mix(in srgb, var(--pf-red) 9%, transparent);
+  color: var(--pf-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.paperflow-runtime-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  align-items: center;
+  margin-bottom: 10px;
+  color: var(--pf-muted);
+  font: 700 10px/1.4 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.paperflow-runtime-meta strong {
+  color: var(--pf-orange);
+}
+
+.paperflow-runtime-meta .is-error {
+  color: var(--pf-red);
+}
+
+.paperflow-output {
+  min-height: 280px;
+  max-height: 510px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--pf-line);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--pf-blue) 7%, transparent), transparent 42%),
+    color-mix(in srgb, var(--background-primary) 95%, #000);
+  color: color-mix(in srgb, var(--pf-ink) 88%, var(--pf-blue));
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.paperflow-confirm-modal {
+  border-top: 4px solid var(--pf-red, #c94e49);
+}
+
+.paperflow-confirm-modal h2 {
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 28px;
+}
+
+.paperflow-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+@media (max-width: 900px) {
+  .paperflow-badge-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .paperflow-card,
+  .paperflow-card-dark,
+  .paperflow-card-output { grid-column: 1 / -1; }
+}
+
+@container (max-width: 900px) {
+  .paperflow-badge-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .paperflow-card,
+  .paperflow-card-dark,
+  .paperflow-card-output { grid-column: 1 / -1; }
+}
+
+@container (max-width: 560px) {
+  .paperflow-control-hero { grid-template-columns: 1fr; padding: 24px 20px; }
+  .paperflow-hero-seal { display: none; }
+  .paperflow-badge-row { grid-template-columns: 1fr; }
+  .paperflow-field-pair { grid-template-columns: 1fr; }
+  .paperflow-card-header { padding-inline: 14px; }
+  .paperflow-card-body { padding-inline: 14px; }
+}
+
+@media (max-width: 600px) {
+  .paperflow-control-center { padding: 12px; }
+  .paperflow-control-hero { grid-template-columns: 1fr; padding: 24px 20px; }
+  .paperflow-hero-seal { display: none; }
+  .paperflow-badge-row { grid-template-columns: 1fr; }
+  .paperflow-field-pair { grid-template-columns: 1fr; }
+  .paperflow-card-header { padding-inline: 14px; }
+  .paperflow-card-body { padding-inline: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paperflow-card,
+  button.paperflow-action { transition: none; }
+}
+
+/* 1.2 research-workspace information architecture */
+.paperflow-automation-heading {
+  margin-top: 24px;
+}
+
+.paperflow-automation-grid {
+  display: grid;
+  width: min(1220px, 100%);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 auto 18px;
+}
+
+.paperflow-automation-track {
+  position: relative;
+  min-width: 0;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid var(--pf-line);
+  background:
+    linear-gradient(155deg, color-mix(in srgb, var(--track-color) 10%, transparent), transparent 56%),
+    var(--background-primary);
+}
+
+.paperflow-automation-track::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--track-color);
+  content: "";
+}
+
+.paperflow-automation-track.is-source { --track-color: var(--pf-blue); }
+.paperflow-automation-track.is-publish { --track-color: var(--pf-orange); }
+.paperflow-automation-track.is-update { --track-color: var(--pf-green); }
+
+.paperflow-track-index {
+  color: var(--track-color);
+  font: 800 9px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .17em;
+}
+
+.paperflow-automation-track h3 {
+  margin: 9px 0 7px;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.paperflow-automation-track > p {
+  min-height: 48px;
+  margin: 0 0 12px;
+  color: var(--pf-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.paperflow-automation-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 9px 0;
+  cursor: pointer;
+}
+
+.paperflow-automation-toggle input {
+  margin-top: 2px;
+  accent-color: var(--track-color);
+}
+
+.paperflow-automation-toggle strong,
+.paperflow-automation-toggle small {
+  display: block;
+}
+
+.paperflow-automation-toggle strong {
+  font-size: 10px;
+}
+
+.paperflow-automation-toggle small {
+  margin-top: 3px;
+  color: var(--pf-muted);
+  font-size: 9px;
+}
+
+.paperflow-automation-number {
+  display: grid;
+  grid-template-columns: 1fr 86px;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  color: var(--pf-muted);
+  font-size: 9px;
+}
+
+.paperflow-automation-number input {
+  width: 100%;
+}
+
+.paperflow-track-status {
+  display: block;
+  margin-top: 12px;
+  color: var(--pf-muted);
+  font: 700 8px/1.4 "Cascadia Mono", Consolas, monospace;
+}
+
+.paperflow-task-shelf {
+  display: grid;
+  width: min(1220px, 100%);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px auto 10px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-line);
+}
+
+.paperflow-task-entry {
+  min-width: 0;
+  padding: 17px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--pf-blue) 4%, transparent), transparent 64%),
+    var(--background-primary);
+}
+
+.paperflow-task-entry-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.paperflow-task-entry-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--pf-orange) 55%, var(--pf-line));
+  color: var(--pf-orange);
+}
+
+.paperflow-task-entry-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.paperflow-task-entry-heading span,
+.paperflow-task-entry-heading strong {
+  display: block;
+}
+
+.paperflow-task-entry-heading span {
+  margin-bottom: 4px;
+  color: var(--pf-muted);
+  font: 800 8px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .16em;
+}
+
+.paperflow-task-entry-heading strong {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: 17px;
+}
+
+.paperflow-task-entry > p {
+  min-height: 36px;
+  margin: 12px 0 10px;
+  color: var(--pf-muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.paperflow-task-entry .paperflow-action-row {
+  margin-top: 0;
+}
+
+.paperflow-task-entry .paperflow-action {
+  min-height: 30px;
+  padding: 7px 9px;
+  font-size: 9px;
+}
+
+.paperflow-control-hero {
+  align-items: center;
+  margin-bottom: 14px;
+  padding: clamp(20px, 3vw, 34px);
+  border-top-width: 4px;
+}
+
+.paperflow-control-hero h1 {
+  font-size: clamp(32px, 4.2vw, 56px);
+}
+
+.paperflow-control-hero p {
+  max-width: 760px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.paperflow-status-row {
+  margin-bottom: 10px;
+}
+
+.paperflow-section-heading {
+  width: min(1220px, 100%);
+  margin: 28px auto 12px;
+}
+
+.paperflow-section-heading span {
+  color: var(--pf-orange);
+  font: 800 10px/1 "Bahnschrift SemiCondensed", "DIN Condensed", sans-serif;
+  letter-spacing: .18em;
+}
+
+.paperflow-section-heading h2 {
+  margin: 7px 0 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: clamp(22px, 2.7vw, 34px);
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+
+.paperflow-primary-grid > .paperflow-card:nth-child(1),
+.paperflow-primary-grid > .paperflow-card:nth-child(2) {
+  grid-column: span 6;
+  min-height: 310px;
+}
+
+.paperflow-primary-grid > .paperflow-card:nth-child(3) {
+  grid-column: span 7;
+}
+
+.paperflow-primary-grid > .paperflow-card:nth-child(4) {
+  grid-column: span 5;
+}
+
+.paperflow-primary-grid > .paperflow-card {
+  box-shadow: 0 12px 34px color-mix(in srgb, #000 10%, transparent);
+}
+
+.paperflow-agent-boundary {
+  margin: 12px 0;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--pf-blue) 38%, var(--pf-line));
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--pf-blue) 9%, transparent), transparent 72%);
+}
+
+.paperflow-agent-boundary strong {
+  color: var(--pf-blue);
+  font-size: 11px;
+}
+
+.paperflow-agent-boundary p {
+  margin: 6px 0 0;
+  color: var(--pf-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.paperflow-advanced-tools {
+  width: min(1220px, 100%);
+  margin: 22px auto 0;
+  border: 1px solid var(--pf-line);
+  background: color-mix(in srgb, var(--background-primary) 94%, var(--pf-blue) 2%);
+}
+
+.paperflow-advanced-tools > summary {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 20px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.paperflow-advanced-tools > summary::-webkit-details-marker {
+  display: none;
+}
+
+.paperflow-advanced-tools > summary::after {
+  content: "+";
+  color: var(--pf-orange);
+  font: 600 24px/1 "Iowan Old Style", serif;
+}
+
+.paperflow-advanced-tools[open] > summary::after {
+  content: "−";
+}
+
+.paperflow-advanced-tools > summary span {
+  font: 700 15px/1.2 "Iowan Old Style", "Palatino Linotype", serif;
+}
+
+.paperflow-advanced-tools > summary small {
+  margin-left: auto;
+  color: var(--pf-muted);
+  font-size: 10px;
+}
+
+.paperflow-advanced-tools > .paperflow-control-grid {
+  width: 100%;
+  padding: 0 14px 14px;
+}
+
+@container (max-width: 840px) {
+  .paperflow-automation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .paperflow-automation-track > p {
+    min-height: auto;
+  }
+
+  .paperflow-task-shelf {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .paperflow-primary-grid > .paperflow-card:nth-child(n) {
+    grid-column: 1 / -1;
+    min-height: auto;
+  }
+
+  .paperflow-advanced-tools > summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .paperflow-advanced-tools > summary small {
+    margin-left: 0;
+  }
+}
+
+@container (max-width: 520px) {
+  .paperflow-task-shelf {
+    grid-template-columns: 1fr;
+  }
+
+  .paperflow-task-entry > p {
+    min-height: auto;
+  }
+}

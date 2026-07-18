@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/feed.schema.json",
+  "title": "PaperFlow Public Feed",
+  "type": "object",
+  "required": [
+    "feed_schema_version",
+    "feed_id",
+    "name",
+    "publisher",
+    "generated_at",
+    "minimum_reader_version",
+    "default_branch",
+    "data_license",
+    "pdf_policy",
+    "arxiv_attribution"
+  ],
+  "properties": {
+    "feed_schema_version": {"const": 1},
+    "feed_id": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "publisher": {
+      "type": "object",
+      "required": ["name", "url"],
+      "properties": {
+        "name": {"type": "string"},
+        "url": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "generated_at": {"type": "string", "minLength": 1},
+    "minimum_reader_version": {"type": "string", "minLength": 1},
+    "default_branch": {"type": "string", "minLength": 1},
+    "data_license": {"type": "string", "minLength": 1},
+    "pdf_policy": {"const": "link-only"},
+    "arxiv_attribution": {"const": true}
+  },
+  "additionalProperties": false
+}

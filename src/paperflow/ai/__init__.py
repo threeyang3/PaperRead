@@ -1,0 +1,1 @@
+"""Validated AI adapters."""

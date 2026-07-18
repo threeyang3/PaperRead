@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/raw-paper.schema.json",
+  "title": "PaperFlow Raw Paper Record",
+  "type": "object",
+  "required": ["schema_version", "paper_uid", "source", "source_id", "source_version", "metadata", "source_license", "source_response", "pdf_sha256", "extracted_text_sha256", "extensions"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "paper_uid": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "source_version": {"type": "integer", "minimum": 1},
+    "metadata": {"type": "object"},
+    "source_license": {"type": "string"},
+    "source_response": {"type": "object"},
+    "pdf_sha256": {"type": "string"},
+    "extracted_text_sha256": {"type": "string"},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": false
+}

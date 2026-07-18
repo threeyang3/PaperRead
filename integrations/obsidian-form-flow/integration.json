@@ -1,0 +1,13 @@
+{
+  "integration": "form-flow",
+  "integration_version": 1,
+  "plugin_id": "form-flow",
+  "minimum_plugin_version": "0.0.8",
+  "template_bundle_version": 2,
+  "conflict_policy": "write-new-and-request-merge",
+  "files": {
+    "添加论文.cform": "90 System/Forms/添加论文.cform",
+    "Paper Import Request Template.md": "90 System/Templates/Paper Import Request Template.md",
+    "scripts/paper-import-request.js": "90 System/Forms/scripts/paper-import-request.js"
+  }
+}

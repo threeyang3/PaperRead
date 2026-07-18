@@ -1,0 +1,50 @@
+from __future__ import annotations
+import json
+from pathlib import Path
+from ruamel.yaml import YAML
+from paperflow.obsidian.bases import validate_bases
+from paperflow.obsidian.frontmatter import read_note
+
+READING = {"inbox", "queued", "skimming", "reading", "read", "archived", "rejected"}
+LEARNING = {"none", "understanding", "reviewing", "reproducing", "mastered"}
+REPRODUCTION = {"none", "candidate", "planned", "in_progress", "blocked", "completed", "abandoned"}
+LIST_FIELDS = {"paper_authors", "paper_categories", "ai_topics", "ai_method_family", "ai_task_types", "ai_robot_platforms", "ai_datasets", "ai_baselines", "user_added_tags"}
+BOOL_FIELDS = {"paper_has_code", "paper_has_project_page", "paper_has_dataset", "user_favorite", "system_requires_manual_review"}
+NUMBER_FIELDS = {"paper_arxiv_version", "ai_relevance_score", "ai_novelty_score", "ai_completeness_score", "ai_reproducibility_score", "ai_overall_score", "user_priority", "user_rating"}
+
+
+def validate_all(root: Path) -> list[str]:
+    errors: list[str] = []
+    yaml = YAML(typ="safe")
+    try: yaml.load((root / "paperflow.yaml").read_text(encoding="utf-8"))
+    except Exception as exc: errors.append(f"paperflow.yaml: {exc}")
+    try: json.loads((root / ".paperflow/schemas/paper-analysis.schema.json").read_text(encoding="utf-8"))
+    except Exception as exc: errors.append(f"analysis schema: {exc}")
+    errors.extend(validate_bases(root))
+    for path in (root / "10 Papers").rglob("*.md"):
+        try:
+            frontmatter, body = read_note(path)
+            if frontmatter.get("type") != "paper": errors.append(f"{path}: type is not paper")
+            if "<!-- USER_NOTES_START -->" not in body or "<!-- USER_NOTES_END -->" not in body: errors.append(f"{path}: user note markers missing")
+            if frontmatter.get("user_reading_status") not in READING: errors.append(f"{path}: invalid user_reading_status")
+            if frontmatter.get("user_learning_status") not in LEARNING: errors.append(f"{path}: invalid user_learning_status")
+            if frontmatter.get("user_reproduction_status") not in REPRODUCTION: errors.append(f"{path}: invalid user_reproduction_status")
+            for field in LIST_FIELDS:
+                if not isinstance(frontmatter.get(field), list): errors.append(f"{path}: {field} must be a list")
+            for field in BOOL_FIELDS:
+                if not isinstance(frontmatter.get(field), bool): errors.append(f"{path}: {field} must be boolean")
+            for field in NUMBER_FIELDS:
+                if not isinstance(frontmatter.get(field), (int, float)) or isinstance(frontmatter.get(field), bool): errors.append(f"{path}: {field} must be numeric")
+            for field in ["ai_analyzed_at", "system_imported_at", "system_last_synced_at"]:
+                value = frontmatter.get(field)
+                if value is not None and value != "" and not str(value).endswith("+08:00"): errors.append(f"{path}: {field} must include +08:00")
+        except Exception as exc: errors.append(f"{path}: {exc}")
+    request_folders = [root / "50 Inbox/Paper Requests", root / "50 Inbox/Processed Requests", root / "50 Inbox/Failed Imports"]
+    for folder in request_folders:
+        for path in folder.glob("*.md"):
+            try:
+                frontmatter, _ = read_note(path)
+                if frontmatter.get("type") != "paper-import-request": errors.append(f"{path}: invalid request type")
+                if frontmatter.get("status") not in {"pending", "processing", "completed", "failed"}: errors.append(f"{path}: invalid request status")
+            except Exception as exc: errors.append(f"{path}: {exc}")
+    return errors

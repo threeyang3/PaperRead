@@ -1,0 +1,25 @@
+{
+  "id": "3cc989b9-e68a-40bc-b76f-c22369d67eaf",
+  "fields": [
+    {"id":"f-paper-input","label":"论文链接或 ID","type":"text","description":"arXiv URL/ID、PDF URL、DOI URL 或论文项目页","enableDescription":true,"required":true},
+    {"id":"f-topic","label":"主题提示","type":"text","required":false},
+    {"id":"f-priority","label":"优先级","type":"number","defaultValue":3,"required":true},
+    {"id":"f-queue","label":"加入阅读队列","type":"toggle","defaultValue":true},
+    {"id":"f-favorite","label":"收藏","type":"toggle","defaultValue":false},
+    {"id":"f-tags","label":"用户标签","type":"text","description":"多个标签用英文逗号分隔","enableDescription":true,"required":false},
+    {"id":"f-note","label":"备注","type":"textarea","rows":6,"required":false},
+    {"id":"f-ai","label":"立即进行 AI 分析","type":"toggle","defaultValue":true}
+  ],
+  "actions": [
+    {
+      "id":"a-paper-request",
+      "type":"runScript",
+      "title":"创建安全的论文导入请求",
+      "variales":[],
+      "scriptSource":"extension",
+      "expression":"PaperImportRequest()",
+      "code":""
+    }
+  ],
+  "autoSubmit": false
+}
