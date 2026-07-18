@@ -14,8 +14,10 @@ AI, User, and Derived records; unknown properties are retained in
 
 # Visual asset migration
 
-Template bundle v3 adds the caption-backed visual guide without changing the
-flat paper YAML schema. Existing Workspaces migrate generated data with:
+Template bundle v4 expands the caption-backed visual guide without changing the
+flat paper YAML schema. It groups up to six figures by architecture/method,
+experiments/results, and task/hardware context, folds source captions, and links
+each figure to its PDF page. Existing Workspaces migrate generated data with:
 
 ```powershell
 paperflow migrate visual-assets
@@ -24,6 +26,6 @@ paperflow migrate visual-assets
 The command acquires the Workspace lock, creates a complete Workspace backup,
 updates the template contract, extracts local PDF figures, persists only
 Derived records, and rerenders notes through the normal merge-safe renderer.
-Customized templates that lack the visual block are emitted as `.new` merge
-candidates and are never overwritten. The operation is idempotent and can be
-rerun after a per-paper failure.
+The official v3 template is upgraded safely. Other customized templates are
+emitted as `.new` merge candidates and are never overwritten. The operation is
+idempotent and can be rerun after a per-paper failure.

@@ -33,7 +33,7 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     merged_user = merge_user_data(root, record, old_frontmatter)
     record = {**record, **merged_user}
     values = {
-        "type": "paper", "schema_version": 1, "system_template_version": 3, "title": record["paper_title"], "aliases": [], "tags": ["paper"],
+        "type": "paper", "schema_version": 1, "system_template_version": 4, "title": record["paper_title"], "aliases": [], "tags": ["paper"],
         **{k: v for k, v in record.items() if k.startswith(("paper_", "ai_", "user_", "system_"))},
     }
     values.setdefault("user_reading_status", "inbox")

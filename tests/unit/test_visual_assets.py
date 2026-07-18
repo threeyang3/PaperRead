@@ -10,6 +10,7 @@ from jsonschema import validate
 from paperflow.pipeline.visuals import (
     _caption_candidates,
     _crop_rectangle,
+    _select_candidates,
     extract_visual_assets,
     refresh_record_visuals,
 )
@@ -78,7 +79,7 @@ def test_extract_visual_assets_prefers_architecture_and_writes_manifest(
     validate(manifest, schema)
 
 
-def test_architecture_crop_prefers_complete_page_width(tmp_path: Path) -> None:
+def test_architecture_crop_prefers_complete_figure_width(tmp_path: Path) -> None:
     pdf = tmp_path / "paper.pdf"
     _synthetic_paper(pdf)
     with fitz.open(pdf) as document:
@@ -87,7 +88,44 @@ def test_architecture_crop_prefers_complete_page_width(tmp_path: Path) -> None:
 
     assert crop.x0 <= 20
     assert crop.x1 >= 580
-    assert crop.y0 <= 20
+    assert crop.y0 <= 110
+    assert crop.y1 >= 290
+
+
+def test_visual_selection_preserves_architecture_and_result_coverage(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "coverage.pdf"
+    document = fitz.open()
+    for number, caption in enumerate(
+        [
+            "Model architecture and training pipeline.",
+            "System overview for tactile manipulation.",
+            "Framework design and inference workflow.",
+            "Ablation results across tasks.",
+            "Quantitative benchmark comparison.",
+            "Robot setup and manipulation task.",
+            "Additional qualitative examples.",
+        ],
+        start=1,
+    ):
+        page = document.new_page(width=600, height=800)
+        page.draw_rect(fitz.Rect(60, 120, 540, 300), color=(0, 0, 0))
+        page.insert_textbox(
+            fitz.Rect(50, 330, 550, 390),
+            f"Figure {number}: {caption}",
+            fontsize=11,
+        )
+    document.save(pdf)
+    document.close()
+
+    with fitz.open(pdf) as opened:
+        selected = _select_candidates(_caption_candidates(opened), 6)
+
+    assert len(selected) == 6
+    assert [item.kind for item in selected].count("architecture") == 3
+    assert [item.kind for item in selected].count("result") == 2
+    assert [item.kind for item in selected].count("figure") == 1
 
 
 def test_refresh_record_visuals_keeps_assets_in_derived_pdf_directory(
@@ -184,8 +222,10 @@ def test_visual_guide_renders_and_preserves_user_notes(tmp_path: Path) -> None:
     render_paper(tmp_path, record, note, ui_locale="zh-CN")
     first = note.read_text(encoding="utf-8")
     assert "## 论文视觉导读" in first
-    assert "![[80 Attachments/Papers/test.assets/figure-1-p2.png|900]]" in first
-    assert "架构与方法总览" in first
+    assert "![[80 Attachments/Papers/test.assets/figure-1-p2.png|950]]" in first
+    assert "架构、系统与方法图" in first
+    assert "已从原 PDF 提取 1 张可追溯关键图片" in first
+    assert "[[80 Attachments/Papers/test.pdf#page=2|在原 PDF 中打开本页]]" in first
     note.write_text(
         first.replace(
             "<!-- USER_NOTES_START -->",
@@ -198,7 +238,7 @@ def test_visual_guide_renders_and_preserves_user_notes(tmp_path: Path) -> None:
 
     second = note.read_text(encoding="utf-8")
     assert "我的不可覆盖笔记" in second
-    assert "system_template_version: 3" in second
+    assert "system_template_version: 4" in second
 
 
 def test_layer_paths_remain_rebuildable_derived_data() -> None:
@@ -279,4 +319,4 @@ def test_visual_migration_creates_full_workspace_backup(tmp_path: Path) -> None:
     migrated = YAML(typ="safe").load(
         workspace_path.read_text(encoding="utf-8")
     )
-    assert migrated["versions"]["templates"] == 3
+    assert migrated["versions"]["templates"] == 4

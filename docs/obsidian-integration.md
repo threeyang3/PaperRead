@@ -10,13 +10,15 @@ bundle as `.new` for merge review. Known managed files are backed up before
 safe replacement.
 
 Bases are generated from configured Base, paper-note, and Inbox roots.
-Generated paper notes record `system_template_version: 3`. Re-rendering first
+Generated paper notes record `system_template_version: 4`. Re-rendering first
 merges the User sidecar and existing `user_*` properties and preserves all text
 inside `USER_NOTES_START/END`.
 
-Template v3 adds a bilingual visual guide backed by local, checksummed PDF
-figure crops. Existing Workspaces use `paperflow migrate visual-assets`; routine
-refresh is available as `paperflow paper visuals --all`.
+Template v4 adds a bilingual, category-grouped visual guide backed by local,
+checksummed PDF figure crops. Original captions fold by default, and every
+figure links to the source PDF page. Existing Workspaces use
+`paperflow migrate visual-assets`; routine refresh is available as
+`paperflow paper visuals --all`.
 
 Recurring work uses the local `PaperFlow Automation` Obsidian plugin while
 Obsidian is open. It registers file events after the Obsidian layout is ready,

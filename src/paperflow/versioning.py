@@ -17,7 +17,7 @@ class VersionContract:
     ai_analysis_schema_version: int = 1
     user_data_schema_version: int = 1
     public_feed_schema_version: int = 1
-    template_bundle_version: int = 3
+    template_bundle_version: int = 4
     form_flow_integration_version: int = 1
 
     def model_dump(self) -> dict[str, Any]:

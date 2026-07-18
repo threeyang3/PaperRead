@@ -21,5 +21,7 @@ release changes dependencies in a way that the existing managed runtime cannot
 import.
 
 After upgrading an existing Workspace to PaperFlow 1.3.2, run
-`paperflow migrate visual-assets` once to back up template v2, activate template
-v3, and generate caption-backed Derived figures for local PDFs.
+`paperflow migrate visual-assets` once to back up the Workspace, activate
+template v4, and regenerate a category-balanced visual guide with up to six
+caption-backed Derived figures per local PDF. Official template v3 is upgraded
+automatically; customized templates are emitted as `.new` merge candidates.

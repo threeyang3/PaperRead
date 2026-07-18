@@ -16,10 +16,11 @@ Vault projections, Public Feed, and local User Data.
 
 Caption-backed visual assets are also Derived. The extractor ranks
 architecture/framework/overview/pipeline figures, renders bounded PDF page
-regions to PNG, writes a checksummed per-paper manifest, and embeds at most
-three selected figures in the note's visual guide. Missing reliable captions
-produce no asset instead of a fabricated diagram. Original captions and
-in-figure text are not translated.
+regions to PNG, writes a checksummed per-paper manifest, and embeds up to six
+selected figures in a category-balanced visual guide. Up to three architecture
+or method figures are selected before results and task/hardware context.
+Missing reliable captions produce no asset instead of a fabricated diagram.
+Original captions and in-figure text are not translated.
 
 Schema and application versions are independent. Data newer than the installed
 reader is rejected; older data requires an explicit migration.

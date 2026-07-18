@@ -12,24 +12,46 @@ from paperflow.utils import atomic_json
 
 
 CAPTION_RE = re.compile(
-    r"^\s*(?:figure|fig\.?)\s*([0-9]+[a-z]?)\s*[\.:：]?\s*(.+)",
+    r"^\s*(?:(?:extended\s+data\s+)?(?:figure|fig\.?)|图)\s*"
+    r"([0-9]+[a-z]?)\s*[\.:：]?\s*(.+)",
     re.IGNORECASE | re.DOTALL,
 )
 ARCHITECTURE_TERMS = {
     "architecture",
     "architectural",
+    "block diagram",
     "framework",
+    "hardware design",
+    "method overview",
+    "model overview",
     "overview",
     "pipeline",
+    "schematic",
+    "sensor design",
+    "system design",
+    "system overview",
+    "training and inference",
     "workflow",
 }
 RESULT_TERMS = {
+    "accuracy",
     "ablation",
+    "benchmark",
     "comparison",
     "evaluation",
     "performance",
+    "quantitative",
     "result",
     "success rate",
+}
+CONTEXT_TERMS = {
+    "demonstration",
+    "hardware",
+    "manipulation task",
+    "real robot",
+    "robot setup",
+    "sensor",
+    "task overview",
 }
 GENERATED_IMAGE_RE = re.compile(r"^figure-[0-9a-z-]+-p[0-9]+\.png$")
 REFERENCE_START_RE = re.compile(
@@ -56,10 +78,20 @@ def _classify(caption: str) -> tuple[str, float]:
     lowered = caption.casefold()
     architecture_hits = sum(term in lowered for term in ARCHITECTURE_TERMS)
     result_hits = sum(term in lowered for term in RESULT_TERMS)
-    if result_hits:
-        return "result", 55.0 + result_hits * 3
+    result_led = re.match(
+        r"^(?:ablation|benchmark|comparison|evaluation|performance|"
+        r"quantitative|results?)\b",
+        lowered,
+    )
+    if result_led or (result_hits >= 2 and result_hits > architecture_hits):
+        return "result", 62.0 + result_hits * 4
     if architecture_hits:
         return "architecture", 100.0 + architecture_hits * 8
+    if result_hits:
+        return "result", 62.0 + result_hits * 4
+    context_hits = sum(term in lowered for term in CONTEXT_TERMS)
+    if context_hits:
+        return "figure", 52.0 + context_hits * 3
     return "figure", 40.0
 
 
@@ -99,12 +131,62 @@ def _caption_candidates(document: fitz.Document) -> list[CaptionCandidate]:
     return list(best_by_number.values())
 
 
+def _select_candidates(
+    candidates: list[CaptionCandidate],
+    max_assets: int,
+) -> list[CaptionCandidate]:
+    """Build a balanced visual guide with architecture figures first."""
+    ranked = sorted(
+        candidates,
+        key=lambda item: (-item.score, item.page_index, item.figure_number),
+    )
+    selected: list[CaptionCandidate] = []
+    selected_keys: set[tuple[int, str]] = set()
+
+    def take(kind: str, limit: int) -> None:
+        for candidate in ranked:
+            if len(selected) >= max_assets or limit <= 0:
+                return
+            key = (candidate.page_index, candidate.figure_number)
+            if candidate.kind == kind and key not in selected_keys:
+                selected.append(candidate)
+                selected_keys.add(key)
+                limit -= 1
+
+    take("architecture", min(3, max_assets))
+    take("result", min(2, max(0, max_assets - len(selected))))
+    take("figure", min(1, max(0, max_assets - len(selected))))
+    for candidate in ranked:
+        if len(selected) >= max_assets:
+            break
+        key = (candidate.page_index, candidate.figure_number)
+        if key not in selected_keys:
+            selected.append(candidate)
+            selected_keys.add(key)
+
+    kind_order = {"architecture": 0, "result": 1, "figure": 2}
+    return sorted(
+        selected,
+        key=lambda item: (
+            kind_order[item.kind],
+            -item.score,
+            item.page_index,
+            item.figure_number,
+        ),
+    )
+
+
 def _intersects_horizontally(left: fitz.Rect, right: fitz.Rect) -> bool:
     overlap = min(left.x1, right.x1) - max(left.x0, right.x0)
     return overlap > min(left.width, right.width) * 0.15
 
 
-def _visual_rectangles(page: fitz.Page, caption: fitz.Rect) -> list[fitz.Rect]:
+def _visual_rectangles(
+    page: fitz.Page,
+    caption: fitz.Rect,
+    *,
+    require_horizontal_overlap: bool = True,
+) -> list[fitz.Rect]:
     page_rect = page.rect
     minimum_area = page_rect.get_area() * 0.004
     rectangles: list[fitz.Rect] = []
@@ -130,6 +212,8 @@ def _visual_rectangles(page: fitz.Page, caption: fitz.Rect) -> list[fitz.Rect]:
         if rectangle.y0 < caption.y0
         and caption.y0 - rectangle.y1 < page_rect.height * 0.55
         and (
+            not require_horizontal_overlap
+            or
             caption.width > page_rect.width * 0.55
             or _intersects_horizontally(rectangle, caption)
         )
@@ -139,15 +223,42 @@ def _visual_rectangles(page: fitz.Page, caption: fitz.Rect) -> list[fitz.Rect]:
 def _crop_rectangle(page: fitz.Page, candidate: CaptionCandidate) -> fitz.Rect:
     page_rect = page.rect
     caption = candidate.rectangle
+    visual_rectangles = _visual_rectangles(
+        page,
+        caption,
+        require_horizontal_overlap=candidate.kind != "architecture",
+    )
     if candidate.kind == "architecture":
         margin = 18
+        if visual_rectangles:
+            content = fitz.Rect(visual_rectangles[0])
+            for rectangle in visual_rectangles[1:]:
+                content.include_rect(rectangle)
+            content.include_rect(caption)
+            if (
+                content.width > page_rect.width * 0.55
+                or caption.width > page_rect.width * 0.55
+            ):
+                x0, x1 = margin, page_rect.width - margin
+            else:
+                x0 = max(margin, content.x0 - 12)
+                x1 = min(page_rect.width - margin, content.x1 + 12)
+            safe_top = max(
+                margin,
+                caption.y0 - page_rect.height * 0.58,
+            )
+            return fitz.Rect(
+                x0,
+                min(safe_top, max(margin, content.y0 - 14)),
+                x1,
+                min(page_rect.height - margin, content.y1 + 6),
+            )
         return fitz.Rect(
             margin,
-            max(margin, caption.y0 - page_rect.height * 0.58),
+            max(margin, caption.y0 - page_rect.height * 0.48),
             page_rect.width - margin,
             min(page_rect.height - margin, caption.y1 + 6),
         )
-    visual_rectangles = _visual_rectangles(page, caption)
     if visual_rectangles:
         content = fitz.Rect(visual_rectangles[0])
         for rectangle in visual_rectangles[1:]:
@@ -195,7 +306,7 @@ def extract_visual_assets(
     *,
     root: Path,
     paper_uid: str,
-    max_assets: int = 3,
+    max_assets: int = 6,
     dpi: int = 180,
 ) -> list[dict[str, Any]]:
     """Extract caption-backed paper figures as rebuildable derived assets."""
@@ -207,10 +318,10 @@ def extract_visual_assets(
     assets: list[dict[str, Any]] = []
     generated_names: set[str] = set()
     with fitz.open(pdf_path) as document:
-        candidates = sorted(
+        candidates = _select_candidates(
             _caption_candidates(document),
-            key=lambda item: (-item.score, item.page_index, item.figure_number),
-        )[:max_assets]
+            max_assets,
+        )
         for candidate in candidates:
             page = document[candidate.page_index]
             clip = _crop_rectangle(page, candidate)
@@ -269,7 +380,7 @@ def refresh_record_visuals(
     root: Path,
     record: dict[str, Any],
     *,
-    max_assets: int = 3,
+    max_assets: int = 6,
 ) -> dict[str, Any]:
     pdf_relative = str(record.get("paper_pdf_path") or "")
     if not pdf_relative:

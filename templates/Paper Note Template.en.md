@@ -31,15 +31,57 @@ Methods, experiments, and limitations.
 {% if extraction.get('visual_assets', []) %}
 ## Visual guide
 
-{% for visual in extraction.get('visual_assets', []) %}
-### {% if visual.kind == 'architecture' %}Architecture and method overview{% elif visual.kind == 'result' %}Key result{% else %}Key figure{% endif %} · Figure {{ visual.figure_number }}
+> [!info] Visual coverage
+> {{ extraction.get('visual_assets', []) | length }} traceable figures were extracted from the original PDF. Start with architecture and method figures, then use results to verify the paper's claims.
 
-![[{{ visual.path }}|900]]
+{% set architecture_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'architecture') | list %}
+{% set result_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'result') | list %}
+{% set other_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'figure') | list %}
+{% if architecture_visuals %}
+### Architecture, system, and method figures
 
-> [!quote] Original caption · PDF page {{ visual.page }}
+{% for visual in architecture_visuals %}
+#### Figure {{ visual.figure_number }} · PDF page {{ visual.page }}
+
+![[{{ visual.path }}|950]]
+
+> [!quote]- Original caption
 > {{ visual.caption }}
+>
+> [[{{ paper_pdf_path }}#page={{ visual.page }}|Open this page in the original PDF]]
 
 {% endfor %}
+{% endif %}
+{% if result_visuals %}
+### Experiments and key results
+
+{% for visual in result_visuals %}
+#### Figure {{ visual.figure_number }} · PDF page {{ visual.page }}
+
+![[{{ visual.path }}|950]]
+
+> [!quote]- Original caption
+> {{ visual.caption }}
+>
+> [[{{ paper_pdf_path }}#page={{ visual.page }}|Open this page in the original PDF]]
+
+{% endfor %}
+{% endif %}
+{% if other_visuals %}
+### Tasks, hardware, and other key figures
+
+{% for visual in other_visuals %}
+#### Figure {{ visual.figure_number }} · PDF page {{ visual.page }}
+
+![[{{ visual.path }}|950]]
+
+> [!quote]- Original caption
+> {{ visual.caption }}
+>
+> [[{{ paper_pdf_path }}#page={{ visual.page }}|Open this page in the original PDF]]
+
+{% endfor %}
+{% endif %}
 {% endif %}
 ## Problem
 

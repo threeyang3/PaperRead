@@ -20,7 +20,7 @@ def test_version_contract_is_explicit_and_independent() -> None:
     assert VERSIONS.ai_analysis_schema_version == 1
     assert VERSIONS.user_data_schema_version == 1
     assert VERSIONS.public_feed_schema_version == 1
-    assert VERSIONS.template_bundle_version == 3
+    assert VERSIONS.template_bundle_version == 4
     assert VERSIONS.form_flow_integration_version == 1
 
 

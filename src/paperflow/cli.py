@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import json
 import os
 import subprocess
@@ -1477,7 +1478,7 @@ def paper_render_all(
 def paper_visuals(
     paper_uid: str = typer.Argument(""),
     all_papers: bool = typer.Option(False, "--all"),
-    max_assets: int = typer.Option(3, "--max-assets", min=1, max=10),
+    max_assets: int = typer.Option(6, "--max-assets", min=1, max=12),
 ):
     """从本地 PDF 提取图注可追溯的关键图片，并安全重渲染论文笔记。"""
     c = cfg()
@@ -1546,7 +1547,7 @@ def _refresh_visual_records(
 
 @migrate_app.command("visual-assets")
 def migrate_visual_assets(
-    max_assets: int = typer.Option(3, "--max-assets", min=1, max=10),
+    max_assets: int = typer.Option(6, "--max-assets", min=1, max=12),
 ):
     """迁移到模板 v3，并为已有论文生成可重建的视觉资产。"""
     c = cfg()
@@ -1565,20 +1566,34 @@ def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
     backup = create_workspace_backup(c.root, label="pre-visual-assets")
     workspace_path = c.root / ".paperflow/workspace.yaml"
     template_names = ["Paper Note Template.md", "Paper Note Template.en.md"]
+    official_v3_hashes = {
+        "Paper Note Template.md": (
+            "4a6ebd51a9226b2f4abe9e39813e03f15d06b6afd883ca610e7e2d9ee4cf0ddf"
+        ),
+        "Paper Note Template.en.md": (
+            "34f4fee88ceda1d41c414beabd2892a5af5a339fcf72f1e5a6069b2b4cebeaac"
+        ),
+    }
     template_source = _distribution_resource("templates")
     for name in template_names:
         source = template_source / name
         target = c.root / "90 System/Templates" / name
         source_text = source.read_text(encoding="utf-8")
         target_text = target.read_text(encoding="utf-8") if target.exists() else ""
-        if target_text and target_text != source_text and "visual_assets" not in target_text:
+        target_hash = (
+            hashlib.sha256(target.read_bytes()).hexdigest()
+            if target.exists()
+            else ""
+        )
+        is_official_v3 = target_hash == official_v3_hashes[name]
+        if target_text and target_text != source_text and not is_official_v3:
             candidate = target.with_name(target.name + ".new")
             atomic_write(candidate, source_text)
             raise RuntimeError(
                 f"Customized template requires merge review: "
                 f"{candidate.relative_to(c.root).as_posix()}"
             )
-        if target_text != source_text and not target_text:
+        if target_text != source_text and (not target_text or is_official_v3):
             atomic_write(target, source_text)
     workspace_data = YAML(typ="safe").load(
         workspace_path.read_text(encoding="utf-8")
@@ -1590,7 +1605,7 @@ def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
     records = sorted((c.root / ".paperflow/data/papers").glob("*.json"))
     results = _refresh_visual_records(c, records, max_assets=max_assets)
     return {
-        "migration_id": "derived-visual-assets-v1",
+        "migration_id": "derived-visual-assets-v2",
         "template_bundle_version": VERSIONS.template_bundle_version,
         "backup": backup.relative_to(c.root).as_posix(),
         "papers": results,

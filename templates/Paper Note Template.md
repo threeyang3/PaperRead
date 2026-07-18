@@ -35,15 +35,57 @@
 {% if extraction.get('visual_assets', []) %}
 ## 论文视觉导读
 
-{% for visual in extraction.get('visual_assets', []) %}
-### {% if visual.kind == 'architecture' %}架构与方法总览{% elif visual.kind == 'result' %}关键结果图{% else %}关键论文图{% endif %} · Figure {{ visual.figure_number }}
+> [!info] 图像覆盖
+> 已从原 PDF 提取 {{ extraction.get('visual_assets', []) | length }} 张可追溯关键图片。优先阅读架构与方法图，再用实验结果图核对论文结论。
 
-![[{{ visual.path }}|900]]
+{% set architecture_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'architecture') | list %}
+{% set result_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'result') | list %}
+{% set other_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'figure') | list %}
+{% if architecture_visuals %}
+### 架构、系统与方法图
 
-> [!quote] 原文图注 · PDF 第 {{ visual.page }} 页
+{% for visual in architecture_visuals %}
+#### Figure {{ visual.figure_number }} · PDF 第 {{ visual.page }} 页
+
+![[{{ visual.path }}|950]]
+
+> [!quote]- 原文图注
 > {{ visual.caption }}
+>
+> [[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
 
 {% endfor %}
+{% endif %}
+{% if result_visuals %}
+### 实验与关键结果图
+
+{% for visual in result_visuals %}
+#### Figure {{ visual.figure_number }} · PDF 第 {{ visual.page }} 页
+
+![[{{ visual.path }}|950]]
+
+> [!quote]- 原文图注
+> {{ visual.caption }}
+>
+> [[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
+
+{% endfor %}
+{% endif %}
+{% if other_visuals %}
+### 任务、硬件与其他关键图
+
+{% for visual in other_visuals %}
+#### Figure {{ visual.figure_number }} · PDF 第 {{ visual.page }} 页
+
+![[{{ visual.path }}|950]]
+
+> [!quote]- 原文图注
+> {{ visual.caption }}
+>
+> [[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
+
+{% endfor %}
+{% endif %}
 {% endif %}
 ## 论文解决的问题
 

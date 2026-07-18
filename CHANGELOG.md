@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Expanded caption-backed paper visuals from three to six images by default.
+- Added balanced architecture, result, and task/hardware figure selection,
+  including Chinese and Extended Data figure captions.
+- Added template bundle v4 with grouped visuals, folded original captions, and
+  direct links to the source PDF page.
+- Tightened architecture classification and crop fallbacks after visual QA on
+  Diffusion Policy, NIST IDB, TacForeSight, and RoboTTT PDFs.
+
 ## 1.3.2 - 2026-07-18
 
 - Added caption-backed PDF figure extraction with architecture-first semantic

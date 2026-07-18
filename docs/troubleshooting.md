@@ -24,3 +24,8 @@ If a visual guide is missing, confirm the paper has a local PDF, run
 `paperflow paper visuals <paper_uid>`, then run `paperflow validate`. A
 `no-captioned-figures` result means no reliable `Figure`/`Fig.` caption was
 found; PaperFlow intentionally does not fabricate a diagram.
+
+If an architecture figure is incomplete or a crop includes adjacent text, open
+the PDF-page link below the image to compare it with the source, then rerun with
+`--max-assets 6` after upgrading. Extracted images are Derived, so rerunning is
+safe and does not overwrite User Data.

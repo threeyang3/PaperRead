@@ -48,10 +48,12 @@ repeats validation and privacy scanning.
 
 Imported PDFs now produce a caption-backed visual guide in each paper note.
 Architecture, framework, overview, and pipeline figures are prioritized; the
-original figure text and captions are not translated. Existing papers can be
-updated from the Control Center with **Extract paper figures** or with
-`paperflow paper visuals --all`. The derived PNGs and manifests stay local and
-are excluded from Public Feeds.
+original figure text and captions are not translated. Template v4 displays up
+to six traceable figures grouped as architecture/method, experiments/results,
+and task/hardware context. Captions collapse by default and every image links
+to its original PDF page. Existing papers can be updated from the Control
+Center with **Extract paper figures** or with `paperflow paper visuals --all`.
+The derived PNGs and manifests stay local and are excluded from Public Feeds.
 
 Three Obsidian-native automation tracks can independently synchronize enabled
 Feed subscriptions, run opt-in safety-gated publishing on a data-source host,
