@@ -116,6 +116,7 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 - [Migrations](docs/migrations.md)
 - [AI providers](docs/ai-providers.md)
 - [Obsidian integration](docs/obsidian-integration.md)
+- [中文属性显示说明](docs/中文属性显示说明.md)
 - [Obsidian Control Center](docs/control-center.md)
 - [Public Feed](docs/public-feed.md)
 - [Security and privacy](docs/security.md)

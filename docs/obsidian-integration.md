@@ -24,3 +24,8 @@ PaperFlow Automation 1.3.1 also provides a ribbon-accessible Control Center
 for paper import, AI profile configuration, GitHub Feed subscriptions,
 synchronization, publication preflight, and controlled Git commit/push. See
 [PaperFlow Control Center](control-center.md).
+
+When Obsidian uses Chinese, the plugin presents Chinese display labels for all
+78 stable generated-paper properties without renaming the underlying YAML
+keys. Original paper content remains unchanged. See
+[PaperFlow 中文属性显示说明](中文属性显示说明.md).

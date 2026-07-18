@@ -78,8 +78,9 @@ scripts from papers, LaTeX sources, repositories, or installers.
 
 `push` is the only remote write in the Control Center. It requires a separate
 confirmation, then repeats Feed schema validation and privacy scanning before
-calling Git. PaperFlow does not create a GitHub repository or publish the
-current Vault automatically.
+calling Git. PaperFlow does not create a GitHub repository. Scheduled Feed
+publication runs only after the user explicitly enables that automation track
+and still repeats the same safety gates.
 
 ## Publishing prerequisites
 

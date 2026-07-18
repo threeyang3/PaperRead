@@ -16,3 +16,11 @@ Vault projections, Public Feed, and local User Data.
 
 Schema and application versions are independent. Data newer than the installed
 reader is rejected; older data requires an explicit migration.
+
+## Localized presentation layer
+
+Generated-paper YAML keys are a stable interoperability contract and remain in
+English. PaperFlow Automation adds a locale-sensitive presentation layer over
+Obsidian's native Properties panel: Chinese locales see Chinese labels, while
+English locales and focused property-name inputs expose the canonical keys.
+This layer changes no note content, schema, query, Base, or Feed data.
