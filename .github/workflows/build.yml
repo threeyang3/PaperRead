@@ -2,6 +2,8 @@ name: Build
 on:
   push:
   pull_request:
+env:
+  PYTHONUTF8: "1"
 jobs:
   package:
     runs-on: windows-latest
