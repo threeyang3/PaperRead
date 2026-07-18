@@ -19,3 +19,7 @@ Workspace and upgrades versioned Obsidian resources.
 Package-manager installation remains supported and is the recovery path when a
 release changes dependencies in a way that the existing managed runtime cannot
 import.
+
+After upgrading an existing Workspace to PaperFlow 1.3.2, run
+`paperflow migrate visual-assets` once to back up template v2, activate template
+v3, and generate caption-backed Derived figures for local PDFs.

@@ -19,7 +19,8 @@ def extract_user_notes(body: str) -> str | None:
 def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_method: str = "daily", ui_locale: str = "zh-CN") -> Path:
     env = Environment(loader=FileSystemLoader(root / "90 System/Templates"), undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
     template = "Paper Note Template.en.md" if ui_locale == "en" else "Paper Note Template.md"
-    body = env.get_template(template).render(**record)
+    template_values = {"extraction": {}, **record}
+    body = env.get_template(template).render(**template_values)
     old_frontmatter: dict[str, Any] = {}
     if note_path.exists():
         old_frontmatter, old_body = read_note(note_path)
@@ -32,7 +33,7 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     merged_user = merge_user_data(root, record, old_frontmatter)
     record = {**record, **merged_user}
     values = {
-        "type": "paper", "schema_version": 1, "system_template_version": 2, "title": record["paper_title"], "aliases": [], "tags": ["paper"],
+        "type": "paper", "schema_version": 1, "system_template_version": 3, "title": record["paper_title"], "aliases": [], "tags": ["paper"],
         **{k: v for k, v in record.items() if k.startswith(("paper_", "ai_", "user_", "system_"))},
     }
     values.setdefault("user_reading_status", "inbox")

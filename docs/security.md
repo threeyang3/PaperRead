@@ -11,3 +11,5 @@
   writes.
 - `workspace.local.yaml`, runtime data, backups, logs, PDFs, and current Vault
   notes must remain outside source and release artifacts.
+- PDF-derived PNGs and their local manifests remain Derived Workspace data;
+  Public Feed builds do not include them.

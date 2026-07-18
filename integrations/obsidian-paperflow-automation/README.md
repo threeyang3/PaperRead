@@ -13,6 +13,8 @@
 - 可从固定 GitHub Releases 仓库自动发现并 SHA256 暂存新版本；应用升级
   始终需要确认，并先备份 Workspace、保留旧运行时、迁移和升级插件资源。
 - Obsidian 工作区加载完成后默认自动打开控制中心；可在插件设置中关闭。
+- 控制中心“立即执行”区域可一键运行“补齐论文图片”，通过固定白名单命令
+  从本地 PDF 提取有原文图注支撑的架构图、方法总览和关键结果图。
 - 直接启动 Vault 内固定 `.paperflow/.venv/Scripts/python.exe`，`shell: false`，不调用 PowerShell、CMD 或 Windows Task Scheduler。
 - 不把笔记、表单或剪贴板内容拼接进命令行。
 - Python 流水线仍使用 `.paperflow/runtime/pipeline.lock` 防止并发。

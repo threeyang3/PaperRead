@@ -6,7 +6,7 @@ from typing import Any
 from packaging.version import Version
 
 
-APPLICATION_VERSION = "1.3.1"
+APPLICATION_VERSION = "1.3.2"
 
 
 @dataclass(frozen=True)
@@ -17,7 +17,7 @@ class VersionContract:
     ai_analysis_schema_version: int = 1
     user_data_schema_version: int = 1
     public_feed_schema_version: int = 1
-    template_bundle_version: int = 2
+    template_bundle_version: int = 3
     form_flow_integration_version: int = 1
 
     def model_dump(self) -> dict[str, Any]:

@@ -35,7 +35,7 @@ generated explanation sections where practical. Original paper titles,
 abstracts, quotations, citations, and extracted text are not mechanically
 translated.
 
-PaperFlow Automation 1.3.1 includes an Obsidian-native Control Center. It
+PaperFlow Automation 1.3.2 includes an Obsidian-native Control Center. It
 opens automatically after the Obsidian workspace is ready (this can be
 disabled in the plugin settings). Its first view is an extensible research task
 workspace: collecting and discovering papers, browsing the library, continuing
@@ -45,6 +45,13 @@ synchronization, publishing, migration, and maintenance are grouped under
 Advanced tools.
 There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
+
+Imported PDFs now produce a caption-backed visual guide in each paper note.
+Architecture, framework, overview, and pipeline figures are prioritized; the
+original figure text and captions are not translated. Existing papers can be
+updated from the Control Center with **Extract paper figures** or with
+`paperflow paper visuals --all`. The derived PNGs and manifests stay local and
+are excluded from Public Feeds.
 
 Three Obsidian-native automation tracks can independently synchronize enabled
 Feed subscriptions, run opt-in safety-gated publishing on a data-source host,
@@ -117,6 +124,7 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 - [AI providers](docs/ai-providers.md)
 - [Obsidian integration](docs/obsidian-integration.md)
 - [中文属性显示说明](docs/中文属性显示说明.md)
+- [论文图片处理说明](docs/论文图片处理说明.md)
 - [Obsidian Control Center](docs/control-center.md)
 - [Public Feed](docs/public-feed.md)
 - [Security and privacy](docs/security.md)

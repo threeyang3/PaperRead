@@ -18,9 +18,11 @@ from paperflow.pipeline.discover import discover as discover_papers
 from paperflow.pipeline.import_paper import import_paper
 from paperflow.pipeline.inbox import process_inbox
 from paperflow.pipeline.render import render_uid
+from paperflow.pipeline.visuals import refresh_record_visuals
+from paperflow.data.store import persist_layer_records
 from paperflow.scheduler import windows
 from paperflow.validation import validate_all
-from paperflow.utils import iso_beijing, now_beijing
+from paperflow.utils import atomic_json, atomic_write, iso_beijing, now_beijing
 from paperflow.migrations import migrate_v2
 from paperflow.acceptance import audit as acceptance_audit
 from paperflow.i18n import tr
@@ -1469,6 +1471,130 @@ def paper_render_all(
         record = json.loads(path.read_text(encoding="utf-8"))
         results.append(str(render_uid(c, record["paper_uid"])))
     typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+
+
+@paper_app.command("visuals")
+def paper_visuals(
+    paper_uid: str = typer.Argument(""),
+    all_papers: bool = typer.Option(False, "--all"),
+    max_assets: int = typer.Option(3, "--max-assets", min=1, max=10),
+):
+    """从本地 PDF 提取图注可追溯的关键图片，并安全重渲染论文笔记。"""
+    c = cfg()
+    records_dir = c.root / ".paperflow/data/papers"
+    if all_papers:
+        paths = sorted(records_dir.glob("*.json"))
+    elif paper_uid:
+        paths = [records_dir / f"{paper_uid.replace(':', '_')}.json"]
+    else:
+        raise typer.BadParameter("Provide PAPER_UID or use --all")
+    results = _refresh_visual_records(c, paths, max_assets=max_assets)
+    typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+    if any(item["status"] == "failed" for item in results):
+        raise typer.Exit(1)
+
+
+def _refresh_visual_records(
+    c,
+    paths: list[Path],
+    *,
+    max_assets: int,
+) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for path in paths:
+        if not path.is_file():
+            results.append(
+                {
+                    "paper_uid": path.stem.replace("_", ":", 1),
+                    "status": "failed",
+                    "error": f"Paper record not found: {path.name}",
+                }
+            )
+            continue
+        record = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            refresh_record_visuals(
+                c.root,
+                record,
+                max_assets=max_assets,
+            )
+            if c.workspace:
+                record["layer_paths"] = persist_layer_records(c.root, record)
+            atomic_json(path, record)
+            render_uid(c, str(record["paper_uid"]))
+            results.append(
+                {
+                    "paper_uid": record["paper_uid"],
+                    "status": record["extraction"][
+                        "visual_extraction_status"
+                    ],
+                    "assets": len(
+                        record["extraction"].get("visual_assets", [])
+                    ),
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "paper_uid": record.get("paper_uid", path.stem),
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+    return results
+
+
+@migrate_app.command("visual-assets")
+def migrate_visual_assets(
+    max_assets: int = typer.Option(3, "--max-assets", min=1, max=10),
+):
+    """迁移到模板 v3，并为已有论文生成可重建的视觉资产。"""
+    c = cfg()
+    with FileLock(c.root / ".paperflow/state/workspace.lock"):
+        payload = _apply_visual_assets_migration(c, max_assets=max_assets)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if any(item["status"] == "failed" for item in payload["papers"]):
+        raise typer.Exit(1)
+
+
+def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
+    from paperflow.workspace import _distribution_resource
+
+    if c.workspace and c.workspace.versions.templates > VERSIONS.template_bundle_version:
+        raise typer.BadParameter("Workspace template bundle is newer than PaperFlow")
+    backup = create_workspace_backup(c.root, label="pre-visual-assets")
+    workspace_path = c.root / ".paperflow/workspace.yaml"
+    template_names = ["Paper Note Template.md", "Paper Note Template.en.md"]
+    template_source = _distribution_resource("templates")
+    for name in template_names:
+        source = template_source / name
+        target = c.root / "90 System/Templates" / name
+        source_text = source.read_text(encoding="utf-8")
+        target_text = target.read_text(encoding="utf-8") if target.exists() else ""
+        if target_text and target_text != source_text and "visual_assets" not in target_text:
+            candidate = target.with_name(target.name + ".new")
+            atomic_write(candidate, source_text)
+            raise RuntimeError(
+                f"Customized template requires merge review: "
+                f"{candidate.relative_to(c.root).as_posix()}"
+            )
+        if target_text != source_text and not target_text:
+            atomic_write(target, source_text)
+    workspace_data = YAML(typ="safe").load(
+        workspace_path.read_text(encoding="utf-8")
+    )
+    workspace_data.setdefault("versions", {})["templates"] = (
+        VERSIONS.template_bundle_version
+    )
+    dump_yaml(workspace_path, workspace_data)
+    records = sorted((c.root / ".paperflow/data/papers").glob("*.json"))
+    results = _refresh_visual_records(c, records, max_assets=max_assets)
+    return {
+        "migration_id": "derived-visual-assets-v1",
+        "template_bundle_version": VERSIONS.template_bundle_version,
+        "backup": backup.relative_to(c.root).as_posix(),
+        "papers": results,
+    }
 
 
 @update_app.command("check")

@@ -14,3 +14,5 @@ configuration overlay.
 
 PaperFlow never translates the original paper text merely because Obsidian is
 Chinese. It localizes application UI and generated explanatory sections.
+When a local PDF contains recognizable `Figure`/`Fig.` captions, import also
+builds a local visual guide that prioritizes architecture and overview figures.

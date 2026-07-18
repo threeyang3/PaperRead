@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/visual-assets.schema.json",
+  "title": "PaperFlow visual asset manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "paper_uid", "pdf_sha256", "assets"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "paper_uid": {"type": "string", "minLength": 1},
+    "pdf_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "figure_number",
+          "kind",
+          "caption",
+          "page",
+          "path",
+          "width",
+          "height",
+          "sha256",
+          "score"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^figure-[0-9a-z-]+$"},
+          "figure_number": {"type": "string", "pattern": "^[0-9]+[a-z]?$"},
+          "kind": {"enum": ["architecture", "result", "figure"]},
+          "caption": {"type": "string", "minLength": 8},
+          "page": {"type": "integer", "minimum": 1},
+          "path": {"type": "string", "pattern": "^[^\\\\]+(?:/[^\\\\]+)*$"},
+          "width": {"type": "integer", "minimum": 1},
+          "height": {"type": "integer", "minimum": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "score": {"type": "number"}
+        }
+      }
+    }
+  }
+}

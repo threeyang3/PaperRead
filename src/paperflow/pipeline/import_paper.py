@@ -25,6 +25,7 @@ from .deduplicate import decide
 from .download import download_pdf
 from .extract import extract_pdf
 from .resources import find_resource_links
+from .visuals import refresh_record_visuals
 
 
 def pending_analysis() -> dict[str, Any]:
@@ -226,6 +227,13 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             "system_content_hash": content_hash, "system_pipeline_version": "0.1.0", "system_requires_manual_review": not bool(metadata.paper_pdf_url) or bool(unmatched_topics), "system_error": "",
             "extraction": extraction,
         })
+        if pdf_path.exists():
+            try:
+                refresh_record_visuals(cfg.root, record)
+            except Exception as exc:
+                record["extraction"]["visual_assets"] = []
+                record["extraction"]["visual_extraction_status"] = "failed"
+                record["extraction"]["visual_extraction_error"] = str(exc)
         if topic and not record["ai_topic_primary"]:
             topic_primary, topic_values, topic_unmatched = canonicalize_topics(cfg.root, topic, [topic])
             record["ai_topic_primary"] = topic_primary

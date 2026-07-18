@@ -425,6 +425,8 @@ function controlCommands(action, payload = {}) {
       return [["paths", "preview"]];
     case "render-preview":
       return [["paper", "render-all", "--dry-run"]];
+    case "paper-visuals":
+      return [["paper", "visuals", "--all"]];
     case "validate-all":
       return [["validate"]];
     case "retry-failed":
@@ -1624,6 +1626,7 @@ class PaperFlowControlCenterView extends ItemView {
     });
     this.button(quick, text("处理 Inbox", "Process Inbox"), "inbox", "inbox");
     this.button(quick, text("生成今日简报", "Run daily brief"), "calendar-clock", "daily");
+    this.button(quick, text("补齐论文图片", "Extract paper figures"), "images", "paper-visuals");
     this.vaultButton(
       quick,
       text("导入请求", "Import requests"),

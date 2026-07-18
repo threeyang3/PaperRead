@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 DIST = ROOT / "dist"
 
 
@@ -76,9 +76,11 @@ def main() -> None:
     zip_tree(DIST / f"templates-{VERSION}.zip", ROOT / "templates", "templates")
     notes = DIST / "migration-notes.md"
     notes.write_text(
-        "# PaperFlow 1.3.1 migration notes\n\n"
+        "# PaperFlow 1.3.2 migration notes\n\n"
         "Run `paperflow migrate plan`, review the zero-network plan, then run "
-        "`paperflow migrate apply` and `paperflow migrate verify`.\n",
+        "`paperflow migrate apply` and `paperflow migrate verify`.\n\n"
+        "For existing local PDFs, run `paperflow migrate visual-assets` to "
+        "back up template v2, install template v3, and build Derived figures.\n",
         encoding="utf-8",
     )
     artifacts = sorted(

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.2 - 2026-07-18
+
+- Added caption-backed PDF figure extraction with architecture-first semantic
+  ranking, page-aware cropping, SHA256 manifests, and no fabricated diagrams.
+- Added a bilingual visual guide to template bundle v3 while preserving
+  original paper captions and the stable flat YAML schema.
+- Added `paper visuals`, the backed-up `migrate visual-assets` workflow, and
+  an Obsidian Control Center quick action for existing papers.
+- Classified `layer_paths` correctly as Derived data so generated-paper
+  refreshes never attempt to mutate immutable Raw records.
+
 ## 1.3.1 - 2026-07-18
 
 - Added Chinese display labels for all 78 generated paper properties in

@@ -28,6 +28,19 @@ Researchers in embodied intelligence, robot learning, and robot manipulation.
 
 Methods, experiments, and limitations.
 
+{% if extraction.get('visual_assets', []) %}
+## Visual guide
+
+{% for visual in extraction.get('visual_assets', []) %}
+### {% if visual.kind == 'architecture' %}Architecture and method overview{% elif visual.kind == 'result' %}Key result{% else %}Key figure{% endif %} · Figure {{ visual.figure_number }}
+
+![[{{ visual.path }}|900]]
+
+> [!quote] Original caption · PDF page {{ visual.page }}
+> {{ visual.caption }}
+
+{% endfor %}
+{% endif %}
 ## Problem
 
 {{ sections.get('problem', '') }}

@@ -215,6 +215,10 @@ async function main() {
     [["paper", "analyze", "arxiv:2607.15275", "--provider", "codex"]]
   );
   assert.deepEqual(
+    AutomationPlugin.__test.controlCommands("paper-visuals"),
+    [["paper", "visuals", "--all"]]
+  );
+  assert.deepEqual(
     AutomationPlugin.__test.controlCommands("source-add", {
       url: "https://github.com/example/feed",
       name: "robotics-feed"

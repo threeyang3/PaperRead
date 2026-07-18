@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 
 def test_fixed_release_artifacts_and_checksums() -> None:

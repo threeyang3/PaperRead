@@ -32,6 +32,19 @@
 
 依据个人背景略过熟悉的相关工作。
 
+{% if extraction.get('visual_assets', []) %}
+## 论文视觉导读
+
+{% for visual in extraction.get('visual_assets', []) %}
+### {% if visual.kind == 'architecture' %}架构与方法总览{% elif visual.kind == 'result' %}关键结果图{% else %}关键论文图{% endif %} · Figure {{ visual.figure_number }}
+
+![[{{ visual.path }}|900]]
+
+> [!quote] 原文图注 · PDF 第 {{ visual.page }} 页
+> {{ visual.caption }}
+
+{% endfor %}
+{% endif %}
 ## 论文解决的问题
 
 {{ sections.get('problem', '') }}

@@ -19,3 +19,8 @@ application rather than forcing a write. If migration fails, inspect
 
 For Form Flow conflicts, review the existing file and its `.new` candidate.
 PaperFlow deliberately does not overwrite the customized file.
+
+If a visual guide is missing, confirm the paper has a local PDF, run
+`paperflow paper visuals <paper_uid>`, then run `paperflow validate`. A
+`no-captioned-figures` result means no reliable `Figure`/`Fig.` caption was
+found; PaperFlow intentionally does not fabricate a diagram.

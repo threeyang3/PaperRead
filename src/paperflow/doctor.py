@@ -120,7 +120,7 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         except Exception: arxiv_ok = False
         checks.append(("arXiv network", arxiv_ok, "export.arxiv.org:443"))
     else: checks.append(("arXiv network", True, "skipped (use --network)"))
-    checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in ["raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json", "paper-analysis.schema.json"]), ".paperflow/schemas"))
+    checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in ["raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json", "paper-analysis.schema.json", "visual-assets.schema.json"]), ".paperflow/schemas"))
     checks.append(("YAML template", (root / "90 System/Templates/Paper Note Template.md").exists(), "Paper Note Template.md"))
     briefs = sorted(cfg.path("daily_brief_folder").glob("*.md"), reverse=True)
     checks.append(("Latest daily status", True, briefs[0].name if briefs else "no daily run recorded"))

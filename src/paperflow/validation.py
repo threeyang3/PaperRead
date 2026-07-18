@@ -1,6 +1,8 @@
 from __future__ import annotations
+import hashlib
 import json
 from pathlib import Path
+from jsonschema import Draft202012Validator
 from ruamel.yaml import YAML
 from paperflow.obsidian.bases import validate_bases
 from paperflow.obsidian.frontmatter import read_note
@@ -13,6 +15,59 @@ BOOL_FIELDS = {"paper_has_code", "paper_has_project_page", "paper_has_dataset", 
 NUMBER_FIELDS = {"paper_arxiv_version", "ai_relevance_score", "ai_novelty_score", "ai_completeness_score", "ai_reproducibility_score", "ai_overall_score", "user_priority", "user_rating"}
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_visual_assets(root: Path) -> list[str]:
+    errors: list[str] = []
+    schema_path = root / ".paperflow/schemas/visual-assets.schema.json"
+    if not schema_path.exists():
+        schema_path = Path(__file__).resolve().parents[2] / "schemas/visual-assets.schema.json"
+    try:
+        validator = Draft202012Validator(
+            json.loads(schema_path.read_text(encoding="utf-8"))
+        )
+    except Exception as exc:
+        return [f"visual asset schema: {exc}"]
+    for manifest_path in (root / "80 Attachments/Papers").rglob(
+        "*.assets/manifest.json"
+    ):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for error in validator.iter_errors(manifest):
+                location = ".".join(str(part) for part in error.absolute_path)
+                errors.append(
+                    f"{manifest_path}: {location or '<root>'}: {error.message}"
+                )
+            asset_dir = manifest_path.parent
+            pdf_name = asset_dir.name.removesuffix(".assets") + ".pdf"
+            pdf_path = asset_dir.with_name(pdf_name)
+            if not pdf_path.is_file():
+                errors.append(f"{manifest_path}: source PDF missing: {pdf_path}")
+            elif _sha256(pdf_path) != manifest.get("pdf_sha256"):
+                errors.append(f"{manifest_path}: source PDF SHA256 mismatch")
+            for asset in manifest.get("assets", []):
+                relative = str(asset.get("path") or "")
+                candidate = (root / relative).resolve()
+                try:
+                    candidate.relative_to(root.resolve())
+                except ValueError:
+                    errors.append(f"{manifest_path}: asset escapes Vault: {relative}")
+                    continue
+                if not candidate.is_file():
+                    errors.append(f"{manifest_path}: asset missing: {relative}")
+                elif _sha256(candidate) != asset.get("sha256"):
+                    errors.append(f"{manifest_path}: asset SHA256 mismatch: {relative}")
+        except Exception as exc:
+            errors.append(f"{manifest_path}: {exc}")
+    return errors
+
+
 def validate_all(root: Path) -> list[str]:
     errors: list[str] = []
     yaml = YAML(typ="safe")
@@ -20,6 +75,7 @@ def validate_all(root: Path) -> list[str]:
     except Exception as exc: errors.append(f"paperflow.yaml: {exc}")
     try: json.loads((root / ".paperflow/schemas/paper-analysis.schema.json").read_text(encoding="utf-8"))
     except Exception as exc: errors.append(f"analysis schema: {exc}")
+    errors.extend(validate_visual_assets(root))
     errors.extend(validate_bases(root))
     for path in (root / "10 Papers").rglob("*.md"):
         try:

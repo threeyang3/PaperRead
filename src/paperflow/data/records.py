@@ -76,7 +76,7 @@ RAW_EXCLUDED = {
     "paper_has_dataset",
 }
 AI_SPECIAL = {"sections", "version_change_note"}
-DERIVED_KEYS = {"extraction", "note_path", "json_path"}
+DERIVED_KEYS = {"extraction", "note_path", "json_path", "layer_paths"}
 
 
 def split_legacy_record(

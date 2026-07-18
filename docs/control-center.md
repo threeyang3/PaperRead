@@ -1,6 +1,6 @@
 # PaperFlow Control Center
 
-PaperFlow Automation 1.3.1 adds an Obsidian-native Control Center. It opens
+PaperFlow Automation 1.3.2 adds an Obsidian-native Control Center. It opens
 automatically after the Obsidian workspace is ready; this behavior can be
 disabled in the plugin settings. You can also open it from the left ribbon,
 the command palette, or the plugin settings page. It wraps common PaperFlow
@@ -32,8 +32,9 @@ dedicated confirmation.
 
 - **Research task shelf:** collect or discover papers, browse the library,
   continue reading or reproduction, and inspect daily intake.
-- **Quick run:** process Inbox, run the daily workflow, inspect import requests,
-  and check runtime status.
+- **Quick run:** process Inbox, run the daily workflow, extract caption-backed
+  figures for existing papers, inspect import requests, and check runtime
+  status.
 - **Collect a paper:** add an arXiv ID, DOI, PDF URL, or web URL with priority
   and optional immediate AI analysis.
 - **Analyze a paper:** reanalyze an imported Paper UID using the saved Agent
