@@ -61,7 +61,7 @@ def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path,
     )
 
 
-def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "", run_ai: bool = True, force: bool = False, favorite: bool = False, queued: bool = False, user_tags: list[str] | None = None, user_note: str = "", import_method: str = "manual", provider: str | None = None) -> dict[str, Any]:
+def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "", run_ai: bool = True, force: bool = False, favorite: bool = False, queued: bool = False, user_tags: list[str] | None = None, user_note: str = "", import_method: str = "manual", provider: str | None = None, metadata_override: PaperMetadata | None = None, reuse_local_assets: bool = False) -> dict[str, Any]:
     ensure_layout(cfg)
     db = Database(cfg.root / ".paperflow/state/paperflow.db")
     logger = configure_logging(cfg.root)
@@ -69,7 +69,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
     paper_uid = ""
     try:
         db.set_import_job(job_id, paper_uid, "metadata_ready", "metadata")
-        metadata = _metadata(cfg, value)
+        metadata = metadata_override or _metadata(cfg, value)
         paper_uid = metadata.paper_uid
         db.set_import_job(job_id, paper_uid, "metadata_ready", "metadata")
         logger.info("Metadata ready", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "metadata"})
@@ -87,7 +87,28 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             db.record_version(metadata.paper_uid, decision.existing_version, snapshot.relative_to(cfg.root).as_posix())
         content_hash = ""
         extraction = {"headings": [], "page_count": 0}
-        if metadata.paper_pdf_url:
+        if reuse_local_assets:
+            if not json_path.exists():
+                raise FileNotFoundError(
+                    f"Local paper record is missing: {json_path}"
+                )
+            existing_record = json.loads(json_path.read_text(encoding="utf-8"))
+            if not pdf_path.exists():
+                raise FileNotFoundError(
+                    f"Local PDF is missing: {pdf_path}"
+                )
+            content_hash = existing_record.get("system_content_hash") or sha256_bytes(
+                pdf_path.read_bytes()
+            )
+            if text_path.exists():
+                extraction = existing_record.get("extraction") or {
+                    "headings": [],
+                    "page_count": 0,
+                }
+            else:
+                extraction = extract_pdf(pdf_path, text_path)
+            db.set_import_job(job_id, paper_uid, "text_extracted", "local-assets")
+        elif metadata.paper_pdf_url:
             db.set_import_job(job_id, paper_uid, "pdf_downloaded", "download")
             content_hash = download_pdf(metadata.paper_pdf_url, pdf_path, cfg.section("arxiv")["max_pdf_size_mb"], cfg.section("arxiv")["timeout_seconds"])
             db.set_import_job(job_id, paper_uid, "text_extracted", "extract")
@@ -227,7 +248,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             "system_content_hash": content_hash, "system_pipeline_version": "0.1.0", "system_requires_manual_review": not bool(metadata.paper_pdf_url) or bool(unmatched_topics), "system_error": "",
             "extraction": extraction,
         })
-        if pdf_path.exists():
+        if pdf_path.exists() and not reuse_local_assets:
             try:
                 refresh_record_visuals(cfg.root, record)
             except Exception as exc:
@@ -260,7 +281,11 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         record["json_path"] = json_path.relative_to(cfg.root).as_posix()
         atomic_json(json_path, record)
         if cfg.workspace:
-            record["layer_paths"] = persist_layer_records(cfg.root, record)
+            record["layer_paths"] = persist_layer_records(
+                cfg.root,
+                record,
+                preserve_existing_raw=reuse_local_assets,
+            )
             atomic_json(json_path, record)
         db.upsert_paper(record)
         if not cfg.section("retention").get("keep_extracted_text", True):

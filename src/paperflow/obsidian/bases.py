@@ -5,6 +5,18 @@ from paperflow.i18n import resolve_locale, tr
 from paperflow.utils import atomic_write
 
 COLUMNS = ["paper_title", "paper_first_author", "paper_year", "ai_topic_primary", "ai_novelty_score", "ai_completeness_score", "ai_reproducibility_score", "ai_overall_score", "user_reading_status", "user_priority", "paper_has_code", "system_imported_at"]
+CARD_FORMULAS = {
+    "card_first_author": "paper_first_author",
+    "card_year": "paper_year",
+    "card_topic": "ai_topic_primary",
+    "card_score": "ai_overall_score",
+    "card_reading_status": "user_reading_status",
+    "card_priority": "user_priority",
+}
+CARD_COLUMNS = [
+    "paper_title",
+    *[f"formula.{name}" for name in CARD_FORMULAS],
+]
 REQUEST_COLUMNS = ["request_id", "paper_input", "topic_hint", "priority", "run_ai", "ui_locale", "status", "created_at", "processed_at", "result_note", "error"]
 
 
@@ -28,8 +40,28 @@ def _base(
         if request
         else f'type == "paper" && file.inFolder("{paper_root}")'
     )
-    columns = REQUEST_COLUMNS if request else COLUMNS
-    return {"filters": filters, "properties": _properties(locale, columns), "views": views}
+    columns = REQUEST_COLUMNS if request else [*COLUMNS, "ai_summary_short"]
+    value = {
+        "filters": filters,
+        "properties": _properties(locale, columns),
+        "views": views,
+    }
+    if not request:
+        # file.embeds contains only embeds (not the PDF wikilink in Basic
+        # Information), so the first value is the architecture-first visual
+        # guide image rendered near the top of every generated paper note.
+        value["formulas"] = {
+            "paper_cover": "file.embeds[0]",
+            **CARD_FORMULAS,
+        }
+        value["properties"]["formula.paper_cover"] = {
+            "displayName": tr(locale, "property.paper_cover")
+        }
+        for alias, source in CARD_FORMULAS.items():
+            value["properties"][f"formula.{alias}"] = {
+                "displayName": tr(locale, f"property.{source}", source)
+            }
+    return value
 
 
 def definitions(
@@ -43,13 +75,42 @@ def definitions(
     ),
 ) -> dict[str, dict]:
     table = lambda key, filt=None, sort=None: {"type": "table", "name": tr(locale, f"base.view.{key}"), **({"filters": filt} if filt else {}), "order": COLUMNS, **({"sort": sort} if sort else {})}
+    cards = lambda key, filt=None, sort=None: {
+        "type": "cards",
+        "name": tr(locale, f"base.view.{key}"),
+        **({"filters": filt} if filt else {}),
+        "order": CARD_COLUMNS,
+        **({"sort": sort} if sort else {}),
+        "image": "formula.paper_cover",
+        "imageFit": "contain",
+        "imageAspectRatio": 1.4,
+        "cardSize": 280,
+    }
     return {
         "Paper Library.base": _base([
+            cards(
+                "visual_gallery",
+                "formula.paper_cover != null",
+                [{"property": "user_priority", "direction": "DESC"},
+                 {"property": "ai_overall_score", "direction": "DESC"}],
+            ),
+            cards(
+                "tactile_gallery",
+                'ai_topic_primary == "Tactile Sensing" || ai_topics.contains("Tactile Sensing")',
+                [{"property": "paper_year", "direction": "DESC"}],
+            ),
             table("all_papers"), table("high_value_unread", 'ai_overall_score >= 4 && user_reading_status != "read"'),
             table("recently_imported", 'system_imported_at >= now() - "7d"', [{"property": "system_imported_at", "direction": "DESC"}]), table("with_code", "paper_has_code == true"),
             table("needs_manual_review", "system_requires_manual_review == true"), table("completed_reading", 'user_reading_status == "read"'),
         ], locale, paper_root=paper_root, request_roots=request_roots),
-        "Daily Intake.base": _base([table("today", 'system_imported_at >= now() - "1d"', [{"property": "system_imported_at", "direction": "DESC"}])], locale, paper_root=paper_root, request_roots=request_roots),
+        "Daily Intake.base": _base([
+            cards(
+                "today",
+                'system_imported_at >= now() - "1d"',
+                [{"property": "system_imported_at", "direction": "DESC"}],
+            ),
+            table("today", 'system_imported_at >= now() - "1d"', [{"property": "system_imported_at", "direction": "DESC"}]),
+        ], locale, paper_root=paper_root, request_roots=request_roots),
         "Reading Queue.base": _base([table("reading_queue", 'user_reading_status == "queued" || user_reading_status == "reading"', [{"property": "user_priority", "direction": "DESC"}, {"property": "ai_overall_score", "direction": "DESC"}])], locale, paper_root=paper_root, request_roots=request_roots),
         "Reproduction Queue.base": _base([table("reproduction_queue", 'user_reproduction_status == "candidate" || user_reproduction_status == "planned" || user_reproduction_status == "in_progress"')], locale, paper_root=paper_root, request_roots=request_roots),
         "Paper Requests.base": _base([{"type": "table", "name": tr(locale, f"base.view.{name}"), "filters": f'status == "{name}"', "order": REQUEST_COLUMNS} for name in ["pending", "processing", "completed", "failed"]], locale, True, paper_root=paper_root, request_roots=request_roots),

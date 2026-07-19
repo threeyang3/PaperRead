@@ -45,6 +45,26 @@ def test_raw_snapshot_cannot_be_overwritten(tmp_path: Path) -> None:
         persist_layer_records(tmp_path, changed)
 
 
+def test_reanalysis_preserves_existing_raw_but_writes_new_ai(tmp_path: Path) -> None:
+    paths = persist_layer_records(tmp_path, _record())
+    raw_path = tmp_path / paths["raw"]
+    original_raw = raw_path.read_text(encoding="utf-8")
+    changed = _record()
+    changed["paper_title"] = "Verified display title"
+    changed["ai_analysis_model"] = "new-model"
+    changed["ai_summary_short"] = "New local analysis"
+
+    updated = persist_layer_records(
+        tmp_path,
+        changed,
+        preserve_existing_raw=True,
+    )
+
+    assert raw_path.read_text(encoding="utf-8") == original_raw
+    assert "ai" in updated
+    assert (tmp_path / updated["ai"]).is_file()
+
+
 def test_identical_analysis_identity_is_reused(tmp_path: Path) -> None:
     paths = persist_layer_records(tmp_path, _record())
     stored = json.loads((tmp_path / paths["ai"]).read_text(encoding="utf-8"))

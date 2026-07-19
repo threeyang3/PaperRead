@@ -131,6 +131,24 @@ def test_apply_verify_history_and_rollback_are_reversible(tmp_path: Path) -> Non
     assert (root / "10 Papers/2607.00001.md").read_bytes() == notes_bytes
 
 
+def test_verify_allows_valid_subscription_raw_records(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    apply(root)
+    local_raw = next((root / ".paperflow/data/raw").rglob("*.json"))
+    subscription_raw = (
+        root
+        / ".paperflow/data/raw/subscriptions/example/arxiv_2607.00001/v2.json"
+    )
+    subscription_raw.parent.mkdir(parents=True)
+    subscription_raw.write_bytes(local_raw.read_bytes())
+
+    result = verify(root)
+
+    assert result["ok"]
+    assert result["raw_records"] == 2
+    assert result["migrated_raw_records"] == 1
+
+
 def test_mid_migration_failure_restores_workspace(
     tmp_path: Path, monkeypatch
 ) -> None:

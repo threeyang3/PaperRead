@@ -70,7 +70,12 @@ def load_reusable_analysis(
     return record
 
 
-def persist_layer_records(root: Path, record: dict[str, Any]) -> dict[str, str]:
+def persist_layer_records(
+    root: Path,
+    record: dict[str, Any],
+    *,
+    preserve_existing_raw: bool = False,
+) -> dict[str, str]:
     """Persist all four layers while keeping Raw and AI records immutable."""
     raw, ai, user, derived = split_legacy_record(record)
     paper_id = safe_component(
@@ -82,7 +87,8 @@ def persist_layer_records(root: Path, record: dict[str, Any]) -> dict[str, str]:
     )
     user_path = root / ".paperflow/data/user" / f"{paper_id}.yaml"
     derived_path = root / ".paperflow/data/derived" / f"{paper_id}.json"
-    _write_immutable_json(raw_path, raw.model_dump(mode="json"))
+    if not (preserve_existing_raw and raw_path.exists()):
+        _write_immutable_json(raw_path, raw.model_dump(mode="json"))
     dump_yaml(user_path, user.model_dump(mode="json"))
     atomic_json(derived_path, derived.model_dump(mode="json"))
     result = {

@@ -346,7 +346,13 @@ def _verify_sqlite(root: Path) -> None:
 
 
 def verify(root: Path, run_id: str | None = None) -> dict[str, Any]:
-    raw = list((root / ".paperflow/data/raw").rglob("*.json"))
+    raw_root = root / ".paperflow/data/raw"
+    raw = list(raw_root.rglob("*.json"))
+    migrated_raw = [
+        path
+        for path in raw
+        if "subscriptions" not in path.relative_to(raw_root).parts
+    ]
     user = list((root / ".paperflow/data/user").glob("*.yaml"))
     derived = list((root / ".paperflow/data/derived").glob("*.json"))
     ai = list((root / ".paperflow/data/ai").rglob("*.json"))
@@ -393,9 +399,11 @@ def verify(root: Path, run_id: str | None = None) -> dict[str, Any]:
             if int(value.get("schema_version", 0)) < 1:
                 raise RuntimeError(f"Missing schema_version in {path}")
     legacy_count = len(_legacy_files(root))
-    if len(raw) != legacy_count or len(user) != legacy_count:
+    if len(migrated_raw) != legacy_count or len(user) != legacy_count:
         raise RuntimeError(
-            f"Record count mismatch: legacy={legacy_count}, raw={len(raw)}, user={len(user)}"
+            "Record count mismatch: "
+            f"legacy={legacy_count}, migrated_raw={len(migrated_raw)}, "
+            f"user={len(user)}, total_raw={len(raw)}"
         )
     _verify_sqlite(root)
     missing_notes: list[str] = []
@@ -411,6 +419,7 @@ def verify(root: Path, run_id: str | None = None) -> dict[str, Any]:
         "ok": True,
         "legacy_records": legacy_count,
         "raw_records": len(raw),
+        "migrated_raw_records": len(migrated_raw),
         "ai_records": len(ai),
         "user_records": len(user),
         "derived_records": len(derived),

@@ -33,6 +33,7 @@ FORBIDDEN_NAMES = {
     ".env",
 }
 FORBIDDEN_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".log", ".pdf"}
+FEED_TEXT_SUFFIXES = {".json", ".jsonl", ".yaml", ".yml", ".txt", ".md"}
 
 
 def _sha256(path: Path) -> str:
@@ -51,10 +52,13 @@ def _json_line(value: Any) -> str:
 
 def _copy_if_changed(source: Path, target: Path) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and _sha256(target) == _sha256(source):
+    payload = source.read_bytes()
+    if source.suffix.casefold() in FEED_TEXT_SUFFIXES:
+        payload = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if target.exists() and target.read_bytes() == payload:
         return False
     temporary = target.with_name(target.name + ".tmp")
-    shutil.copy2(source, temporary)
+    temporary.write_bytes(payload)
     temporary.replace(target)
     return True
 
@@ -107,6 +111,11 @@ def build_feed(
         )
     destination = destination or root / ".paperflow/publish/feed"
     destination.mkdir(parents=True, exist_ok=True)
+    (destination / ".gitattributes").write_text(
+        "* text=auto eol=lf\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     raw, ai = _source_records(root)
     paper_manifest: list[dict[str, Any]] = []
     analysis_manifest: list[dict[str, Any]] = []
@@ -230,6 +239,7 @@ def build_feed(
     (manifests / "current.json").write_text(
         json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     feed = {
         "feed_schema_version": VERSIONS.public_feed_schema_version,
@@ -247,6 +257,10 @@ def build_feed(
         "arxiv_attribution": True,
     }
     dump_yaml(destination / "feed.yaml", feed)
+    feed_yaml = destination / "feed.yaml"
+    feed_yaml.write_bytes(
+        feed_yaml.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    )
     schema_dir = destination / "schemas"
     schema_dir.mkdir(exist_ok=True)
     for name in [
@@ -268,7 +282,11 @@ def build_feed(
         checksums.append(f"{_sha256(path)}  {path.relative_to(destination).as_posix()}")
     checksum_file = destination / "checksums/sha256.txt"
     checksum_file.parent.mkdir(parents=True, exist_ok=True)
-    checksum_file.write_text("\n".join(checksums) + "\n", encoding="utf-8")
+    checksum_file.write_text(
+        "\n".join(checksums) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     validation = validate_feed(destination)
     findings = scan_feed(destination)
     if findings:

@@ -1,0 +1,141 @@
+schema_version: 1
+set_id: embodied-ai-tactile-foundations-2026-07
+title: Representative embodied AI and tactile robotics papers
+curated_at: 2026-07-18T22:20:00+08:00
+selection_policy:
+  - Prefer primary arXiv records with durable identifiers.
+  - Include field-opening work even when it predates the recent-paper window.
+  - Cover independent research directions rather than implying a linear workflow.
+  - Give tactile sensing, visuotactile learning, and tactile control extra weight.
+  - Keep original paper titles and technical text in their source language.
+papers:
+  - arxiv_id: "1703.06907"
+    role: pioneering
+    directions: [sim-to-real, domain-randomization, manipulation]
+    rationale_zh: 首批将纯仿真视觉模型通过域随机化迁移到真实机器人控制的代表工作。
+    source_url: https://arxiv.org/abs/1703.06907
+  - arxiv_id: "1708.00922"
+    role: pioneering
+    directions: [tactile-sensing, gelsight, slip-detection]
+    rationale_zh: GelSight 机器人夹爪传感器的重要早期设计，覆盖高分辨率几何与滑移检测。
+    source_url: https://arxiv.org/abs/1708.00922
+  - arxiv_id: "1808.00177"
+    role: pioneering
+    directions: [dexterous-manipulation, reinforcement-learning, sim-to-real]
+    rationale_zh: 纯仿真训练并迁移到 Shadow Hand 的灵巧手强化学习里程碑。
+    source_url: https://arxiv.org/abs/1808.00177
+  - arxiv_id: "1810.10191"
+    role: pioneering
+    directions: [visuotactile-learning, self-supervised-learning, contact-rich]
+    rationale_zh: 以自监督多模态表征提升插接等富接触任务样本效率的早期代表作。
+    source_url: https://arxiv.org/abs/1810.10191
+  - arxiv_id: "1901.08652"
+    role: pioneering
+    directions: [legged-locomotion, reinforcement-learning, sim-to-real]
+    rationale_zh: 将仿真强化学习策略迁移到 ANYmal 并实现敏捷动态运动的代表工作。
+    source_url: https://arxiv.org/abs/1901.08652
+  - arxiv_id: "1904.01201"
+    role: pioneering
+    directions: [embodied-navigation, simulation, benchmark]
+    rationale_zh: Habitat 高性能具身智能仿真、任务定义与导航评测平台论文。
+    source_url: https://arxiv.org/abs/1904.01201
+  - arxiv_id: "2005.14679"
+    role: pioneering
+    directions: [tactile-sensing, digit, in-hand-manipulation]
+    rationale_zh: 低成本、紧凑、高分辨率 DIGIT 视觉触觉传感器及手内操作验证。
+    source_url: https://arxiv.org/abs/2005.14679
+  - arxiv_id: "2107.04034"
+    role: representative
+    directions: [legged-locomotion, online-adaptation, sim-to-real]
+    rationale_zh: RMA 以快速在线适应处理未知地形、载荷和动力学变化。
+    source_url: https://arxiv.org/abs/2107.04034
+  - arxiv_id: "2111.00071"
+    role: pioneering
+    directions: [tactile-sensing, reskin, magnetic-sensing]
+    rationale_zh: 将磁传感电子部分与可替换软表皮分离，推动低成本触觉规模化。
+    source_url: https://arxiv.org/abs/2111.00071
+  - arxiv_id: "2204.01691"
+    role: pioneering
+    directions: [language-planning, affordance-grounding, mobile-manipulation]
+    rationale_zh: SayCan 用技能价值函数约束大语言模型规划，实现可执行的真实机器人语言任务。
+    source_url: https://arxiv.org/abs/2204.01691
+  - arxiv_id: "2206.14176"
+    role: pioneering
+    directions: [world-models, physical-robot-learning, reinforcement-learning]
+    rationale_zh: DayDreamer 将世界模型直接用于多类实体机器人在线学习。
+    source_url: https://arxiv.org/abs/2206.14176
+  - arxiv_id: "2211.12498"
+    role: representative
+    directions: [visuotactile-learning, tactile-dataset, in-the-wild]
+    rationale_zh: Touch and Go 建立自然环境中的人类采集视觉—触觉配对数据集。
+    source_url: https://arxiv.org/abs/2211.12498
+  - arxiv_id: "2212.06817"
+    role: pioneering
+    directions: [generalist-policy, robotics-transformer, manipulation]
+    rationale_zh: RT-1 展示大规模真实机器人数据与 Robotics Transformer 的可扩展性。
+    source_url: https://arxiv.org/abs/2212.06817
+  - arxiv_id: "2303.04137"
+    role: pioneering
+    directions: [diffusion-policy, imitation-learning, manipulation]
+    rationale_zh: 以条件扩散过程建模多模态机器人动作分布的代表性策略。
+    source_url: https://arxiv.org/abs/2303.04137
+  - arxiv_id: "2304.13705"
+    role: pioneering
+    directions: [bimanual-manipulation, imitation-learning, action-chunking]
+    rationale_zh: ACT 与低成本 ALOHA 系统显著降低精细双臂操作的数据和硬件门槛。
+    source_url: https://arxiv.org/abs/2304.13705
+  - arxiv_id: "2307.15818"
+    role: pioneering
+    directions: [vision-language-action, web-pretraining, semantic-reasoning]
+    rationale_zh: RT-2 明确提出 VLA 类别并把视觉语言知识迁移到机器人动作生成。
+    source_url: https://arxiv.org/abs/2307.15818
+  - arxiv_id: "2309.12300"
+    role: representative
+    directions: [tactile-control, dexterous-manipulation, reinforcement-learning]
+    rationale_zh: See to Touch 用视觉奖励优化触觉策略，验证多指灵巧操作。
+    source_url: https://arxiv.org/abs/2309.12300
+  - arxiv_id: "2310.08864"
+    role: pioneering
+    directions: [cross-embodiment, robot-dataset, generalist-policy]
+    rationale_zh: Open X-Embodiment 统一多机构、多机器人数据并验证 RT-X 跨本体正迁移。
+    source_url: https://arxiv.org/abs/2310.08864
+  - arxiv_id: "2401.18084"
+    role: pioneering
+    directions: [tactile-foundation-model, multimodal-alignment, zero-shot]
+    rationale_zh: UniTouch 将多种视觉触觉传感器与视觉、语言和声音统一对齐。
+    source_url: https://arxiv.org/abs/2401.18084
+  - arxiv_id: "2405.12213"
+    role: representative
+    directions: [generalist-policy, open-source, cross-embodiment]
+    rationale_zh: Octo 是基于 Open X-Embodiment 的开源通用机器人策略和微调基线。
+    source_url: https://arxiv.org/abs/2405.12213
+  - arxiv_id: "2406.09246"
+    role: representative
+    directions: [vision-language-action, open-source, efficient-finetuning]
+    rationale_zh: OpenVLA 提供开放权重、训练与消费级微调路径的 7B VLA 基线。
+    source_url: https://arxiv.org/abs/2406.09246
+  - arxiv_id: "2502.12191"
+    role: frontier
+    directions: [tactile-foundation-model, cross-sensor, static-dynamic]
+    rationale_zh: AnyTouch 学习跨多种视觉触觉传感器的静态—动态统一表征。
+    source_url: https://arxiv.org/abs/2502.12191
+  - arxiv_id: "2606.11184"
+    role: frontier
+    directions: [tactile-world-model, force-tactile-fusion, contact-rich]
+    rationale_zh: TacForeSight 以力条件触觉世界模型提供前瞻接触先验。
+    source_url: https://arxiv.org/abs/2606.11184
+  - arxiv_id: "2606.13102"
+    role: frontier
+    directions: [tactile-foundation-policy, cross-sensor, contact-rich]
+    rationale_zh: FTP-1 面向不同触觉传感器和本体预训练通用触觉基础策略。
+    source_url: https://arxiv.org/abs/2606.13102
+  - arxiv_id: "2607.14021"
+    role: frontier
+    directions: [industrial-manipulation, benchmark, multimodal-policy]
+    rationale_zh: 工业灵巧操作基准与多模态策略样本，用于检验最新论文抓取兼容性。
+    source_url: https://arxiv.org/abs/2607.14021
+  - arxiv_id: "2607.15275"
+    role: frontier
+    directions: [robot-foundation-model, test-time-training, long-context]
+    rationale_zh: RoboTTT 代表长上下文机器人基础模型与测试时训练路线。
+    source_url: https://arxiv.org/abs/2607.15275

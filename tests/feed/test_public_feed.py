@@ -129,6 +129,9 @@ def test_build_validate_and_sync_feed_without_user_data(tmp_path: Path) -> None:
     assert "user_priority" not in all_text
     assert "private" not in all_text
     assert not list(feed.rglob("*.pdf"))
+    assert (feed / ".gitattributes").read_text(encoding="utf-8") == (
+        "* text=auto eol=lf\n"
+    )
 
     subscriber = tmp_path / "subscriber"
     sync = sync_feed(
@@ -150,6 +153,37 @@ def test_build_validate_and_sync_feed_without_user_data(tmp_path: Path) -> None:
     )
     assert repeated["created"] == 0
     assert repeated["reused"] == 2
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="Git not installed")
+def test_feed_validates_after_windows_autocrlf_clone(tmp_path: Path) -> None:
+    publisher, _ = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(publisher, _settings(), feed)
+    subprocess = __import__("subprocess")
+    for command in [
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.name", "PaperFlow Test"],
+        ["git", "config", "user.email", "paperflow@example.invalid"],
+        ["git", "add", "."],
+        ["git", "commit", "-m", "fixture"],
+    ]:
+        subprocess.run(command, cwd=feed, check=True, capture_output=True)
+    clone = tmp_path / "clone"
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.autocrlf=true",
+            "clone",
+            str(feed),
+            str(clone),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    assert validate_feed(clone)["checksums"] == "ok"
 
 
 def test_publisher_does_not_republish_subscription_cache(

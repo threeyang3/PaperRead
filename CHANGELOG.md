@@ -9,6 +9,22 @@
   direct links to the source PDF page.
 - Tightened architecture classification and crop fallbacks after visual QA on
   Diffusion Policy, NIST IDB, TacForeSight, and RoboTTT PDFs.
+- Added architecture-first Obsidian Cards views for the full paper library,
+  tactile papers, and daily intake while retaining sortable table views; card
+  metadata labels now follow the Chinese Obsidian locale.
+- Made existing-paper AI analysis fully local-first: it reuses the stored
+  metadata, extracted text, PDF, and visual manifest without querying arXiv or
+  attempting to rewrite immutable Raw records.
+- Rejected generic or bibliography-only GitHub and dataset links, and verified
+  the official Octo and OpenVLA project, code, and dataset resources.
+- Made public Feed text output LF-stable with generated `.gitattributes`, so
+  checksums survive Windows `core.autocrlf` clones.
+- Made CLI output tolerant of characters unsupported by legacy Windows console
+  code pages without changing UTF-8 data on disk.
+- Made migration verification distinguish local migrated Raw records from valid
+  subscription-cache Raw records.
+- Fixed generated paper-note boolean capability fields and avoided false
+  Obsidian CLI Doctor failures on slower Windows application startup.
 
 ## 1.3.2 - 2026-07-18
 

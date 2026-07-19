@@ -45,6 +45,12 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     values.setdefault("user_added_tags", [])
     values.setdefault("user_last_read_at", None)
     values.setdefault("user_next_review_at", None)
+    values.setdefault("paper_has_code", bool(record.get("paper_code_url")))
+    values.setdefault(
+        "paper_has_project_page",
+        bool(record.get("paper_project_url")),
+    )
+    values.setdefault("paper_has_dataset", bool(record.get("paper_dataset_url")))
     values.setdefault("system_import_method", import_method)
     values.setdefault("system_imported_at", iso_beijing())
     if old_frontmatter.get("system_imported_at"):

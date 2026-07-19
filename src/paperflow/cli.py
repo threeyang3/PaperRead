@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 import typer
@@ -56,6 +57,21 @@ from paperflow.ai.providers import (
     explain_profile,
     make_provider,
 )
+
+
+def _configure_console_stream(stream) -> None:
+    """Keep Windows legacy consoles from turning successful jobs into errors."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(errors="backslashreplace")
+    except (AttributeError, OSError, ValueError):
+        return
+
+
+_configure_console_stream(sys.stdout)
+_configure_console_stream(sys.stderr)
 from paperflow.obsidian.form_flow import (
     install_or_upgrade as install_form_flow,
     integration_status as form_flow_status,

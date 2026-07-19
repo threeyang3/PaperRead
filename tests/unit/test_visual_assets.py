@@ -15,6 +15,7 @@ from paperflow.pipeline.visuals import (
     refresh_record_visuals,
 )
 from paperflow.obsidian.note_renderer import render_paper
+from paperflow.obsidian.frontmatter import read_note
 from paperflow.data.records import split_legacy_record
 from paperflow.validation import validate_visual_assets
 from paperflow.config import load_config
@@ -221,6 +222,10 @@ def test_visual_guide_renders_and_preserves_user_notes(tmp_path: Path) -> None:
 
     render_paper(tmp_path, record, note, ui_locale="zh-CN")
     first = note.read_text(encoding="utf-8")
+    frontmatter, _ = read_note(note)
+    assert frontmatter["paper_has_code"] is False
+    assert frontmatter["paper_has_project_page"] is False
+    assert frontmatter["paper_has_dataset"] is False
     assert "## 论文视觉导读" in first
     assert "![[80 Attachments/Papers/test.assets/figure-1-p2.png|950]]" in first
     assert "架构、系统与方法图" in first

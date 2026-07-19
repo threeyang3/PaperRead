@@ -12,11 +12,20 @@ from paperflow.config import Config
 from paperflow.utils import iso_beijing
 
 
-def _command(name: str, args: list[str] | None = None) -> tuple[bool, str]:
+def _command(
+    name: str,
+    args: list[str] | None = None,
+    timeout: int = 15,
+) -> tuple[bool, str]:
     executable = shutil.which(name)
     if not executable: return False, "not found"
     try:
-        result = subprocess.run([executable, *(args or ["--version"])], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(
+            [executable, *(args or ["--version"])],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         output = (result.stdout or result.stderr).strip()
         detail = output.splitlines()[0][:160] if output else executable
         return result.returncode == 0, detail
@@ -57,7 +66,8 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         checks.append((display, ok, detail))
     obsidian = shutil.which("obsidian") or ("D:/Obsidian/Obsidian.exe" if Path("D:/Obsidian/Obsidian.exe").exists() else None)
     checks.append(("Obsidian", bool(obsidian), str(obsidian or "not found")))
-    cli_ok, cli_detail = _command("obsidian", ["help"]); checks.append(("Obsidian CLI", cli_ok, cli_detail))
+    cli_ok, cli_detail = _command("obsidian", ["version"], timeout=45)
+    checks.append(("Obsidian CLI", cli_ok, cli_detail))
     base_root = (
         cfg.workspace.obsidian.bases.root
         if cfg.workspace
