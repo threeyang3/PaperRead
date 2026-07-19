@@ -5,10 +5,16 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
 VERSION = "1.4.0"
+pytestmark = pytest.mark.skipif(
+    not DIST.is_dir(),
+    reason="release artifacts are audited after scripts/build_release.py",
+)
 
 
 def test_fixed_release_artifacts_and_checksums() -> None:

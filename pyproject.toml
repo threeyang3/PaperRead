@@ -67,5 +67,5 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", ".paperflow/tests"]
+testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"
