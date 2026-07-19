@@ -1,4 +1,5 @@
 .env
+.venv/
 .paperflow/.venv/
 .paperflow/cache/**
 .paperflow/logs/**
