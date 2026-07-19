@@ -53,7 +53,8 @@ dedicated confirmation.
   initialize its independent Git repository, inspect status, commit, and push
   after a dedicated confirmation dialog.
 - **Maintenance:** create a Workspace backup, inspect and verify migrations,
-  validate paths, preview render-all, and display resolved configuration.
+  validate paths, preview render-all, rebuild the relationship graph, and
+  display resolved configuration.
 - **Updates:** configure one fixed GitHub Releases repository, check or
   SHA256-stage a release, and confirmation-apply the program, Workspace, and
   versioned plugin update transaction.

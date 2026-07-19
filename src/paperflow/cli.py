@@ -1978,6 +1978,64 @@ def rebuild_index():
     finally: db.close()
     typer.echo(f"Indexed {count} papers")
 
+
+@app.command("rebuild-relationships")
+def rebuild_relationships_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """重建关系派生层、实体链接和论文笔记中的图谱属性。"""
+    from paperflow.sync_safety import assert_no_sync_conflicts
+
+    c = cfg()
+    records = sorted((c.root / ".paperflow/data/papers").glob("*.json"))
+    planned: list[str] = []
+    for path in records:
+        try:
+            planned.append(
+                str(json.loads(path.read_text(encoding="utf-8"))["paper_uid"])
+            )
+        except (OSError, KeyError, json.JSONDecodeError):
+            planned.append(path.stem.replace("_", ":", 1))
+    if dry_run:
+        typer.echo(
+            json.dumps(
+                {
+                    "dry_run": True,
+                    "papers": planned,
+                    "changes_applied": 0,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    assert_no_sync_conflicts(c.root)
+    results: list[dict[str, str]] = []
+    with FileLock(c.root / ".paperflow/runtime/pipeline.lock"):
+        for paper_uid in planned:
+            try:
+                note = render_uid(c, paper_uid)
+                results.append(
+                    {
+                        "paper_uid": paper_uid,
+                        "status": "rebuilt",
+                        "note": str(note),
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "paper_uid": paper_uid,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+    typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+    if any(item["status"] == "failed" for item in results):
+        raise typer.Exit(1)
+
+
 @app.command("rebuild-bases")
 def rebuild_bases_cmd():
     """从版本化定义重建全部 Obsidian Bases。"""

@@ -6,9 +6,11 @@ from pathlib import Path
 import fitz
 import pytest
 from jsonschema import Draft202012Validator
+from typer.testing import CliRunner
 
 from paperflow.acceptance import _installed_distribution_files, _project_root
 from paperflow.ai.chatgpt_web_adapter import _extract_json
+from paperflow.cli import app
 from paperflow.data.compose import compose_record
 from paperflow.data.store import persist_layer_records
 from paperflow.pipeline.visuals import CaptionCandidate, _select_candidates
@@ -18,6 +20,7 @@ from paperflow.text_quality import (
     suspicious_text,
     validate_text_quality,
 )
+from paperflow.workspace import init_workspace
 
 
 def _layer_record(title: str = r"$\pi_{0.5}$: Open-World Generalization") -> dict:
@@ -164,3 +167,30 @@ def test_acceptance_source_checks_are_independent_from_vault(
         "paperflow/resources/templates/Paper Note Template.md",
         "paperflow/resources/integrations/obsidian-paperflow-automation/main.js",
     } <= _installed_distribution_files()
+
+
+def test_relationship_rebuild_has_safe_dry_run(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    init_workspace(vault)
+    papers = vault / ".paperflow/data/papers"
+    papers.mkdir(parents=True, exist_ok=True)
+    papers.joinpath("2504.16054.json").write_text(
+        json.dumps(
+            {
+                "paper_uid": "arxiv:2504.16054",
+                "paper_title": r"$\pi_{0.5}$: Open-World Generalization",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        app,
+        ["rebuild-relationships", "--dry-run"],
+        env={"PAPERFLOW_VAULT": str(vault)},
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {
+        "dry_run": True,
+        "papers": ["arxiv:2504.16054"],
+        "changes_applied": 0,
+    }

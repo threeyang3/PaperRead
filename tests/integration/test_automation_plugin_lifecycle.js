@@ -219,6 +219,10 @@ async function main() {
     [["paper", "visuals", "--all"]]
   );
   assert.deepEqual(
+    AutomationPlugin.__test.controlCommands("rebuild-relationships"),
+    [["rebuild-relationships"]]
+  );
+  assert.deepEqual(
     AutomationPlugin.__test.controlCommands("source-add", {
       url: "https://github.com/example/feed",
       name: "robotics-feed"

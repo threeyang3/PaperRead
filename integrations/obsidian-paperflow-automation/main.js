@@ -450,6 +450,8 @@ function controlCommands(action, payload = {}) {
       return [["retry-failed"]];
     case "rebuild-index":
       return [["rebuild-index"]];
+    case "rebuild-relationships":
+      return [["rebuild-relationships"]];
     case "rebuild-bases":
       return [["rebuild-bases"]];
     case "config-validate":
@@ -2146,6 +2148,7 @@ class PaperFlowControlCenterView extends ItemView {
     this.button(actions, text("全量验证", "Validate all"), "shield-check", "validate-all");
     this.button(actions, text("重试失败", "Retry failed"), "rotate-ccw", "retry-failed");
     this.button(actions, text("重建索引", "Rebuild index"), "database", "rebuild-index");
+    this.button(actions, text("重建关系图谱", "Rebuild relationship graph"), "network", "rebuild-relationships");
     this.button(actions, text("重建 Bases", "Rebuild Bases"), "table-properties", "rebuild-bases");
     this.button(actions, text("验证配置", "Validate config"), "file-check-2", "config-validate");
     this.button(actions, text("查看配置", "Show config"), "settings-2", "config-show");
