@@ -1,5 +1,8 @@
 # 当前 Workspace 迁移报告
 
+> 本文记录 2026-07-17 的首次产品化迁移，不代表当前论文数量或测试基线。
+> 当前状态请以[验证矩阵](../verification-matrix.md)为准。
+>
 > Workspace：`E:/ObsidianVaults/ArxivLearn`  
 > 执行时间：2026-07-17 17:00（Asia/Shanghai）  
 > Migration：`workspace-0001-productization-20260717-172616-b8ef5d00`

@@ -93,8 +93,8 @@ from the Vault. Before `Build Feed` succeeds, configure:
 - publisher attribution;
 - an independently chosen data licence.
 
-The current `PaperRead` Feed uses `CC-BY-4.0`; PaperFlow application source
-uses the independent MIT software licence.
+The current `ArXiv-data` Feed uses `CC-BY-4.0`; the separate PaperRead
+application source uses the MIT software licence.
 
 PDFs remain link-only. User sidecars, notes, paths, logs, SQLite, credentials,
 and local Git metadata are never part of the Feed.

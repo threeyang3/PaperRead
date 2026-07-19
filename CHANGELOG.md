@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a unified Chinese guide for users and maintainers, covering setup,
+  Obsidian-native operation, repository ownership, testing, packaging,
+  publishing, upgrades, and recovery.
 - Separated the MIT-licensed PaperRead application from the CC BY 4.0
   `ArXiv-data` public subscription Feed.
 - Verified real Claude Code 2.1.206 analysis through Xiaomi `mimo-v2.5` on the

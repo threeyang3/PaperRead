@@ -80,7 +80,7 @@ def main() -> None:
         "Run `paperflow migrate plan`, review the zero-network plan, then run "
         "`paperflow migrate apply` and `paperflow migrate verify`.\n\n"
         "For existing local PDFs, run `paperflow migrate visual-assets` to "
-        "back up template v2, install template v3, and build Derived figures.\n",
+        "back up the Workspace, install template v4, and build Derived figures.\n",
         encoding="utf-8",
     )
     artifacts = sorted(

@@ -9,7 +9,7 @@ Five operations are deliberately separate:
 4. **Reanalyse a paper** with `paperflow paper analyze`; old AI records remain.
 5. **Re-render Markdown** with `paperflow paper render`; User Data is merged.
 
-PaperFlow 1.3.1 can discover stable releases from a fixed GitHub repository and
+PaperFlow 1.3.2 can discover stable releases from a fixed GitHub repository and
 stage a wheel only after checking `SHA256SUMS`. Discovery and verified staging
 may run automatically inside Obsidian. Applying an update remains
 confirmation-gated: PaperFlow backs up the Workspace, validates the new runtime
@@ -25,3 +25,6 @@ After upgrading an existing Workspace to PaperFlow 1.3.2, run
 template v4, and regenerate a category-balanced visual guide with up to six
 caption-backed Derived figures per local PDF. Official template v3 is upgraded
 automatically; customized templates are emitted as `.new` merge candidates.
+
+Program releases are discovered from PaperRead. ArXiv-data is an independent
+paper-data subscription and must never be used as an application update source.

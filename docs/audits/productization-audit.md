@@ -1,5 +1,9 @@
 # PaperFlow 产品化现状审计
 
+> 本文是 2026-07-17 的历史审计快照，不是当前安装或运维说明。当前状态请以
+> [用户与维护者指南](../维护者与用户指南.md)和
+> [验证矩阵](../verification-matrix.md)为准。
+>
 > 审计时间：2026-07-17 15:13（Asia/Shanghai）  
 > 审计对象：`E:/ObsidianVaults/ArxivLearn`  
 > 基线备份：`.paperflow/backups/productization-20260717-151342`
@@ -159,5 +163,8 @@ scripts/                      安装、构建和 portable
 - 本机运行的 Obsidian 应用包为 1.12.7，但安装器壳仍为 1.9.12，未达到官方 CLI 要求的 1.12.7 installer；因此 `plugin:reload/restart` 不能作为可靠热重载方式。1.1.1 文件、样式、启用状态和 integration 3 哈希状态已就位，并通过 Node DOM/生命周期测试；需要从系统托盘完全退出 Obsidian 后重新打开，当前进程才会加载自动打开行为。
 - 本地构建已生成 wheel、sdist、Windows portable、Schema/模板包、迁移说明和 `SHA256SUMS`；独立 wheel 安装和 CLI 启动成功。
 - 5 个 GitHub Actions 工作流和 Dependabot 已创建；未创建远程仓库、未 push、未上传 PyPI、未创建 Release。
-- 用户授权后，PaperFlow 程序代码选择 MIT License，`PaperRead` Feed 数据选择 CC BY 4.0；发布者为 `threeyang`。Feed 经 build/validate/scan 后已首次推送至公开仓库 `threeyang3/PaperRead` 的 `main` 分支。
+- 用户授权后，PaperFlow 程序代码选择 MIT License，当时与程序同仓的首批
+  数据选择 CC BY 4.0；发布者为 `threeyang`。该历史 Feed 经
+  build/validate/scan 后首次推送至 `threeyang3/PaperRead`。其后公共数据已
+  完整迁移到独立的 `threeyang3/ArXiv-data` 仓库。
 - PaperFlow 1.1.0 回归为 155 passed，另有 2 个 Node 调度器/控制中心生命周期集成测试通过；Doctor、产品 audit、迁移 verify、路径 validate、SQLite、链接和 Obsidian 内部调度均通过。

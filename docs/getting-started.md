@@ -1,5 +1,8 @@
 # Getting started
 
+For a complete Chinese walkthrough for both end users and project maintainers,
+see [PaperFlow 用户与维护者指南](维护者与用户指南.md).
+
 ```powershell
 uv tool install paperflow
 paperflow init --vault "D:/Obsidian/MyResearch"
@@ -19,3 +22,12 @@ builds a local visual guide that prioritizes architecture and overview figures.
 Template v4 shows up to six traceable figures grouped into architecture/method,
 experiments/results, and task/hardware sections. Captions stay in the original
 language and collapse by default; every figure links back to its PDF page.
+
+The official public data source is separate from the application repository:
+
+```powershell
+paperflow source add https://github.com/threeyang3/ArXiv-data.git --name arxiv-data
+paperflow source inspect arxiv-data
+paperflow source sync arxiv-data --dry-run
+paperflow source sync arxiv-data
+```

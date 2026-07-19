@@ -130,6 +130,7 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 
 ## Documentation
 
+- [用户与维护者中文总指南](docs/维护者与用户指南.md)
 - [Installation](docs/installation/windows.md)
 - [Configuration](docs/configuration.md)
 - [Architecture and data layers](docs/architecture.md)
@@ -140,5 +141,7 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 - [论文图片处理说明](docs/论文图片处理说明.md)
 - [Obsidian Control Center](docs/control-center.md)
 - [Public Feed](docs/public-feed.md)
+- [Repository separation](docs/repository-separation.md)
+- [Obsidian-native automation](docs/automation.md)
 - [Security and privacy](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
