@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=8.3", "respx>=0.21"]
+dev = ["build>=1.2", "hatchling>=1.27", "pytest>=8.3", "respx>=0.21"]
 browser = ["playwright>=1.52"]
 
 [project.scripts]
