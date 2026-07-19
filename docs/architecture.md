@@ -16,11 +16,16 @@ Vault projections, Public Feed, and local User Data.
 
 Caption-backed visual assets are also Derived. The extractor ranks
 architecture/framework/overview/pipeline figures, renders bounded PDF page
-regions to PNG, writes a checksummed per-paper manifest, and embeds up to six
-selected figures in a category-balanced visual guide. Up to three architecture
-or method figures are selected before results and task/hardware context.
+regions to PNG, writes a checksummed per-paper manifest, and adaptively embeds
+high-value figures in a category-balanced visual guide. Selection stops when
+marginal value is low; 12 is a safety ceiling rather than a target.
 Missing reliable captions produce no asset instead of a fabricated diagram.
 Original captions and in-figure text are not translated.
+
+Derived relationship indexes keep verified citations separate from semantic
+similarity, record source/evidence/confidence, and project only Obsidian
+wikilinks into the flat paper frontmatter. `compose_record()` is the sole
+render input path and merges Raw, AI, User, and Derived layers.
 
 Schema and application versions are independent. Data newer than the installed
 reader is rejected; older data requires an explicit migration.

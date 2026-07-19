@@ -100,13 +100,18 @@ class ProviderConfig(StrictModel):
     permission_mode: Literal["restricted"] = "restricted"
     timeout_seconds: int = Field(default=1800, ge=1, le=14400)
     extra_args: list[str] = Field(default_factory=list)
+    browser_executable: str = ""
+    browser_profile_dir: str = ""
+    base_url: str = "https://chatgpt.com/"
+    allow_pdf_upload: bool = False
+    model_preference: list[str] = Field(default_factory=list)
 
 
 class AIProfile(StrictModel):
-    provider: Literal["codex", "claude", "mock"]
+    provider: Literal["codex", "claude", "chatgpt-web", "mock"]
     model: str = ""
     timeout_seconds: int = Field(default=1800, ge=1, le=14400)
-    reasoning_effort: Literal["", "low", "medium", "high", "xhigh"] = ""
+    reasoning_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = ""
     fallback_profile: str = ""
     reuse_feed_analysis: bool = True
     reanalyze_when: Literal[
@@ -139,6 +144,26 @@ class DownloadSettings(StrictModel):
     timeout_seconds: int = Field(default=60, ge=1, le=3600)
     max_retries: int = Field(default=3, ge=0, le=20)
     request_interval_seconds: float = Field(default=3, ge=0)
+
+
+class VisualSettings(StrictModel):
+    selection_mode: Literal["adaptive"] = "adaptive"
+    quality_threshold: float = Field(default=48.0, ge=0, le=200)
+    safety_max_assets: int = Field(default=12, ge=0, le=50)
+
+
+class RelationshipSettings(StrictModel):
+    semantic_threshold: float = Field(default=0.35, ge=0, le=1)
+    max_semantic_links: int = Field(default=8, ge=0, le=100)
+    entity_types: list[Literal["topic", "method", "dataset", "author"]] = Field(
+        default_factory=lambda: ["topic", "method", "dataset"]
+    )
+
+
+class SyncCompatibilitySettings(StrictModel):
+    enabled: bool = True
+    settle_seconds: int = Field(default=3, ge=0, le=300)
+    refuse_conflict_files: bool = True
 
 
 class ObsidianBasesSettings(StrictModel):
@@ -231,6 +256,9 @@ class WorkspaceSettings(StrictModel):
     ai: AISettings
     discovery: DiscoverySettings = DiscoverySettings()
     downloads: DownloadSettings = DownloadSettings()
+    visuals: VisualSettings = VisualSettings()
+    relationships: RelationshipSettings = RelationshipSettings()
+    sync_compatibility: SyncCompatibilitySettings = SyncCompatibilitySettings()
     obsidian: ObsidianSettings = ObsidianSettings()
     publishing: PublishingSettings = PublishingSettings()
     subscriptions: SubscriptionSettings = SubscriptionSettings()
@@ -292,6 +320,19 @@ def default_workspace_dict() -> dict[str, Any]:
                     "timeout_seconds": 30,
                     "extra_args": [],
                 },
+                "chatgpt-web": {
+                    "executable": "msedge",
+                    "model": "",
+                    "sandbox": "read-only",
+                    "permission_mode": "restricted",
+                    "timeout_seconds": 3600,
+                    "extra_args": [],
+                    "browser_executable": "",
+                    "browser_profile_dir": "%LOCALAPPDATA%/PaperFlow/ChatGPTWeb",
+                    "base_url": "https://chatgpt.com/",
+                    "allow_pdf_upload": False,
+                    "model_preference": ["Pro", "Thinking", "GPT-5.6", "GPT-5"],
+                },
             },
             "profiles": {
                 "triage": {
@@ -321,6 +362,15 @@ def default_workspace_dict() -> dict[str, Any]:
                     "reuse_feed_analysis": True,
                     "reanalyze_when": "identity-changed",
                 },
+                "web_analysis": {
+                    "provider": "chatgpt-web",
+                    "model": "",
+                    "timeout_seconds": 3600,
+                    "reasoning_effort": "",
+                    "fallback_profile": "",
+                    "reuse_feed_analysis": True,
+                    "reanalyze_when": "identity-changed",
+                },
                 "reanalysis": {
                     "provider": "claude",
                     "model": "",
@@ -337,6 +387,9 @@ def default_workspace_dict() -> dict[str, Any]:
         },
         "discovery": DiscoverySettings().model_dump(mode="json"),
         "downloads": DownloadSettings().model_dump(mode="json"),
+        "visuals": VisualSettings().model_dump(mode="json"),
+        "relationships": RelationshipSettings().model_dump(mode="json"),
+        "sync_compatibility": SyncCompatibilitySettings().model_dump(mode="json"),
         "obsidian": ObsidianSettings().model_dump(mode="json"),
         "publishing": PublishingSettings().model_dump(mode="json"),
         "subscriptions": SubscriptionSettings().model_dump(mode="json"),
@@ -506,6 +559,11 @@ def install_workspace_resources(
             root / "90 System/Templates",
             False,
         ),
+        (
+            _distribution_resource("prompts"),
+            root / ".paperflow/prompts",
+            True,
+        ),
     ]
     for source_root, destination_root, managed in mappings:
         for source in sorted(source_root.rglob("*")):
@@ -673,6 +731,33 @@ def _install_automation_plugin(
         )
         temporary.replace(data_path)
         actions.append({"file": "data.json", "action": "initialized"})
+    else:
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+        runtime = data.pop("runtime", None)
+        if runtime is not None:
+            backup = backup_root / "data.json"
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(data_path, backup)
+            runtime_path = root / ".paperflow/runtime/plugin-state.json"
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            if not runtime_path.exists():
+                runtime_path.write_text(
+                    json.dumps(runtime, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            temporary = data_path.with_name(data_path.name + ".tmp")
+            temporary.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(data_path)
+            actions.append(
+                {
+                    "file": "data.json",
+                    "action": "split-runtime-state",
+                    "backup": backup.relative_to(root).as_posix(),
+                }
+            )
     enabled_path = root / ".obsidian/community-plugins.json"
     enabled = []
     if enabled_path.exists():

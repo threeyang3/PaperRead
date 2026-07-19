@@ -315,7 +315,7 @@ async function main() {
   assert.equal(AutomationPlugin.__test.text("中文", "English"), "中文");
   assert.equal(
     Object.keys(AutomationPlugin.__test.PAPER_PROPERTY_LABELS_ZH).length,
-    78
+    85
   );
   const propertyCss = AutomationPlugin.__test.propertyLabelCss();
   assert.match(propertyCss, /data-property-key="paper_title"/);
@@ -332,7 +332,7 @@ async function main() {
   await plugin.onload();
   assert.equal(typeof layoutReady, "function");
   layoutReady();
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 75));
 
   assert.deepEqual(
     vaultEvents.map((event) => event.name),
@@ -366,9 +366,7 @@ async function main() {
   assert.equal(view.contentEl.findByClass("paperflow-advanced-tools").length, 1);
   assert.ok(view.contentEl.findByClass("paperflow-action").length >= 25);
   assert.equal(view.contentEl.findByClass("paperflow-output").length, 1);
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].inboxEventDebounceMs, 1500);
-  assert.equal(saved[0].openControlCenterOnStartup, true);
+  assert.equal(saved.length, 0);
   assert.equal(revealedLeaf.state.type, "paperflow-control-center");
   assert.equal(revealedLeaf.state.active, true);
   assert.equal(plugin.started, true);

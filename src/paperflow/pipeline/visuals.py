@@ -134,35 +134,43 @@ def _caption_candidates(document: fitz.Document) -> list[CaptionCandidate]:
 def _select_candidates(
     candidates: list[CaptionCandidate],
     max_assets: int,
+    *,
+    quality_threshold: float = 48.0,
 ) -> list[CaptionCandidate]:
-    """Build a balanced visual guide with architecture figures first."""
-    ranked = sorted(
-        candidates,
-        key=lambda item: (-item.score, item.page_index, item.figure_number),
-    )
+    """Select a variable number of non-duplicate, high-value figures."""
+    ranked = sorted(candidates, key=lambda item: (-item.score, item.page_index))
     selected: list[CaptionCandidate] = []
-    selected_keys: set[tuple[int, str]] = set()
-
-    def take(kind: str, limit: int) -> None:
-        for candidate in ranked:
-            if len(selected) >= max_assets or limit <= 0:
-                return
-            key = (candidate.page_index, candidate.figure_number)
-            if candidate.kind == kind and key not in selected_keys:
-                selected.append(candidate)
-                selected_keys.add(key)
-                limit -= 1
-
-    take("architecture", min(3, max_assets))
-    take("result", min(2, max(0, max_assets - len(selected))))
-    take("figure", min(1, max(0, max_assets - len(selected))))
-    for candidate in ranked:
-        if len(selected) >= max_assets:
+    covered: set[str] = set()
+    selected_terms: list[set[str]] = []
+    remaining = list(ranked)
+    while remaining and len(selected) < max_assets:
+        scored: list[tuple[float, CaptionCandidate, set[str]]] = []
+        for candidate in remaining:
+            terms = {
+                term
+                for term in re.findall(r"[a-z0-9]{3,}", candidate.caption.casefold())
+                if term not in {"figure", "shows", "using", "with", "from", "that"}
+            }
+            duplicate = max(
+                (
+                    len(terms & previous) / max(1, len(terms | previous))
+                    for previous in selected_terms
+                ),
+                default=0.0,
+            )
+            coverage_bonus = 14.0 if candidate.kind not in covered else 0.0
+            marginal = candidate.score + coverage_bonus - duplicate * 45.0
+            scored.append((marginal, candidate, terms))
+        marginal, candidate, terms = max(
+            scored, key=lambda item: (item[0], -item[1].page_index)
+        )
+        required_coverage = candidate.kind in {"architecture", "result"} and candidate.kind not in covered
+        if marginal < quality_threshold and not required_coverage:
             break
-        key = (candidate.page_index, candidate.figure_number)
-        if key not in selected_keys:
-            selected.append(candidate)
-            selected_keys.add(key)
+        selected.append(candidate)
+        selected_terms.append(terms)
+        covered.add(candidate.kind)
+        remaining.remove(candidate)
 
     kind_order = {"architecture": 0, "result": 1, "figure": 2}
     return sorted(
@@ -306,7 +314,8 @@ def extract_visual_assets(
     *,
     root: Path,
     paper_uid: str,
-    max_assets: int = 6,
+    max_assets: int = 12,
+    quality_threshold: float = 48.0,
     dpi: int = 180,
 ) -> list[dict[str, Any]]:
     """Extract caption-backed paper figures as rebuildable derived assets."""
@@ -321,6 +330,7 @@ def extract_visual_assets(
         candidates = _select_candidates(
             _caption_candidates(document),
             max_assets,
+            quality_threshold=quality_threshold,
         )
         for candidate in candidates:
             page = document[candidate.page_index]
@@ -380,7 +390,8 @@ def refresh_record_visuals(
     root: Path,
     record: dict[str, Any],
     *,
-    max_assets: int = 6,
+    max_assets: int = 12,
+    quality_threshold: float = 48.0,
 ) -> dict[str, Any]:
     pdf_relative = str(record.get("paper_pdf_path") or "")
     if not pdf_relative:
@@ -399,6 +410,7 @@ def refresh_record_visuals(
         root=root,
         paper_uid=str(record["paper_uid"]),
         max_assets=max_assets,
+        quality_threshold=quality_threshold,
     )
     extraction["visual_extraction_status"] = (
         "complete" if extraction["visual_assets"] else "no-captioned-figures"

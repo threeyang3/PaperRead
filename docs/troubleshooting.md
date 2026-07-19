@@ -27,5 +27,5 @@ found; PaperFlow intentionally does not fabricate a diagram.
 
 If an architecture figure is incomplete or a crop includes adjacent text, open
 the PDF-page link below the image to compare it with the source, then rerun with
-`--max-assets 6` after upgrading. Extracted images are Derived, so rerunning is
+the adaptive defaults or a `--max-assets 0..12` safety ceiling. Extracted images are Derived, so rerunning is
 safe and does not overwrite User Data.

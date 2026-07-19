@@ -1,4 +1,4 @@
-# {{ paper_title }}
+# {{ paper_title_display }}
 
 > [!abstract] One-sentence overview
 > {{ ai_summary_short }}
@@ -11,7 +11,7 @@
 - Project: {{ paper_project_url }}
 - Code: {{ paper_code_url }}
 - Dataset: {{ paper_dataset_url }}
-- Topics: {{ ai_topics | join(', ') }}
+- Topics: {{ ai_topic_links | join(', ') }}
 - AI recommendation: {{ ai_recommendation }}
 
 ## Reading guide
@@ -124,7 +124,30 @@ Methods, experiments, and limitations.
 
 {{ sections.get('limitations', '') }}
 
-## Related papers
+## Relations and backlinks
+
+{% if paper_cites %}
+### Verified citations
+
+{% for item in paper_cites %}- {{ item }}
+{% endfor %}
+{% endif %}
+{% if ai_related_papers %}
+### Semantically related papers
+
+{% for item in ai_related_papers %}- {{ item }} (semantic relation)
+{% endfor %}
+{% endif %}
+{% if ai_method_links %}
+### Method entities
+
+{{ ai_method_links | join(', ') }}
+{% endif %}
+{% if ai_dataset_links %}
+### Dataset entities
+
+{{ ai_dataset_links | join(', ') }}
+{% endif %}
 
 ## Version history
 

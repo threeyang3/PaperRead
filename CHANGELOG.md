@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 - 2026-07-19
+
+- Released the PaperFlow 1.4.0 implementation contract: Workspace schema 2,
+  template v5, and `paper-analysis-v3`.
+- Added strict UTF-8 quality gates, source/display title separation, immutable
+  Raw captures, and repair-oriented Workspace health reporting.
+- Added a consent-gated Playwright/Edge ChatGPT Web provider with dedicated
+  external browser state, strongest-visible-model selection, staged PDF
+  uploads, schema validation, and fail-closed user handoff.
+- Unified every render path through Raw/AI/User/Derived composition so
+  subscription refreshes retain existing figure embeds.
+- Added adaptive visual selection, citation/semantic relationship separation,
+  topic/method/dataset entity notes, and backlinks-friendly YAML projections.
+- Separated plugin static settings from runtime state and added concurrent
+  write/conflict refusal for Nutstore-compatible operation.
+- Added formal Workspace v2 migration plus curated portable and template-Vault
+  release artifacts.
 
 - Added a unified Chinese guide for users and maintainers, covering setup,
   Obsidian-native operation, repository ownership, testing, packaging,
@@ -11,11 +27,9 @@
   π0, FAST, and π0.5 paper series.
 - Made Claude structured output compatible with its JSON Schema parser while
   retaining full Draft 2020-12 validation after inference.
-- Expanded caption-backed paper visuals from three to six images by default.
-- Added balanced architecture, result, and task/hardware figure selection,
-  including Chinese and Extended Data figure captions.
-- Added template bundle v4 with grouped visuals, folded original captions, and
-  direct links to the source PDF page.
+- Added adaptive caption-backed paper visuals with semantic coverage,
+  deduplication, a configurable safety ceiling, grouped presentation, folded
+  original captions, and direct links to the source PDF page.
 - Tightened architecture classification and crop fallbacks after visual QA on
   Diffusion Policy, NIST IDB, TacForeSight, and RoboTTT PDFs.
 - Added architecture-first Obsidian Cards views for the full paper library,

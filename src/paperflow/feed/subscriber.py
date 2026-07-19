@@ -14,6 +14,7 @@ import httpx
 
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
 from paperflow.versioning import check_reader_version
+from paperflow.sync_safety import assert_no_sync_conflicts
 
 
 def _sha256(path: Path) -> str:
@@ -85,6 +86,7 @@ def sync_feed(
     auto_download_pdf: bool = False,
     auto_render_notes: bool = False,
 ) -> dict[str, Any]:
+    assert_no_sync_conflicts(workspace)
     if trust not in {"metadata-only", "metadata-and-ai", "disabled"}:
         raise ValueError(f"Unsupported trust mode: {trust}")
     if trust == "disabled":
@@ -243,6 +245,7 @@ def _render_local_note(
     feed_id: str,
 ) -> Path:
     from paperflow.config import load_config
+    from paperflow.data.compose import compose_record
     from paperflow.obsidian.note_renderer import render_paper
     from paperflow.pipeline.import_paper import pending_analysis
 
@@ -258,35 +261,43 @@ def _render_local_note(
         .splitlines()
         if line and json.loads(line).get("paper_uid") == raw["paper_uid"]
     ]
+    selected_analysis = None
     if analyses:
         selected = analyses[-1]
-        analysis = json.loads(
+        selected_analysis = json.loads(
             resolve_feed_file(feed_root, selected["path"]).read_text(
                 encoding="utf-8"
             )
         )
-        record.update(analysis["analysis"])
-        record["system_selected_analysis_id"] = analysis["analysis_id"]
+        record.update(selected_analysis["analysis"])
+        record["system_selected_analysis_id"] = selected_analysis["analysis_id"]
         record["system_selected_analysis_publisher"] = feed_id
-        record["ai_analysis_provider"] = analysis["identity"].get(
+        record["ai_analysis_provider"] = selected_analysis["identity"].get(
             "provider", ""
         )
-        record["ai_analysis_model"] = analysis["identity"].get("model", "")
-        record["ai_analysis_prompt_version"] = analysis["identity"].get(
+        record["ai_analysis_model"] = selected_analysis["identity"].get("model", "")
+        record["ai_analysis_prompt_version"] = selected_analysis["identity"].get(
             "prompt_version", ""
         )
-        record["ai_analyzed_at"] = analysis.get("created_at", "")
+        record["ai_analyzed_at"] = selected_analysis.get("created_at", "")
     cfg = load_config(workspace)
+    record = compose_record(
+        workspace,
+        raw,
+        analysis=selected_analysis,
+        overlay=record,
+    )
     paper_id = str(raw.get("source_id") or raw["paper_uid"]).replace(":", "_")
     year = record.get("paper_year") or str(
         record.get("paper_submitted_date") or ""
     )[:4]
     relative = Path(str(year or "Unclassified")) / f"{paper_id}.md"
     note = cfg.path("paper_folder") / relative
-    pdf = workspace / "80 Attachments/Papers" / f"{paper_id}.pdf"
-    record["paper_pdf_path"] = (
-        pdf.relative_to(workspace).as_posix() if pdf.exists() else ""
-    )
+    if not record.get("paper_pdf_path"):
+        matches = list((workspace / "80 Attachments/Papers").rglob(f"{paper_id}.pdf"))
+        record["paper_pdf_path"] = (
+            matches[0].relative_to(workspace).as_posix() if matches else ""
+        )
     record.setdefault("paper_title", paper_id)
     record.setdefault("paper_authors", [])
     record.setdefault("paper_first_author", "")

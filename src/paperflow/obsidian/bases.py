@@ -4,7 +4,7 @@ from ruamel.yaml import YAML
 from paperflow.i18n import resolve_locale, tr
 from paperflow.utils import atomic_write
 
-COLUMNS = ["paper_title", "paper_first_author", "paper_year", "ai_topic_primary", "ai_novelty_score", "ai_completeness_score", "ai_reproducibility_score", "ai_overall_score", "user_reading_status", "user_priority", "paper_has_code", "system_imported_at"]
+COLUMNS = ["paper_title_display", "paper_title", "paper_first_author", "paper_year", "ai_topic_primary", "ai_novelty_score", "ai_completeness_score", "ai_reproducibility_score", "ai_overall_score", "user_reading_status", "user_priority", "paper_has_code", "system_imported_at"]
 CARD_FORMULAS = {
     "card_first_author": "paper_first_author",
     "card_year": "paper_year",
@@ -14,7 +14,7 @@ CARD_FORMULAS = {
     "card_priority": "user_priority",
 }
 CARD_COLUMNS = [
-    "paper_title",
+    "paper_title_display",
     *[f"formula.{name}" for name in CARD_FORMULAS],
 ]
 REQUEST_COLUMNS = ["request_id", "paper_input", "topic_hint", "priority", "run_ai", "ui_locale", "status", "created_at", "processed_at", "result_note", "error"]

@@ -168,7 +168,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                                 provider=candidate_provider,
                                 model=selected_model,
                                 profile=profile_name,
-                                prompt_version="paper-analysis-v2",
+                                prompt_version=PROMPT_VERSION,
                                 source_content_hash=content_hash,
                             )
                             paper_id = safe_component(
@@ -192,7 +192,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                                     metadata.paper_uid,
                                     candidate_provider,
                                     model,
-                                    "paper-analysis-v2",
+                                    PROMPT_VERSION,
                                     "reused",
                                 )
                                 db.set_import_job(
@@ -207,6 +207,9 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                                 candidate_provider, cfg.root, provider_config
                             )
                             result = adapter.analyze(metadata, text_path, profile)
+                            selected_model = (
+                                adapter.config.model or selected_model
+                            )
                         else:
                             adapter = make_adapter(candidate_provider, cfg.root, analysis_cfg["timeout_seconds"], analysis_cfg.get("model"))
                             result = adapter.analyze(metadata, text_path)
@@ -215,13 +218,27 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                             analysis = result.model_dump()
                         model = selected_model
                         used_provider = candidate_provider
-                        db.record_analysis(analysis_run_id, metadata.paper_uid, candidate_provider, model, "paper-analysis-v2", analysis["ai_analysis_status"])
+                        db.record_analysis(
+                            analysis_run_id,
+                            metadata.paper_uid,
+                            candidate_provider,
+                            model,
+                            PROMPT_VERSION,
+                            analysis["ai_analysis_status"],
+                        )
                         db.set_import_job(job_id, paper_uid, "analysis_complete", "analysis")
                         completed = True
                         break
                     except Exception as exc:
                         last_error = exc
-                        db.record_analysis(analysis_run_id, metadata.paper_uid, candidate_provider, getattr(locals().get("adapter", None), "model", ""), "paper-analysis-v2", "failed")
+                        db.record_analysis(
+                            analysis_run_id,
+                            metadata.paper_uid,
+                            candidate_provider,
+                            getattr(locals().get("adapter", None), "model", ""),
+                            PROMPT_VERSION,
+                            "failed",
+                        )
                 if completed:
                     break
             if not completed:
@@ -240,7 +257,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         record.update({
             "paper_pdf_path": pdf_path.relative_to(cfg.root).as_posix() if pdf_path.exists() else "",
             "paper_has_code": bool(metadata.paper_code_url), "paper_has_project_page": bool(metadata.paper_project_url), "paper_has_dataset": bool(metadata.paper_dataset_url),
-            "ai_analysis_provider": used_provider if run_ai else "", "ai_analysis_model": model, "ai_analysis_profile": used_profile if run_ai else "", "ai_analysis_prompt_version": "paper-analysis-v2" if run_ai else "",
+            "ai_analysis_provider": used_provider if run_ai else "", "ai_analysis_model": model, "ai_analysis_profile": used_profile if run_ai else "", "ai_analysis_prompt_version": PROMPT_VERSION if run_ai else "",
             "ai_analyzed_at": iso_beijing() if run_ai else None, "user_priority": priority, "user_favorite": favorite,
             "user_reading_status": "queued" if queued else "inbox", "user_learning_status": "none", "user_rating": 0,
             "user_reproduction_status": "none", "user_added_tags": user_tags or [], "user_last_read_at": None, "user_next_review_at": None,
@@ -299,3 +316,4 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         raise
     finally:
         db.close()
+PROMPT_VERSION = "paper-analysis-v3"

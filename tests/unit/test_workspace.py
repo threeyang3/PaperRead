@@ -81,7 +81,7 @@ def test_resources_install_internal_obsidian_automation(tmp_path: Path) -> None:
     manifest = __import__("json").loads(
         (plugin / "manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["version"] == "1.3.2"
+    assert manifest["version"] == "1.4.0"
     assert "controlCenter" in __import__("json").loads(
         (plugin / "data.json").read_text(encoding="utf-8")
     )
@@ -95,7 +95,7 @@ def test_resources_install_internal_obsidian_automation(tmp_path: Path) -> None:
             / ".paperflow/state/integrations/paperflow-automation.json"
         ).read_text(encoding="utf-8")
     )
-    assert state["plugin_version"] == "1.3.2"
+    assert state["plugin_version"] == "1.4.0"
     assert state["integration_version"] == 7
 
     main = plugin / "main.js"

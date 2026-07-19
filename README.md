@@ -2,7 +2,7 @@
 
 PaperFlow is a local-first, installable paper-learning workflow for arbitrary
 Obsidian Vaults. It discovers and imports papers, validates PDFs, records
-versioned source metadata, runs configurable Codex/Claude/Mock analysis,
+versioned source metadata, runs configurable Codex/Claude/ChatGPT Web/Mock analysis,
 preserves personal reading data, renders Obsidian notes and Bases, and can
 exchange privacy-scanned structured records through a Public Feed.
 
@@ -46,7 +46,7 @@ generated explanation sections where practical. Original paper titles,
 abstracts, quotations, citations, and extracted text are not mechanically
 translated.
 
-PaperFlow Automation 1.3.2 includes an Obsidian-native Control Center. It
+PaperFlow Automation 1.4.0 includes an Obsidian-native Control Center. It
 opens automatically after the Obsidian workspace is ready (this can be
 disabled in the plugin settings). Its first view is an extensible research task
 workspace: collecting and discovering papers, browsing the library, continuing
@@ -59,9 +59,9 @@ repeats validation and privacy scanning.
 
 Imported PDFs now produce a caption-backed visual guide in each paper note.
 Architecture, framework, overview, and pipeline figures are prioritized; the
-original figure text and captions are not translated. Template v4 displays up
-to six traceable figures grouped as architecture/method, experiments/results,
-and task/hardware context. Captions collapse by default and every image links
+original figure text and captions are not translated. Template v5 selects a
+variable number of traceable figures by quality, semantic coverage, and
+duplication, with 12 only as a safety ceiling. Captions collapse by default and every image links
 to its original PDF page. Existing papers can be updated from the Control
 Center with **Extract paper figures** or with `paperflow paper visuals --all`.
 The derived PNGs and manifests stay local and are excluded from Public Feeds.
@@ -102,13 +102,12 @@ The legacy `paperflow add` command remains available as an alias for
 
 ## Safe migration
 
-Before migrating an existing Vault:
+Before migrating an existing schema-1 Vault to PaperFlow 1.4:
 
 ```powershell
-paperflow migrate status
-paperflow migrate plan
-paperflow migrate apply
-paperflow migrate verify
+paperflow migrate workspace-v2 --dry-run
+paperflow migrate workspace-v2 --apply
+paperflow migrate verify-workspace-v2
 paperflow migrate history
 ```
 
@@ -131,6 +130,11 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 ## Documentation
 
 - [用户与维护者中文总指南](docs/维护者与用户指南.md)
+- [PaperFlow 1.4 用户指南](docs/用户指南-1.4.md)
+- [PaperFlow 1.4 维护者指南](docs/维护者指南-1.4.md)
+- [ChatGPT 网页分析与隐私](docs/ChatGPT网页分析与隐私.md)
+- [Nutstore Sync 兼容建议](docs/Nutstore兼容建议.md)
+- [1.4 迁移指南](docs/1.4迁移指南.md)
 - [Installation](docs/installation/windows.md)
 - [Configuration](docs/configuration.md)
 - [Architecture and data layers](docs/architecture.md)

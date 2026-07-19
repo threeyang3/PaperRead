@@ -15,4 +15,10 @@ legacy projection and in the Derived record. Each PDF has an adjacent
 `visual-assets.schema.json`. The manifest records only reproducible figure
 provenance: PDF hash, figure number, source page, original caption, relative
 path, dimensions, classification, score, and image hash. It does not change
-the stable flat paper YAML schema and is never part of a Public Feed.
+Raw, AI, or User schemas and is never part of a Public Feed.
+
+Paper-note schema 2 adds formally migrated flat projections:
+`paper_title_display`, entity links, verified local citations, unresolved
+citation IDs, and semantic related-paper links. Relationship indexes remain
+Derived and retain relationship type, evidence, confidence, and generator
+version. `paper_title` remains the unmodified source title.

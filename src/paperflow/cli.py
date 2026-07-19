@@ -57,6 +57,7 @@ from paperflow.ai.providers import (
     explain_profile,
     make_provider,
 )
+from paperflow.health import scan_workspace_health
 
 
 def _configure_console_stream(stream) -> None:
@@ -100,6 +101,11 @@ from paperflow.workspace_ops import (
     create_workspace_backup,
     export_user_data,
     import_user_data,
+)
+from paperflow.workspace_v2 import (
+    apply_workspace_v2,
+    plan_workspace_v2,
+    verify_workspace_v2,
 )
 
 app = typer.Typer(
@@ -537,6 +543,34 @@ def migrate_history_command(vault: Path | None = typer.Option(None, "--vault")):
     typer.echo(json.dumps(migration_history(_root(vault)), ensure_ascii=False, indent=2))
 
 
+@migrate_app.command("workspace-v2")
+def migrate_workspace_v2_command(
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """升级到 PaperFlow 1.4 Workspace schema 2，并安全重渲染生成笔记。"""
+    root = _root(vault)
+    result = (
+        apply_workspace_v2(root)
+        if apply_changes
+        else plan_workspace_v2(root)
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@migrate_app.command("verify-workspace-v2")
+def verify_workspace_v2_command(
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    typer.echo(
+        json.dumps(
+            verify_workspace_v2(_root(vault)),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @workspace_app.command("info")
 def workspace_info(vault: Path | None = typer.Option(None, "--vault")):
     root, settings = load_workspace_settings(vault)
@@ -784,9 +818,9 @@ def ai_set_profile(
         raise typer.BadParameter(
             "reanalyze_when must be identity-changed, never, or always"
         )
-    if reasoning_effort not in {"", "low", "medium", "high", "xhigh"}:
+    if reasoning_effort not in {"", "low", "medium", "high", "xhigh", "max"}:
         raise typer.BadParameter(
-            "reasoning_effort must be low, medium, high, xhigh, or empty"
+            "reasoning_effort must be low, medium, high, xhigh, max, or empty"
         )
     path, local = _local_config(root)
     existed = path.exists()
@@ -828,6 +862,39 @@ def ai_set_profile(
                     mode="json"
                 ),
                 "credentials_read": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@ai_app.command("web-consent")
+def ai_web_consent(
+    allow_pdf_upload: bool = typer.Option(
+        ..., "--allow-pdf-upload/--deny-pdf-upload"
+    ),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """保存 ChatGPT 网页 PDF 外部上传许可，不保存账号或凭证。"""
+    root, _ = load_workspace_settings(vault)
+    path, local = _local_config(root)
+    provider = (
+        local.setdefault("ai", {})
+        .setdefault("providers", {})
+        .setdefault("chatgpt-web", {})
+    )
+    provider["allow_pdf_upload"] = allow_pdf_upload
+    dump_yaml(path, local)
+    _, resolved = load_workspace_settings(root)
+    typer.echo(
+        json.dumps(
+            {
+                "provider": "chatgpt-web",
+                "allow_pdf_upload": resolved.ai.providers[
+                    "chatgpt-web"
+                ].allow_pdf_upload,
+                "credentials_saved": False,
             },
             ensure_ascii=False,
             indent=2,
@@ -1494,7 +1561,7 @@ def paper_render_all(
 def paper_visuals(
     paper_uid: str = typer.Argument(""),
     all_papers: bool = typer.Option(False, "--all"),
-    max_assets: int = typer.Option(6, "--max-assets", min=1, max=12),
+    max_assets: int = typer.Option(12, "--max-assets", min=0, max=12),
 ):
     """从本地 PDF 提取图注可追溯的关键图片，并安全重渲染论文笔记。"""
     c = cfg()
@@ -1563,9 +1630,9 @@ def _refresh_visual_records(
 
 @migrate_app.command("visual-assets")
 def migrate_visual_assets(
-    max_assets: int = typer.Option(6, "--max-assets", min=1, max=12),
+    max_assets: int = typer.Option(12, "--max-assets", min=0, max=12),
 ):
-    """迁移到模板 v3，并为已有论文生成可重建的视觉资产。"""
+    """为已有论文重建自适应、可追溯的 Derived 视觉资产。"""
     c = cfg()
     with FileLock(c.root / ".paperflow/state/workspace.lock"):
         payload = _apply_visual_assets_migration(c, max_assets=max_assets)
@@ -1862,6 +1929,15 @@ def language():
     """显示 PaperFlow 当前界面语言及检测来源。"""
     locale = cfg().ui_locale
     typer.echo(json.dumps({"locale": locale.locale, "source": locale.source, "paper_originals_translated": False}, ensure_ascii=False))
+
+
+@app.command("health")
+def health():
+    """扫描乱码、缺图、断裂附件、待重分析和同步冲突。"""
+    result = scan_workspace_health(cfg().root)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        raise typer.Exit(1)
 
 @app.command()
 def audit():

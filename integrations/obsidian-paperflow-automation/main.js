@@ -33,6 +33,7 @@ const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
   system_requires_manual_review: "需要人工审核",
   paper_uid: "论文唯一标识",
   paper_title: "论文标题",
+  paper_title_display: "显示标题",
   paper_authors: "作者",
   paper_first_author: "第一作者",
   paper_year: "年份",
@@ -67,6 +68,12 @@ const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
   ai_relevance_reason: "相关性依据",
   ai_topic_primary: "主要主题",
   ai_topics: "主题",
+  ai_topic_links: "主题双链",
+  ai_method_links: "方法双链",
+  ai_dataset_links: "数据集双链",
+  paper_cites: "已验证引用",
+  paper_citation_ids: "外部引用标识",
+  ai_related_papers: "语义相关论文",
   ai_method_family: "方法类别",
   ai_task_types: "任务类型",
   ai_robot_platforms: "机器人平台",
@@ -248,7 +255,7 @@ function profileName(value) {
 
 function providerName(value) {
   const result = String(value || "");
-  if (!new Set(["codex", "claude", "mock"]).has(result)) {
+  if (!new Set(["codex", "claude", "chatgpt-web", "mock"]).has(result)) {
     throw new Error(`未知 AI provider：${result}`);
   }
   return result;
@@ -260,6 +267,8 @@ function controlCommands(action, payload = {}) {
       return [["status"]];
     case "doctor":
       return [["doctor"]];
+    case "health":
+      return [["health"]];
     case "inbox":
       return [["inbox"]];
     case "daily":
@@ -277,7 +286,7 @@ function controlCommands(action, payload = {}) {
     case "paper-analyze": {
       const paperUid = cleanText(payload.paperUid, "Paper UID", 300);
       const provider = String(payload.provider || "configured");
-      if (!new Set(["configured", "codex", "claude", "mock"]).has(provider)) {
+      if (!new Set(["configured", "codex", "claude", "chatgpt-web", "mock"]).has(provider)) {
         throw new Error(`未知 AI provider：${provider}`);
       }
       const command = ["paper", "analyze", paperUid];
@@ -290,7 +299,7 @@ function controlCommands(action, payload = {}) {
       const model = String(payload.model || "").trim();
       const timeout = Math.min(14400, Math.max(1, Number(payload.timeout) || 1800));
       const reasoningEffort = String(payload.reasoningEffort || "");
-      if (!new Set(["", "low", "medium", "high", "xhigh"]).has(reasoningEffort)) {
+      if (!new Set(["", "low", "medium", "high", "xhigh", "max"]).has(reasoningEffort)) {
         throw new Error(`未知推理强度：${reasoningEffort}`);
       }
       const reanalyzeWhen = String(payload.reanalyzeWhen || "identity-changed");
@@ -300,7 +309,7 @@ function controlCommands(action, payload = {}) {
       if (model.length > 200 || /[\u0000-\u001f\u007f]/.test(model)) {
         throw new Error("模型名称包含无效字符或过长。");
       }
-      return [[
+      const commands = [[
         "ai",
         "set-profile",
         profile,
@@ -317,6 +326,14 @@ function controlCommands(action, payload = {}) {
         "--reanalyze-when",
         reanalyzeWhen
       ]];
+      if (provider === "chatgpt-web") {
+        commands.push([
+          "ai",
+          "web-consent",
+          payload.allowPdfUpload ? "--allow-pdf-upload" : "--deny-pdf-upload"
+        ]);
+      }
+      return commands;
     }
     case "ai-test":
       return [["ai", "test", "--profile", profileName(payload.profile)]];
@@ -490,6 +507,7 @@ const DEFAULT_SETTINGS = {
     aiReasoningEffort: "high",
     aiFallback: false,
     aiReuseFeed: true,
+    chatgptWebUploadApproved: false,
     aiReanalyzeWhen: "identity-changed",
     sourceName: "community-feed",
     sourceUrl: "",
@@ -606,6 +624,8 @@ function mergedSettings(value) {
 class PaperFlowAutomationPlugin extends Plugin {
   async onload() {
     this.settings = mergedSettings(await this.loadData());
+    await this.loadRuntimeState();
+    this.lastStaticSettings = this.staticSettingsJson();
     this.runningJob = null;
     this.inboxEventTimer = null;
     this.controlSaveTimer = null;
@@ -691,7 +711,49 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    const serialized = this.staticSettingsJson();
+    if (serialized !== this.lastStaticSettings) {
+      await this.saveData(JSON.parse(serialized));
+      this.lastStaticSettings = serialized;
+    }
+    await this.saveRuntimeState();
+  }
+
+  runtimeStatePath() {
+    return path.resolve(this.vaultRoot(), ".paperflow", "runtime", "plugin-state.json");
+  }
+
+  staticSettingsJson() {
+    const value = { ...this.settings };
+    delete value.runtime;
+    return JSON.stringify(value);
+  }
+
+  async loadRuntimeState() {
+    const target = this.runtimeStatePath();
+    try {
+      this.settings.runtime = {
+        ...DEFAULT_SETTINGS.runtime,
+        ...JSON.parse(await fs.promises.readFile(target, "utf8"))
+      };
+    } catch {
+      this.settings.runtime = {
+        ...DEFAULT_SETTINGS.runtime,
+        ...(this.settings.runtime || {})
+      };
+    }
+  }
+
+  async saveRuntimeState() {
+    const target = this.runtimeStatePath();
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    const temporary = `${target}.tmp`;
+    await fs.promises.writeFile(
+      temporary,
+      `${JSON.stringify(this.settings.runtime, null, 2)}\n`,
+      "utf8"
+    );
+    await fs.promises.rename(temporary, target);
   }
 
   scheduleControlSettingsSave() {
@@ -905,10 +967,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       this.settings.preferVaultPython && validVaultPython
         ? vaultPython
         : String(this.settings.pythonExecutable || "python");
-    const runtimeSource = path.resolve(root, ".paperflow", "src");
-    const source = fs.existsSync(runtimeSource)
-      ? runtimeSource
-      : path.resolve(root, "src");
+    const source = "";
 
     this.runningJob = kind;
     this.updateStatus(text(`PaperFlow：正在运行 ${kind}`, `PaperFlow: running ${kind}`));
@@ -1009,10 +1068,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       this.settings.preferVaultPython && validVaultPython
         ? vaultPython
         : String(this.settings.pythonExecutable || "python");
-    const runtimeSource = path.resolve(root, ".paperflow", "src");
-    const source = fs.existsSync(runtimeSource)
-      ? runtimeSource
-      : path.resolve(root, "src");
+    const source = "";
     const started = Date.now();
     const output = [];
     let result = { code: 0, stdout: "", stderr: "" };
@@ -1073,13 +1129,6 @@ class PaperFlowAutomationPlugin extends Plugin {
         env: {
           ...process.env,
           PAPERFLOW_VAULT: root,
-          ...(fs.existsSync(source)
-            ? {
-                PYTHONPATH: process.env.PYTHONPATH
-                  ? `${source}${path.delimiter}${process.env.PYTHONPATH}`
-                  : source
-              }
-            : {}),
           PYTHONUTF8: "1"
         }
       });
@@ -1634,6 +1683,7 @@ class PaperFlowControlCenterView extends ItemView {
       "00 Dashboard/Bases/Paper Requests.base"
     );
     this.button(quick, text("运行状态", "Run status"), "activity", "status");
+    this.button(quick, text("数据健康", "Data health"), "heart-pulse", "health");
 
     const focusHeader = container.createDiv({ cls: "paperflow-section-heading" });
     focusHeader.createEl("span", { text: text("执行与配置", "EXECUTE & CONFIGURE") });
@@ -1732,6 +1782,7 @@ class PaperFlowControlCenterView extends ItemView {
         ["configured", text("使用已保存设置", "Use saved settings")],
         ["codex", "Codex"],
         ["claude", "Claude Code"],
+        ["chatgpt-web", "ChatGPT Web"],
         ["mock", text("Mock（测试）", "Mock (test)")]
       ]
     );
@@ -1775,6 +1826,7 @@ class PaperFlowControlCenterView extends ItemView {
     this.selectInput(pair, "aiProvider", "Provider", [
       ["codex", "Codex"],
       ["claude", "Claude Code"],
+      ["chatgpt-web", "ChatGPT Web"],
       ["mock", "Mock"]
     ]);
     this.textInput(
@@ -1792,7 +1844,8 @@ class PaperFlowControlCenterView extends ItemView {
         ["low", text("低", "Low")],
         ["medium", text("中", "Medium")],
         ["high", text("高", "High")],
-        ["xhigh", text("极高", "Extra high")]
+        ["xhigh", text("极高", "Extra high")],
+        ["max", text("最高", "Maximum")]
       ]
     );
     const tools = body.createDiv({ cls: "paperflow-agent-boundary" });
@@ -1834,6 +1887,12 @@ class PaperFlowControlCenterView extends ItemView {
       "aiReuseFeed",
       text("复用订阅 Feed 分析", "Reuse subscribed Feed analysis")
     );
+    this.toggleInput(
+      body,
+      "chatgptWebUploadApproved",
+      text("允许向 ChatGPT 上传论文 PDF", "Allow PDF upload to ChatGPT"),
+      text("仅上传运行时暂存副本；不保存网页登录凭证", "Only a staged copy is uploaded; web credentials are not stored")
+    );
     const actions = this.buttonRow(body);
     this.button(
       actions,
@@ -1848,7 +1907,8 @@ class PaperFlowControlCenterView extends ItemView {
         reasoningEffort: this.control().aiReasoningEffort,
         fallback: this.control().aiFallback,
         reuseFeed: this.control().aiReuseFeed,
-        reanalyzeWhen: this.control().aiReanalyzeWhen
+        reanalyzeWhen: this.control().aiReanalyzeWhen,
+        allowPdfUpload: this.control().chatgptWebUploadApproved
       }),
       "primary"
     );

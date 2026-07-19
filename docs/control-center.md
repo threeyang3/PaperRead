@@ -1,6 +1,6 @@
 # PaperFlow Control Center
 
-PaperFlow Automation 1.3.2 adds an Obsidian-native Control Center. It opens
+PaperFlow Automation 1.4.0 adds an Obsidian-native Control Center. It opens
 automatically after the Obsidian workspace is ready; this behavior can be
 disabled in the plugin settings. You can also open it from the left ribbon,
 the command palette, or the plugin settings page. It wraps common PaperFlow
@@ -39,10 +39,13 @@ dedicated confirmation.
   and optional immediate AI analysis.
 - **Analyze a paper:** reanalyze an imported Paper UID using the saved Agent
   configuration or an explicitly selected provider.
-- **Agent settings:** choose the profile, Codex/Claude/Mock provider, model,
+- **Agent settings:** choose the profile, Codex/Claude/ChatGPT Web/Mock provider, model,
   Codex reasoning effort, timeout, fallback, Feed-analysis reuse, and
   reanalysis policy. Saving is one atomic backend operation and never reads or
   stores AI credentials.
+- **Data health:** inspect mojibake, missing visual embeds, broken assets,
+  pending reanalysis, sync conflicts, and relationship rebuild needs without
+  automatically overwriting user content.
 - **GitHub Feed subscriptions:** add a GitHub HTTPS repository, inspect its
   checksummed structure, set trust, enable/disable/remove sources, and
   synchronize one or all enabled sources.

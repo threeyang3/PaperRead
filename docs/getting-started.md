@@ -19,8 +19,9 @@ PaperFlow never translates the original paper text merely because Obsidian is
 Chinese. It localizes application UI and generated explanatory sections.
 When a local PDF contains recognizable `Figure`/`Fig.` captions, import also
 builds a local visual guide that prioritizes architecture and overview figures.
-Template v4 shows up to six traceable figures grouped into architecture/method,
-experiments/results, and task/hardware sections. Captions stay in the original
+Template v5 adaptively selects traceable figures grouped into architecture/method,
+experiments/results, and task/hardware sections, with 12 only as a safety
+ceiling. Captions stay in the original
 language and collapse by default; every figure links back to its PDF page.
 
 The official public data source is separate from the application repository:

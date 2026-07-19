@@ -7,6 +7,9 @@ from paperflow.utils import atomic_write, iso_beijing, now_beijing
 from paperflow.i18n import tr
 from .frontmatter import preserve_user_fields, read_note, write_note
 from paperflow.data.user_store import merge_user_data, save_user_record
+from paperflow.relationships import derive_relationships
+from paperflow.sync_safety import ExpectedFile
+from paperflow.text_quality import display_title, title_aliases
 
 USER_RE = re.compile(r"<!-- USER_NOTES_START -->(.*?)<!-- USER_NOTES_END -->", re.S)
 
@@ -20,8 +23,14 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     env = Environment(loader=FileSystemLoader(root / "90 System/Templates"), undefined=StrictUndefined, autoescape=False, keep_trailing_newline=True)
     template = "Paper Note Template.en.md" if ui_locale == "en" else "Paper Note Template.md"
     template_values = {"extraction": {}, **record}
+    record["paper_title_display"] = display_title(
+        str(record.get("paper_title") or note_path.stem)
+    )
+    record.update(derive_relationships(root, record))
+    template_values = {"extraction": {}, **record}
     body = env.get_template(template).render(**template_values)
     old_frontmatter: dict[str, Any] = {}
+    expected = ExpectedFile.capture(note_path)
     if note_path.exists():
         old_frontmatter, old_body = read_note(note_path)
         notes = extract_user_notes(old_body)
@@ -33,7 +42,9 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     merged_user = merge_user_data(root, record, old_frontmatter)
     record = {**record, **merged_user}
     values = {
-        "type": "paper", "schema_version": 1, "system_template_version": 4, "title": record["paper_title"], "aliases": [], "tags": ["paper"],
+        "type": "paper", "schema_version": 2, "system_template_version": 5,
+        "title": record["paper_title_display"],
+        "aliases": title_aliases(record), "tags": ["paper"],
         **{k: v for k, v in record.items() if k.startswith(("paper_", "ai_", "user_", "system_"))},
     }
     values.setdefault("user_reading_status", "inbox")
@@ -61,5 +72,22 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     values.setdefault("system_error", "")
     values = preserve_user_fields(values, old_frontmatter)
     save_user_record(root, record, values)
+    try:
+        expected.assert_unchanged()
+    except RuntimeError:
+        review = (
+            root
+            / "50 Inbox/Manual Review"
+            / f"{note_path.stem}-sync-conflict-"
+            f"{now_beijing().strftime('%Y%m%d-%H%M%S')}.md"
+        )
+        atomic_write(
+            review,
+            "# 同步并发冲突\n\n"
+            "PaperFlow 在写入前检测到笔记已被外部同步修改，因此拒绝覆盖。"
+            "下面保留本次拟生成版本，请人工合并。\n\n"
+            + body,
+        )
+        raise
     write_note(note_path, values, body)
     return note_path

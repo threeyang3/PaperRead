@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paperflow"
-version = "1.3.2"
+version = "1.4.0"
 description = "Local-first, installable AI paper learning workflow for Obsidian"
 readme = "README.md"
 license = "MIT"
@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["build>=1.2", "pytest>=8.3", "respx>=0.21"]
+browser = ["playwright>=1.52"]
 
 [project.scripts]
 paperflow = "paperflow.cli:app"
@@ -37,6 +38,7 @@ exclude = ["**/__pycache__/**", "**/*.pyc"]
 "schemas" = "paperflow/resources/schemas"
 "templates" = "paperflow/resources/templates"
 "integrations" = "paperflow/resources/integrations"
+"prompts" = "paperflow/resources/prompts"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -44,6 +46,7 @@ include = [
   "/schemas",
   "/templates",
   "/integrations",
+  "/prompts",
   "/migrations",
   "/examples",
   "/scripts",

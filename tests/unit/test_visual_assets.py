@@ -243,7 +243,7 @@ def test_visual_guide_renders_and_preserves_user_notes(tmp_path: Path) -> None:
 
     second = note.read_text(encoding="utf-8")
     assert "我的不可覆盖笔记" in second
-    assert "system_template_version: 4" in second
+    assert "system_template_version: 5" in second
 
 
 def test_layer_paths_remain_rebuildable_derived_data() -> None:
@@ -324,4 +324,4 @@ def test_visual_migration_creates_full_workspace_backup(tmp_path: Path) -> None:
     migrated = YAML(typ="safe").load(
         workspace_path.read_text(encoding="utf-8")
     )
-    assert migrated["versions"]["templates"] == 4
+    assert migrated["versions"]["templates"] == 5

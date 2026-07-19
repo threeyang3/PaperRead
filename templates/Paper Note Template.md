@@ -1,4 +1,4 @@
-# {{ paper_title }}
+# {{ paper_title_display }}
 
 > [!abstract] 一句话概述
 > {{ ai_summary_short }}
@@ -11,7 +11,7 @@
 - 项目主页：{{ paper_project_url }}
 - 代码：{{ paper_code_url }}
 - 数据集：{{ paper_dataset_url }}
-- 主题：{{ ai_topics | join('、') }}
+- 主题：{{ ai_topic_links | join('、') }}
 - AI 推荐结论：{{ ai_recommendation }}
 
 ## 阅读建议
@@ -163,7 +163,30 @@
 
 ### 可以借鉴到现有项目的内容
 
-## 相关论文
+## 关系与双链
+
+{% if paper_cites %}
+### 已验证引用
+
+{% for item in paper_cites %}- {{ item }}
+{% endfor %}
+{% endif %}
+{% if ai_related_papers %}
+### 语义相关论文
+
+{% for item in ai_related_papers %}- {{ item }}（语义关系）
+{% endfor %}
+{% endif %}
+{% if ai_method_links %}
+### 方法实体
+
+{{ ai_method_links | join('、') }}
+{% endif %}
+{% if ai_dataset_links %}
+### 数据集实体
+
+{{ ai_dataset_links | join('、') }}
+{% endif %}
 
 ## 版本记录
 

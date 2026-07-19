@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ from paperflow.data.records import AnalysisIdentity, split_legacy_record
 from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json
 from paperflow.workspace import dump_yaml
+from paperflow.utils import iso_beijing
+from paperflow.text_quality import validate_text_quality
 
 
 def _write_immutable_json(path: Path, value: dict[str, Any]) -> bool:
@@ -87,12 +90,43 @@ def persist_layer_records(
     )
     user_path = root / ".paperflow/data/user" / f"{paper_id}.yaml"
     derived_path = root / ".paperflow/data/derived" / f"{paper_id}.json"
-    if not (preserve_existing_raw and raw_path.exists()):
-        _write_immutable_json(raw_path, raw.model_dump(mode="json"))
+    raw_value = raw.model_dump(mode="json")
+    validate_text_quality(raw_value, label="raw")
+    if ai is not None:
+        validate_text_quality(ai.model_dump(mode="json"), label="ai")
+    selected_raw_path = raw_path
+    if not raw_path.exists():
+        _write_immutable_json(raw_path, raw_value)
+    else:
+        existing = json.loads(raw_path.read_text(encoding="utf-8"))
+        if existing != raw_value:
+            if not preserve_existing_raw:
+                raise RuntimeError(
+                    f"Immutable PaperFlow record already exists: {raw_path}"
+                )
+            serialized = json.dumps(
+                raw_value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            digest = hashlib.sha256(serialized).hexdigest()[:12]
+            stamp = iso_beijing().replace(":", "-")
+            selected_raw_path = (
+                raw_path.with_suffix("")
+                / "captures"
+                / f"{stamp}-{digest}.json"
+            )
+            _write_immutable_json(selected_raw_path, raw_value)
+        elif not preserve_existing_raw:
+            _write_immutable_json(raw_path, raw_value)
+    derived.derived["system_selected_raw_capture"] = (
+        selected_raw_path.relative_to(root).as_posix()
+    )
     dump_yaml(user_path, user.model_dump(mode="json"))
     atomic_json(derived_path, derived.model_dump(mode="json"))
     result = {
-        "raw": raw_path.relative_to(root).as_posix(),
+        "raw": selected_raw_path.relative_to(root).as_posix(),
         "user": user_path.relative_to(root).as_posix(),
         "derived": derived_path.relative_to(root).as_posix(),
     }

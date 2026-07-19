@@ -8,14 +8,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 
 
 def test_fixed_release_artifacts_and_checksums() -> None:
     required = {
         f"paperflow-{VERSION}-py3-none-any.whl",
         f"paperflow-{VERSION}.tar.gz",
-        f"paperflow-windows-x64-{VERSION}.zip",
+        f"PaperFlow-portable-{VERSION}.zip",
+        f"PaperFlow-Template-Vault-{VERSION}.zip",
         f"schemas-{VERSION}.zip",
         f"templates-{VERSION}.zip",
         "SHA256SUMS",
@@ -67,15 +68,31 @@ def test_archives_have_product_resources_and_no_current_vault_data() -> None:
 
 
 def test_portable_contains_installer_examples_and_no_user_data() -> None:
-    portable = DIST / f"paperflow-windows-x64-{VERSION}.zip"
+    portable = DIST / f"PaperFlow-portable-{VERSION}.zip"
     with zipfile.ZipFile(portable) as archive:
         names = archive.namelist()
     assert any(name.endswith("/install.ps1") for name in names)
     assert any(name.endswith("/uninstall.ps1") for name in names)
     assert any("/schemas/" in name for name in names)
     assert any("/templates/" in name for name in names)
+    assert any("/prompts/paper-analysis-v3.md" in name for name in names)
+    assert any("/docs/" in name for name in names)
     assert not any(
         fragment in name
         for name in names
         for fragment in [".paperflow/data", "10 Papers", "80 Attachments", ".obsidian"]
+    )
+
+
+def test_template_vault_is_curated_and_contains_no_papers() -> None:
+    template = DIST / f"PaperFlow-Template-Vault-{VERSION}.zip"
+    with zipfile.ZipFile(template) as archive:
+        names = archive.namelist()
+    assert any(name.endswith("/.paperflow/workspace.yaml") for name in names)
+    assert any("/.obsidian/plugins/paperflow-automation/main.js" in name for name in names)
+    assert any("/.obsidian/plugins/form-flow/data.json" in name for name in names)
+    assert not any(
+        fragment in name
+        for name in names
+        for fragment in ["10 Papers", "80 Attachments", ".paperflow/data", ".pdf"]
     )

@@ -27,6 +27,7 @@
     "aiReasoningEffort": "high",
     "aiFallback": false,
     "aiReuseFeed": true,
+    "chatgptWebUploadApproved": false,
     "aiReanalyzeWhen": "identity-changed",
     "sourceName": "community-feed",
     "sourceUrl": "",
@@ -41,24 +42,5 @@
     "sourceTrust": "metadata-and-ai",
     "updateRepository": "https://github.com/threeyang3/PaperRead",
     "updateAutoStage": true
-  },
-  "runtime": {
-    "lastDailyDate": "",
-    "lastDailyAt": "",
-    "lastDailyExitCode": null,
-    "lastInboxAt": "",
-    "lastInboxExitCode": null,
-    "lastSourceSyncAt": "",
-    "lastSourceSyncExitCode": null,
-    "lastPublishAt": "",
-    "lastPublishExitCode": null,
-    "lastUpdateCheckAt": "",
-    "lastUpdateCheckExitCode": null,
-    "updateAvailableVersion": "",
-    "lastMessage": "",
-    "lastControlAt": "",
-    "lastControlAction": "",
-    "lastControlExitCode": null,
-    "lastControlOutput": ""
   }
 }

@@ -1,0 +1,9 @@
+{
+  "formFolder": "90 System/Forms",
+  "scriptFolder": "90 System/Forms/scripts",
+  "formIntegrations": {
+    "90 System/Forms/添加论文.cform": {
+      "asCommand": true
+    }
+  }
+}
