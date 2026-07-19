@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Separated the MIT-licensed PaperRead application from the CC BY 4.0
+  `ArXiv-data` public subscription Feed.
+- Verified real Claude Code 2.1.206 analysis through Xiaomi `mimo-v2.5` on the
+  π0, FAST, and π0.5 paper series.
+- Made Claude structured output compatible with its JSON Schema parser while
+  retaining full Draft 2020-12 validation after inference.
 - Expanded caption-backed paper visuals from three to six images by default.
 - Added balanced architecture, result, and task/hardware figure selection,
   including Chinese and Extended Data figure captions.

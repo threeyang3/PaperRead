@@ -14,6 +14,17 @@ The application and each Vault are separate:
 - User Data remains local and is never published;
 - Markdown, Bases, dashboards, and briefs are derived projections.
 
+Public software and public data are also separate:
+
+- application code, releases, migrations, schemas, templates, and Obsidian
+  integrations live in
+  [`threeyang3/PaperRead`](https://github.com/threeyang3/PaperRead);
+- the versioned, privacy-scanned subscription Feed lives in
+  [`threeyang3/ArXiv-data`](https://github.com/threeyang3/ArXiv-data).
+
+The code is MIT licensed. Published data records use CC BY 4.0, while linked
+papers and third-party resources retain their original licenses.
+
 ## Install and initialize
 
 Python 3.11 or newer is required.

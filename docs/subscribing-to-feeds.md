@@ -19,7 +19,23 @@ Published Feed repositories include a generated `.gitattributes` and normalize
 all checksummed text to LF. This is part of the checksum contract: a Feed must
 still validate after a Windows clone with `core.autocrlf=true`.
 
-The PaperRead round-trip acceptance test published 26 Raw records and 26 AI
-records, cloned the public GitHub Feed, validated every checksum, then created
-52 subscription-cache records with no conflicts, user-data writes, or remote
-code execution. A repeated sync created no files and reused all 52 records.
+The official application and data source use separate repositories:
+
+- `PaperRead` contains MIT-licensed application code and releases.
+- `ArXiv-data` contains the CC BY 4.0 public Feed only.
+
+Subscribe with:
+
+```powershell
+paperflow source add https://github.com/threeyang3/ArXiv-data.git --name arxiv-data
+paperflow source inspect arxiv-data
+paperflow source sync arxiv-data --dry-run
+paperflow source sync arxiv-data
+```
+
+The `ArXiv-data` round-trip acceptance test published 29 Raw records and 29 AI
+records, cloned the public GitHub repository with `core.autocrlf=true`, and
+validated every checksum. The first remote sync created 58 subscription-cache
+records, downloaded only the three newly missing PDFs, and rendered 29 notes.
+A repeated sync created no records and reused all 58. Both runs reported zero
+conflicts, zero User-data writes, and zero remote-code execution.

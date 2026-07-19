@@ -12,6 +12,18 @@ from paperflow.utils import atomic_write, iso_beijing
 PROMPT_VERSION = "paper-analysis-v2"
 
 
+def _claude_cli_schema(schema: dict) -> dict:
+    """Return the validation shape supported by Claude Code structured output.
+
+    Claude Code validates the supplied object itself and currently rejects the
+    Draft 2020-12 declaration URI. PaperFlow still validates the returned value
+    against the original on-disk schema after the CLI exits.
+    """
+    value = dict(schema)
+    value.pop("$schema", None)
+    return value
+
+
 class ClaudeAdapter:
     provider = "claude"
     model = "configured-default"
@@ -40,7 +52,7 @@ class ClaudeAdapter:
             work = Path(temporary)
             shutil.copy2(text_path, work / "paper.txt")
             (work / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
-            command = [executable, "--print", "--bare", "--tools", "", "--no-session-persistence", "--output-format", "json", "--json-schema", json.dumps(schema)]
+            command = [executable, "--print", "--bare", "--tools", "", "--no-session-persistence", "--output-format", "json", "--json-schema", json.dumps(_claude_cli_schema(schema))]
             if self.model != "configured-default":
                 command.extend(["--model", self.model])
             command.extend(self.extra_args)

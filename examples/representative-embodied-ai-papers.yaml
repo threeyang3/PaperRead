@@ -114,11 +114,26 @@ papers:
     directions: [vision-language-action, open-source, efficient-finetuning]
     rationale_zh: OpenVLA 提供开放权重、训练与消费级微调路径的 7B VLA 基线。
     source_url: https://arxiv.org/abs/2406.09246
+  - arxiv_id: "2410.24164"
+    role: pioneering
+    directions: [vision-language-action, flow-matching, robot-foundation-model]
+    rationale_zh: π0 将预训练 VLM 与连续动作 flow matching 结合，形成跨本体通用机器人策略。
+    source_url: https://arxiv.org/abs/2410.24164
+  - arxiv_id: "2501.09747"
+    role: representative
+    directions: [vision-language-action, action-tokenization, dexterous-manipulation]
+    rationale_zh: FAST 以 DCT 与 BPE 压缩高频动作序列，使自回归 VLA 支持灵巧控制。
+    source_url: https://arxiv.org/abs/2501.09747
   - arxiv_id: "2502.12191"
     role: frontier
     directions: [tactile-foundation-model, cross-sensor, static-dynamic]
     rationale_zh: AnyTouch 学习跨多种视觉触觉传感器的静态—动态统一表征。
     source_url: https://arxiv.org/abs/2502.12191
+  - arxiv_id: "2504.16054"
+    role: representative
+    directions: [vision-language-action, open-world-generalization, mobile-manipulation]
+    rationale_zh: π0.5 通过异构协同训练和分层推理，在全新家庭环境执行长时程操作。
+    source_url: https://arxiv.org/abs/2504.16054
   - arxiv_id: "2606.11184"
     role: frontier
     directions: [tactile-world-model, force-tactile-fusion, contact-rich]
