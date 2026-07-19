@@ -7,6 +7,7 @@ import fitz
 import pytest
 from jsonschema import Draft202012Validator
 
+from paperflow.acceptance import _installed_distribution_files, _project_root
 from paperflow.ai.chatgpt_web_adapter import _extract_json
 from paperflow.data.compose import compose_record
 from paperflow.data.store import persist_layer_records
@@ -147,3 +148,19 @@ def test_chatgpt_json_extractor_accepts_fenced_json_and_rejects_text() -> None:
     assert _extract_json('```json\n{"ok": true}\n```') == {"ok": True}
     with pytest.raises(ValueError):
         _extract_json("No structured result")
+
+
+def test_acceptance_source_checks_are_independent_from_vault(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repository = Path(__file__).parents[2].resolve()
+    monkeypatch.chdir(repository)
+    assert _project_root() == repository
+
+    monkeypatch.chdir(tmp_path)
+    assert _project_root() is None
+    assert {
+        "paperflow/resources/schemas/raw-paper.schema.json",
+        "paperflow/resources/templates/Paper Note Template.md",
+        "paperflow/resources/integrations/obsidian-paperflow-automation/main.js",
+    } <= _installed_distribution_files()
