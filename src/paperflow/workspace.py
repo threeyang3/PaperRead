@@ -29,6 +29,8 @@ class WorkspaceVersions(StrictModel):
     feed: int = VERSIONS.public_feed_schema_version
     templates: int = VERSIONS.template_bundle_version
     form_flow: int = VERSIONS.form_flow_integration_version
+    annotations: int = VERSIONS.annotation_schema_version
+    community: int = VERSIONS.community_data_schema_version
 
 
 class PathRule(StrictModel):
@@ -62,7 +64,7 @@ class WorkspacePaths(StrictModel):
     derived_data: PathRule = PathRule(root=".paperflow/data/derived")
     pdf: PathRule = PathRule(
         root="80 Attachments/Papers",
-        template="{{year}}/{{paper_id}}.pdf",
+        template="{{year}}/{{paper_id}}/v{{version}}.pdf",
     )
     note: PathRule = PathRule(
         root="10 Papers",
@@ -78,6 +80,28 @@ class WorkspacePaths(StrictModel):
     processed_inbox: PathRule = PathRule(root="50 Inbox/Processed Requests")
     failed_inbox: PathRule = PathRule(root="50 Inbox/Failed Imports")
     manual_review: PathRule = PathRule(root="50 Inbox/Manual Review")
+    annotation_note: PathRule = PathRule(
+        root="60 Annotations",
+        template="{{year}}/{{paper_id}}/{{annotation_id}}.annotation.md",
+    )
+    paper_review: PathRule = PathRule(
+        root="60 Reviews",
+        template="{{year}}/{{paper_id}}.review.md",
+    )
+    community_note: PathRule = PathRule(
+        root="70 Community",
+        template="{{year}}/{{paper_id}}.community.md",
+    )
+    user_annotations: PathRule = PathRule(
+        root=".paperflow/data/user/annotations",
+        template="{{paper_id}}/{{annotation_id}}.json",
+    )
+    community_cache: PathRule = PathRule(
+        root=".paperflow/data/community/subscriptions"
+    )
+    community_outbox: PathRule = PathRule(
+        root=".paperflow/data/community/outbox"
+    )
     cache: PathRule = PathRule(root=".paperflow/cache")
     logs: PathRule = PathRule(root=".paperflow/logs")
     backups: PathRule = PathRule(root=".paperflow/backups")
@@ -206,6 +230,7 @@ class PublishingSettings(StrictModel):
     include_rendered_notes: bool = False
     data_license: str = ""
     pdf_policy: Literal["link-only", "include-when-licensed"] = "link-only"
+    include_community_contributions: bool = False
 
 
 class Subscription(StrictModel):
@@ -217,6 +242,9 @@ class Subscription(StrictModel):
     priority: int = Field(default=50, ge=0, le=100)
     auto_download_pdf: bool = True
     auto_render_notes: bool = True
+    capabilities: list[Literal["raw", "ai", "community"]] = Field(
+        default_factory=lambda: ["raw", "ai"]
+    )
 
 
 class SubscriptionSettings(StrictModel):
@@ -244,6 +272,20 @@ class AnalysisSelection(StrictModel):
     minimum_confidence: float = Field(default=0.6, ge=0, le=1)
 
 
+class AnnotationSettings(StrictModel):
+    adapter: Literal["pdf-plus", "native", "local", "legacy"] = "pdf-plus"
+    direct_pdf_editing: bool = False
+    reanchor_fuzzy_threshold: float = Field(default=0.86, ge=0, le=1)
+
+
+class CommunitySettings(StrictModel):
+    enabled: bool = True
+    publish_enabled: bool = False
+    maximum_quote_characters: int = Field(default=500, ge=0, le=500)
+    default_license: str = ""
+    show_small_sample_warning_below: int = Field(default=5, ge=1, le=100)
+
+
 class WorkspaceSettings(StrictModel):
     workspace_name: str = "PaperFlow Workspace"
     versions: WorkspaceVersions = WorkspaceVersions()
@@ -264,6 +306,8 @@ class WorkspaceSettings(StrictModel):
     subscriptions: SubscriptionSettings = SubscriptionSettings()
     updates: UpdateSettings = UpdateSettings()
     analysis_selection: AnalysisSelection = AnalysisSelection()
+    annotations: AnnotationSettings = AnnotationSettings()
+    community: CommunitySettings = CommunitySettings()
 
     @field_validator("timezone")
     @classmethod
@@ -283,6 +327,8 @@ def default_workspace_dict() -> dict[str, Any]:
             "feed": VERSIONS.public_feed_schema_version,
             "templates": VERSIONS.template_bundle_version,
             "form_flow": VERSIONS.form_flow_integration_version,
+            "annotations": VERSIONS.annotation_schema_version,
+            "community": VERSIONS.community_data_schema_version,
         },
         "timezone": "Asia/Shanghai",
         "language": "auto",
@@ -395,6 +441,8 @@ def default_workspace_dict() -> dict[str, Any]:
         "subscriptions": SubscriptionSettings().model_dump(mode="json"),
         "updates": UpdateSettings().model_dump(mode="json"),
         "analysis_selection": AnalysisSelection().model_dump(mode="json"),
+        "annotations": AnnotationSettings().model_dump(mode="json"),
+        "community": CommunitySettings().model_dump(mode="json"),
     }
 
 
@@ -673,6 +721,7 @@ def _install_automation_plugin(
     actions = []
     for name in [
         "main.js",
+        "reading-workspace.js",
         "manifest.json",
         "styles.css",
         "scheduler-core.js",

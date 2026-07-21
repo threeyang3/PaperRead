@@ -13,6 +13,7 @@ def record_variables(record: dict[str, Any], *, profile: str = "full_analysis") 
     return {
         "source": str(record.get("paper_source") or "arxiv"),
         "paper_id": str(record.get("paper_arxiv_id") or record.get("paper_uid", "")).replace(":", "_"),
+        "uid": str(record.get("paper_uid", "")).replace(":", "_"),
         "arxiv_id": record.get("paper_arxiv_id", ""),
         "version": record.get("paper_arxiv_version", 1),
         "year": record.get("paper_year") or submitted[:4],
@@ -30,6 +31,9 @@ def record_variables(record: dict[str, Any], *, profile: str = "full_analysis") 
         "analysis_profile": profile,
         "analysis_id": record.get("analysis_id", ""),
         "date": submitted[:10],
+        "annotation_id": record.get("annotation_id", ""),
+        "contribution_id": record.get("contribution_id", ""),
+        "creator": record.get("creator", ""),
     }
 
 

@@ -10,7 +10,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 pytestmark = pytest.mark.skipif(
     not DIST.is_dir(),
     reason="release artifacts are audited after scripts/build_release.py",
@@ -55,6 +55,10 @@ def test_archives_have_product_resources_and_no_current_vault_data() -> None:
             "paperflow/resources/integrations/obsidian-paperflow-automation/styles.css"
             in wheel_names
         )
+        assert (
+            "paperflow/resources/integrations/obsidian-pdf-plus/compatibility.json"
+            in wheel_names
+        )
     source = DIST / f"paperflow-{VERSION}.tar.gz"
     with tarfile.open(source) as archive:
         source_names = archive.getnames()
@@ -65,6 +69,9 @@ def test_archives_have_product_resources_and_no_current_vault_data() -> None:
         "/10 Papers/",
         "/40 Daily Briefs/",
         "/50 Inbox/",
+        "/60 Annotations/",
+        "/60 Reviews/",
+        "/70 Community/",
         "/80 Attachments/",
         "/.obsidian/",
     ]

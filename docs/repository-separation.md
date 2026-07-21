@@ -18,6 +18,8 @@ It also gives each artifact an accurate license and a stable URL.
 - normalized source metadata;
 - schema-valid AI analysis with complete provenance;
 - feed manifests, schemas and checksums;
+- explicitly selected, licensed and canonical-hash-verified Community
+  contribution revisions when that capability is intentionally enabled;
 - repository documentation and validation automation.
 
 It must not contain PDFs, extracted full text, rendered notes, User records,
@@ -26,7 +28,9 @@ by a publisher.
 
 PaperFlow enforces this boundary with `publish build`, `publish validate` and
 `publish scan` before any commit or push. Subscribers clone the repository as
-data, validate it, and never execute repository content.
+data, validate it, recompute Community `content_sha256`, and never execute
+repository content. PaperRead feature branches and PRs contain application
+code only; they must not carry a real Vault outbox or user contribution.
 
 ## Branches and automation
 
@@ -42,3 +46,8 @@ The canonical subscription endpoint remains:
 ```text
 https://github.com/threeyang3/ArXiv-data.git
 ```
+
+The PaperFlow 1.5 source and simulated migration tests can be complete while
+the real `ArxivLearn` Vault is still on Workspace schema 2. That Vault's
+dry-run, apply, link verification, Doctor and audit belong to the separate
+Vault project and are never performed by pushing PaperRead.

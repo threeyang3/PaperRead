@@ -1,6 +1,6 @@
 # PaperFlow Control Center
 
-PaperFlow Automation 1.4.0 adds an Obsidian-native Control Center. It opens
+PaperFlow Automation 1.5.0 adds an Obsidian-native Control Center. It opens
 automatically after the Obsidian workspace is ready; this behavior can be
 disabled in the plugin settings. You can also open it from the left ribbon,
 the command palette, or the plugin settings page. It wraps common PaperFlow
@@ -21,6 +21,11 @@ workflow or a required sequence:
 None is presented as the required successor of another, and the shelf can grow
 as PaperFlow adds user-facing capabilities. Feed subscriptions, publishing,
 migration, and maintenance are collapsed under **Advanced tools**.
+
+Five additional parallel entrances cover Reading, Annotations, Reviews,
+Community, and Publish Contributions. The reading workspace arranges the PDF,
+private Annotation index, private Review, and read-only Community Note. These
+entrances do not imply that Agent settings follow collection or analysis.
 
 Above the task shelf, the automation orchestrator presents three independent
 tracks: enabled-source synchronization, confirmation-authorized source-host

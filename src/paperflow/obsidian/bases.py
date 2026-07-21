@@ -86,7 +86,7 @@ def definitions(
         "imageAspectRatio": 1.4,
         "cardSize": 280,
     }
-    return {
+    result = {
         "Paper Library.base": _base([
             cards(
                 "visual_gallery",
@@ -115,6 +115,39 @@ def definitions(
         "Reproduction Queue.base": _base([table("reproduction_queue", 'user_reproduction_status == "candidate" || user_reproduction_status == "planned" || user_reproduction_status == "in_progress"')], locale, paper_root=paper_root, request_roots=request_roots),
         "Paper Requests.base": _base([{"type": "table", "name": tr(locale, f"base.view.{name}"), "filters": f'status == "{name}"', "order": REQUEST_COLUMNS} for name in ["pending", "processing", "completed", "failed"]], locale, True, paper_root=paper_root, request_roots=request_roots),
     }
+    private_views = {
+        "Annotations.base": (
+            'type == "paperflow-user-annotation" && file.inFolder("60 Annotations")',
+            ["paper_uid", "kind", "motivation", "reanchor_status", "updated_at"],
+        ),
+        "Reviews.base": (
+            'type == "paperflow-user-paper-review" && file.inFolder("60 Reviews")',
+            ["paper_uid", "rating", "updated_at"],
+        ),
+        "Community Contributions.base": (
+            'type == "paperflow-community-note" && file.inFolder("70 Community")',
+            ["paper_uid", "community_count", "updated_at"],
+        ),
+        "Community Reviews.base": (
+            'type == "paperflow-community-note" && file.inFolder("70 Community")',
+            ["paper_uid", "community_review_count", "community_rating_median", "updated_at"],
+        ),
+        "Orphaned Annotations.base": (
+            'type == "paperflow-user-annotation" && (reanchor_status == "manual-review" || reanchor_status == "orphaned")',
+            ["paper_uid", "kind", "reanchor_status", "updated_at"],
+        ),
+        "Publication Outbox.base": (
+            'type == "paperflow-community-outbox"',
+            ["paper_uid", "contribution_id", "creator", "kind", "publication_status"],
+        ),
+    }
+    for name, (filters, order) in private_views.items():
+        result[name] = {
+            "filters": filters,
+            "properties": _properties(locale, order),
+            "views": [{"type": "table", "name": "全部", "order": order}],
+        }
+    return result
 
 
 def rebuild_bases(

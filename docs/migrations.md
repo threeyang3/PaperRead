@@ -31,3 +31,24 @@ paperflow migrate verify-workspace-v2
 The legacy `paperflow migrate visual-assets` command remains available when
 only Derived images need to be re-extracted. Customized templates are emitted
 as `.new` merge candidates and are never overwritten.
+
+# Workspace schema 3
+
+```powershell
+paperflow migrate workspace-v3 --dry-run
+paperflow migrate workspace-v3 --apply
+paperflow migrate verify-workspace-v3
+paperflow migrate rollback-workspace-v3 --dry-run
+```
+
+This backs up `.obsidian`, private/community data and every PDF; copies current
+PDFs to immutable vN paths; keeps legacy files; builds pdf-index records; adds
+Annotation/Review/Community roots; re-renders existing paper notes through the
+central compose/render path while preserving user fields, tags and bounded user
+notes; verifies note/PDF links; and rebuilds every Base. Network, AI, public PR,
+and old-PDF deletion counts are zero.
+
+`rollback-workspace-v3` is dry-run by default. It restores only checksummed
+files from a formal `pre-paperflow-1.5-*` backup and never deletes paths absent
+from that backup, so later user-created files are preserved. Add `--apply` only
+after reviewing the restore list.

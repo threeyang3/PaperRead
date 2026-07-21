@@ -1,6 +1,6 @@
 # Obsidian-native automation
 
-PaperFlow Automation 1.4.0 runs three independent background tracks while
+PaperFlow Automation 1.5.0 runs three independent background tracks while
 Obsidian Desktop is open. Windows Task Scheduler is not used.
 
 ## Subscription synchronization
@@ -14,9 +14,12 @@ enabled; disabled sources are never contacted. Per-source trust can be:
 - `disabled`.
 
 Every Feed, manifest path, reader/schema version, and SHA256 is validated before
-immutable Raw or AI records are copied. Remote code is never executed and User
+immutable Raw or AI records are copied. Community revisions additionally have
+their canonical `content_sha256` recomputed before cache writes. Remote code is never executed and User
 Data is never modified. Subscription caches are excluded from public Feed
 publishing, so a host does not silently republish another publisher's records.
+Feed v2 Community capability is copied only into a read-only cache; legacy
+subscriptions default to Raw/AI capabilities.
 
 ## Automatic source-host publishing
 

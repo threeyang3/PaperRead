@@ -51,7 +51,7 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
             }
         )
 
-    add("可安装应用版本", APPLICATION_VERSION == "1.4.0", APPLICATION_VERSION)
+    add("可安装应用版本", APPLICATION_VERSION == "1.5.0", APPLICATION_VERSION)
     source_package = (
         project_root / "src/paperflow" if project_root is not None else package_root
     )
@@ -66,10 +66,24 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
         and (root / ".paperflow/workspace.yaml").exists(),
         str(root),
     )
+    version_contract = VERSIONS.model_dump()
+    required_contracts = {
+        "application_version",
+        "workspace_schema_version",
+        "raw_data_schema_version",
+        "ai_analysis_schema_version",
+        "user_data_schema_version",
+        "public_feed_schema_version",
+        "annotation_schema_version",
+        "community_data_schema_version",
+        "template_bundle_version",
+        "form_flow_integration_version",
+    }
     add(
         "独立版本契约",
-        len(VERSIONS.model_dump()) == 8,
-        json.dumps(VERSIONS.model_dump(), ensure_ascii=False),
+        set(version_contract) == required_contracts
+        and version_contract["application_version"] == APPLICATION_VERSION,
+        json.dumps(version_contract, ensure_ascii=False),
     )
     add(
         "北京时间",

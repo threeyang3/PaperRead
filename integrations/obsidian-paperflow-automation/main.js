@@ -13,6 +13,7 @@ const {
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { openReadingWorkspace } = require("./reading-workspace");
 
 const TIME_ZONE = "Asia/Shanghai";
 const CONTROL_VIEW_TYPE = "paperflow-control-center";
@@ -650,6 +651,23 @@ class PaperFlowAutomationPlugin extends Plugin {
       id: "open-control-center",
       name: text("打开控制中心", "Open Control Center"),
       callback: () => void this.activateControlCenter()
+    });
+    this.addCommand({
+      id: "open-paper-reading-workspace",
+      name: text("打开论文阅读工作区", "Open paper reading workspace"),
+      callback: async () => {
+        try {
+          await openReadingWorkspace(this.app);
+        } catch (error) {
+          new Notice(
+            text(
+              `无法打开论文阅读工作区：${error.message}`,
+              `Could not open the paper reading workspace: ${error.message}`
+            ),
+            12000
+          );
+        }
+      }
     });
     this.addCommand({
       id: "run-inbox-now",
@@ -1686,6 +1704,27 @@ class PaperFlowControlCenterView extends ItemView {
     );
     this.button(quick, text("运行状态", "Run status"), "activity", "status");
     this.button(quick, text("数据健康", "Data health"), "heart-pulse", "health");
+    const reading = quick.createEl("button", {
+      text: text("打开阅读工作区", "Open reading workspace")
+    });
+    reading.addClass("paperflow-button");
+    reading.addEventListener("click", () => {
+      void openReadingWorkspace(this.app).catch((error) => {
+        new Notice(error.message, 10000);
+      });
+    });
+
+    const featureNav = container.createDiv({ cls: "paperflow-feature-nav" });
+    for (const [label, target] of [
+      [text("阅读", "Reading"), "00 Dashboard/Bases/Paper Library.base"],
+      [text("标注", "Annotations"), "00 Dashboard/Bases/Annotations.base"],
+      [text("评审", "Reviews"), "00 Dashboard/Bases/Reviews.base"],
+      [text("社区", "Community"), "00 Dashboard/Bases/Community Contributions.base"],
+      [text("发布贡献", "Publish Contributions"), "00 Dashboard/Bases/Publication Outbox.base"]
+    ]) {
+      const button = featureNav.createEl("button", { text: label });
+      button.addEventListener("click", () => void this.app.workspace.openLinkText(target, "", false));
+    }
 
     const focusHeader = container.createDiv({ cls: "paperflow-section-heading" });
     focusHeader.createEl("span", { text: text("执行与配置", "EXECUTE & CONFIGURE") });

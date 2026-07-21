@@ -139,6 +139,10 @@ app.add_typer(source_app, name="source")
 app.add_typer(update_app, name="update")
 app.add_typer(paper_app, name="paper")
 
+from paperflow.cli_features import attach_feature_apps
+
+attach_feature_apps(app, integration_app, migrate_app, workspace_app)
+
 
 @app.callback()
 def application_callback(
@@ -1474,6 +1478,7 @@ def source_sync(
             dry_run=dry_run,
             auto_download_pdf=item.auto_download_pdf,
             auto_render_notes=item.auto_render_notes,
+            capabilities=item.capabilities,
         )
         for item in selected
     ]

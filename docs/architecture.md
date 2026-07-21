@@ -3,7 +3,7 @@
 PaperFlow separates the installed application, per-user Workspace, Obsidian
 Vault projections, Public Feed, and local User Data.
 
-## Four data layers
+## Data layers
 
 - **Raw**: immutable source/version snapshots containing factual metadata and
   source URLs, never AI scores or user state.
@@ -13,6 +13,13 @@ Vault projections, Public Feed, and local User Data.
   values and user tags are merged and never overwritten by Feed sync.
 - **Derived**: Markdown notes, Bases, dashboards, briefs, indexes, and caches;
   these can be rebuilt only after merging User Data.
+- **Community Contribution**: immutable, explicitly selected public snapshots.
+- **Subscription Cache**: validated read-only remote revisions and retractions;
+  it never writes User Annotation, Review, `user_*`, or AI.
+
+User data separates paper state, Annotation, and Review. Annotation Markdown is
+the editable truth; JSON is rebuildable. Anchors bind to an immutable PDF
+version/hash and retain revision history during reanchoring.
 
 Caption-backed visual assets are also Derived. The extractor ranks
 architecture/framework/overview/pipeline figures, renders bounded PDF page
@@ -29,6 +36,10 @@ render input path and merges Raw, AI, User, and Derived layers.
 
 Schema and application versions are independent. Data newer than the installed
 reader is rejected; older data requires an explicit migration.
+
+PDFs are version-addressed at
+`80 Attachments/Papers/<year>/<paper_id>/v<version>.pdf`; the Derived pdf-index
+records every hash and the preferred current version.
 
 ## Localized presentation layer
 

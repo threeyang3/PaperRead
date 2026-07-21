@@ -10,7 +10,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.4.0"
+sys.path.insert(0, str(ROOT / "src"))
+from paperflow._version import __version__
+
+VERSION = __version__
 DIST = ROOT / "dist"
 
 
@@ -48,6 +51,9 @@ def audit_archive(path: Path, *, template_vault: bool = False) -> None:
         "/30 Reading Notes/",
         "/40 Daily Briefs/",
         "/50 Inbox/",
+        "/60 Annotations/",
+        "/60 Reviews/",
+        "/70 Community/",
         "/80 Attachments/",
         "/.paperflow/data/",
         "/.paperflow/runtime/",
@@ -148,6 +154,10 @@ def main() -> None:
         ROOT / "integrations/obsidian-form-flow",
         vault_stage / "90 System/Forms/PaperFlow-Form-Flow-Bundle",
     )
+    shutil.copytree(
+        ROOT / "integrations/obsidian-pdf-plus",
+        vault_stage / "90 System/Integrations/PDF++",
+    )
     form_plugin = vault_stage / ".obsidian/plugins/form-flow"
     form_plugin.mkdir(parents=True)
     shutil.copy2(
@@ -176,12 +186,14 @@ def main() -> None:
     zip_tree(DIST / f"templates-{VERSION}.zip", ROOT / "templates", "templates")
     notes = DIST / "migration-notes.md"
     notes.write_text(
-        "# PaperFlow 1.4.0 migration notes\n\n"
-        "Run `paperflow migrate workspace-v2 --dry-run`, review the zero-network "
-        "plan, then run `paperflow migrate workspace-v2 --apply` and "
-        "`paperflow migrate verify-workspace-v2`.\n\n"
-        "The migration backs up the Workspace, installs template v5, composes "
-        "Raw/AI/User/Derived data, restores visual embeds, and rebuilds links.\n",
+        f"# PaperFlow {VERSION} migration notes\n\n"
+        "Run `paperflow migrate workspace-v3 --dry-run`, review the zero-network "
+        "plan, then run `paperflow migrate workspace-v3 --apply` and "
+        "`paperflow migrate verify-workspace-v3`.\n\n"
+        "The migration backs up `.obsidian`, private data and every PDF; copies "
+        "current PDFs to immutable version paths; creates PDF hash indexes; "
+        "installs private Annotation/Review and read-only Community roots; and "
+        "rebuilds all Bases without deleting legacy PDFs.\n",
         encoding="utf-8",
     )
     artifacts = sorted(

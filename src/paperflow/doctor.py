@@ -88,7 +88,33 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         if cfg.workspace
         else "00 Dashboard/Bases"
     )
-    checks.append(("Bases", all((root / base_root / name).exists() for name in ["Paper Library.base", "Daily Intake.base", "Reading Queue.base", "Reproduction Queue.base", "Paper Requests.base"]), base_root))
+    required_bases = [
+        "Paper Library.base", "Daily Intake.base", "Reading Queue.base",
+        "Reproduction Queue.base", "Paper Requests.base", "Annotations.base",
+        "Reviews.base", "Community Contributions.base",
+        "Community Reviews.base", "Orphaned Annotations.base",
+        "Publication Outbox.base",
+    ]
+    checks.append(("Bases", all((root / base_root / name).exists() for name in required_bases), base_root))
+    if cfg.workspace:
+        from paperflow.obsidian.pdf_plus import status as pdf_plus_status
+
+        pdf_plus = pdf_plus_status(root)
+        checks.append((
+            "PDF++ integration",
+            (not pdf_plus["installed"]) or pdf_plus["compatible"],
+            (
+                f"version={pdf_plus.get('version')}; direct PDF editing disabled"
+                if pdf_plus["installed"] else "not installed; native page-link fallback active"
+            ),
+        ))
+        for display, rule in [
+            ("Annotation root", cfg.workspace.paths.annotation_note),
+            ("Review root", cfg.workspace.paths.paper_review),
+            ("Community cache", cfg.workspace.paths.community_cache),
+            ("Community outbox", cfg.workspace.paths.community_outbox),
+        ]:
+            checks.append((display, (root / rule.root).exists(), rule.root))
     manifest = root / ".obsidian/plugins/form-flow/manifest.json"
     checks.append(("Form Flow installed", manifest.exists(), str(manifest)))
     enabled = False
@@ -150,7 +176,15 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         except Exception: arxiv_ok = False
         checks.append(("arXiv network", arxiv_ok, "export.arxiv.org:443"))
     else: checks.append(("arXiv network", True, "skipped (use --network)"))
-    checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in ["raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json", "paper-analysis.schema.json", "visual-assets.schema.json", "paper-note.schema.json", "paper-relationships.schema.json"]), ".paperflow/schemas"))
+    checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in [
+        "raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json",
+        "paper-analysis.schema.json", "visual-assets.schema.json",
+        "paper-note.schema.json", "paper-relationships.schema.json",
+        "user-annotation.schema.json", "user-paper-review.schema.json",
+        "annotation-index.schema.json", "community-contribution.schema.json",
+        "community-profile.schema.json", "community-retraction.schema.json",
+        "community-manifest.schema.json",
+    ]), ".paperflow/schemas"))
     checks.append(("YAML template", (root / "90 System/Templates/Paper Note Template.md").exists(), "Paper Note Template.md"))
     briefs = sorted(cfg.path("daily_brief_folder").glob("*.md"), reverse=True)
     checks.append(("Latest daily status", True, briefs[0].name if briefs else "no daily run recorded"))

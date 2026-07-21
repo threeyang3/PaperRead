@@ -12,7 +12,11 @@ The application and each Vault are separate:
 - every Vault has its own `.paperflow/workspace.yaml`;
 - Raw and AI records are immutable/versioned;
 - User Data remains local and is never published;
-- Markdown, Bases, dashboards, and briefs are derived projections.
+- Markdown, Bases, dashboards, briefs, PDF indexes, and read-only Community
+  Notes are derived projections.
+- private Annotations and Reviews remain local User data;
+- Community Contributions are immutable opt-in public snapshots and
+  subscription caches never become User or AI data.
 
 Public software and public data are also separate:
 
@@ -46,14 +50,17 @@ generated explanation sections where practical. Original paper titles,
 abstracts, quotations, citations, and extracted text are not mechanically
 translated.
 
-PaperFlow Automation 1.4.0 includes an Obsidian-native Control Center. It
+PaperFlow Automation 1.5.0 includes an Obsidian-native Control Center. It
 opens automatically after the Obsidian workspace is ready (this can be
 disabled in the plugin settings). Its first view is an extensible research task
 workspace: collecting and discovering papers, browsing the library, continuing
 the reading or reproduction queues, reviewing daily intake, analyzing imported
 papers, and configuring an Agent are independent entry points. Feed
 synchronization, publishing, migration, and maintenance are grouped under
-Advanced tools.
+Advanced tools. Open a generated paper note and run **PaperFlow: Open paper
+reading workspace** to arrange the versioned PDF, private annotations, private
+review, and read-only Community Note. PDF++ is recommended; native Obsidian
+page links remain the fallback. These are independent capabilities.
 There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
 
@@ -87,6 +94,9 @@ paperflow ai ...
 paperflow paths ...
 paperflow migrate ...
 paperflow integration ...
+paperflow annotation ...
+paperflow review ...
+paperflow community ...
 paperflow paper ...
 paperflow discover
 paperflow daily
@@ -102,19 +112,21 @@ The legacy `paperflow add` command remains available as an alias for
 
 ## Safe migration
 
-Before migrating an existing schema-1 Vault to PaperFlow 1.4:
+Before migrating an existing schema-2 Vault to PaperFlow 1.5:
 
 ```powershell
-paperflow migrate workspace-v2 --dry-run
-paperflow migrate workspace-v2 --apply
-paperflow migrate verify-workspace-v2
+paperflow migrate workspace-v3 --dry-run
+paperflow migrate workspace-v3 --apply
+paperflow migrate verify-workspace-v3
+paperflow migrate rollback-workspace-v3 --dry-run
 paperflow migrate history
 ```
 
-Migration acquires a Workspace lock, hashes inputs, snapshots affected files,
-writes and validates staging data, atomically installs records, verifies the
-SQLite index and note links, and restores on failure. Legacy files are
-preserved, and unknown properties move into `extensions`.
+Workspace v3 copies PDFs into immutable vN paths, re-renders existing notes
+through the central compose/render path, and verifies PDF hashes plus note
+links while preserving `user_*`, user tags and bounded user notes. Its explicit
+rollback is dry-run by default, restores only checksummed formal-backup files,
+and does not delete later user-created paths. Legacy files are preserved.
 
 ## Public Feed safety
 
@@ -123,6 +135,12 @@ preserved, and unknown properties move into `extensions`.
 credentials, logs, SQLite files, and PDFs. PDF policy is link-only by default.
 Build and Git push are intentionally separate.
 
+Feed v2 keeps v1 Raw/AI paths and adds optional Community records. Community
+publishing is disabled by default. Quotes are capped at 500 characters; active
+content, images and PDFs are rejected. Subscribers recompute the publisher's
+canonical `content_sha256` and reject altered revisions before cache writes.
+`community publish submit-pr` remains a local dry-run until separately approved.
+
 PaperFlow source code is available under the MIT License. Each public Feed
 declares its own data licence; this workspace publishes Feed data under
 CC BY 4.0 and retains source-paper attribution and licence metadata.
@@ -130,6 +148,16 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 ## Documentation
 
 - [用户与维护者中文总指南](docs/维护者与用户指南.md)
+- [PaperFlow 1.5 用户与维护者指南](docs/PaperFlow-1.5-用户与维护者指南.md)
+- [私有标注与评审](docs/annotations-and-reviews.md)
+- [PDF 版本](docs/pdf-versioning.md)
+- [PDF++ 集成](docs/pdf-plus-integration.md)
+- [社区贡献](docs/community-contributions.md)
+- [社区订阅](docs/community-subscriptions.md)
+- [Feed v2](docs/feed-v2.md)
+- [社区隐私与版权](docs/community-privacy-copyright.md)
+- [阅读工作区](docs/reading-workspace.md)
+- [1.5 迁移指南](docs/1.5-migration-guide.md)
 - [PaperFlow 1.4 用户指南](docs/用户指南-1.4.md)
 - [PaperFlow 1.4 维护者指南](docs/维护者指南-1.4.md)
 - [ChatGPT 网页分析与隐私](docs/ChatGPT网页分析与隐私.md)

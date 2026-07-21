@@ -26,7 +26,7 @@ debounces Form Flow request writes, performs a startup pass, keeps a five-minute
 fallback interval, and checks the daily `Asia/Shanghai` schedule once per
 minute. Windows Task Scheduler is neither installed nor required.
 
-PaperFlow Automation 1.4.0 also provides a ribbon-accessible Control Center
+PaperFlow Automation 1.5.0 also provides a ribbon-accessible Control Center
 for paper import, AI profile configuration, GitHub Feed subscriptions,
 synchronization, publication preflight, and controlled Git commit/push. See
 [PaperFlow Control Center](control-center.md).
@@ -35,3 +35,8 @@ When Obsidian uses Chinese, the plugin presents Chinese display labels for all
 85 generated-paper properties, including source/display titles and relationship
 projections, without renaming the underlying YAML keys. Original paper content remains unchanged. See
 [PaperFlow 中文属性显示说明](中文属性显示说明.md).
+
+The command **Open paper reading workspace** opens the current versioned PDF
+and separate Annotation, Review, and Community projections. Official PDF++ is
+recommended and managed through `paperflow integration pdf-plus`; PaperFlow
+does not call its private API and falls back to native page links.

@@ -55,7 +55,10 @@ def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path,
     year = str(metadata.paper_year or now_beijing().year)
     return (
         cfg.path("paper_folder") / year / f"{ident}.md",
-        cfg.path("pdf_folder") / year / f"{ident}.pdf",
+        cfg.path("pdf_folder")
+        / year
+        / ident
+        / f"v{metadata.paper_arxiv_version}.pdf",
         cfg.root / ".paperflow/data/papers" / f"{safe_slug(metadata.paper_uid)}.json",
         cfg.root / ".paperflow/cache" / f"{safe_slug(metadata.paper_uid)}.txt",
     )
@@ -304,6 +307,25 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 preserve_existing_raw=reuse_local_assets,
             )
             atomic_json(json_path, record)
+            if pdf_path.exists():
+                from paperflow.annotations.pdf_versions import build_pdf_index
+
+                existing = sorted(
+                    pdf_path.parent.glob("v*.pdf"),
+                    key=lambda item: int(item.stem.removeprefix("v")),
+                )
+                build_pdf_index(
+                    cfg.root,
+                    metadata.paper_uid,
+                    [
+                        {
+                            "version": int(item.stem.removeprefix("v")),
+                            "path": item.relative_to(cfg.root).as_posix(),
+                        }
+                        for item in existing
+                    ],
+                    current_version=metadata.paper_arxiv_version,
+                )
         db.upsert_paper(record)
         if not cfg.section("retention").get("keep_extracted_text", True):
             text_path.unlink(missing_ok=True)

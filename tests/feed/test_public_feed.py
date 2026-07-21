@@ -119,6 +119,9 @@ def test_build_validate_and_sync_feed_without_user_data(tmp_path: Path) -> None:
 
     assert result["paper_count"] == 1
     assert result["analysis_count"] == 1
+    assert (feed / "feed.yaml").read_text(encoding="utf-8").startswith(
+        "feed_schema_version: 2"
+    )
     assert validate_feed(feed)["ok"]
     assert scan_feed(feed) == []
     all_text = "\n".join(
@@ -346,7 +349,7 @@ def test_linked_pdf_download_validates_header_and_hash(tmp_path: Path) -> None:
         },
     }
     assert _download_linked_pdf(tmp_path, item)
-    target = tmp_path / "80 Attachments/Papers/2607.00001.pdf"
+    target = tmp_path / "80 Attachments/Papers/Unclassified/2607.00001/v1.pdf"
     assert target.read_bytes() == content
 
 

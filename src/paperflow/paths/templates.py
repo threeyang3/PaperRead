@@ -26,6 +26,10 @@ ALLOWED_VARIABLES = {
     "analysis_profile",
     "analysis_id",
     "date",
+    "uid",
+    "annotation_id",
+    "contribution_id",
+    "creator",
 }
 
 ALLOWED_FILTERS = {

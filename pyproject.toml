@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paperflow"
-version = "1.4.0"
+dynamic = ["version"]
 description = "Local-first, installable AI paper learning workflow for Obsidian"
 readme = "README.md"
 license = "MIT"
@@ -29,6 +29,9 @@ browser = ["playwright>=1.52"]
 
 [project.scripts]
 paperflow = "paperflow.cli:app"
+
+[tool.hatch.version]
+path = "src/paperflow/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paperflow"]

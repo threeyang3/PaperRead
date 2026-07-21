@@ -4,19 +4,22 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from packaging.version import Version
+from paperflow._version import __version__
 
 
-APPLICATION_VERSION = "1.4.0"
+APPLICATION_VERSION = __version__
 
 
 @dataclass(frozen=True)
 class VersionContract:
     application_version: str = APPLICATION_VERSION
-    workspace_schema_version: int = 2
+    workspace_schema_version: int = 3
     raw_data_schema_version: int = 1
     ai_analysis_schema_version: int = 1
     user_data_schema_version: int = 1
-    public_feed_schema_version: int = 1
+    public_feed_schema_version: int = 2
+    annotation_schema_version: int = 1
+    community_data_schema_version: int = 1
     template_bundle_version: int = 5
     form_flow_integration_version: int = 1
 

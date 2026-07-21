@@ -85,6 +85,7 @@ def sync_feed(
     dry_run: bool = False,
     auto_download_pdf: bool = False,
     auto_render_notes: bool = False,
+    capabilities: list[str] | None = None,
 ) -> dict[str, Any]:
     assert_no_sync_conflicts(workspace)
     if trust not in {"metadata-only", "metadata-and-ai", "disabled"}:
@@ -97,6 +98,16 @@ def sync_feed(
         feed = YAML(typ="safe").load(
             (feed_root / "feed.yaml").read_text(encoding="utf-8")
         )
+        feed_version = int(feed.get("feed_schema_version", 1))
+        requested_capabilities = set(capabilities or ["raw", "ai"])
+        advertised = feed.get("capabilities") or {
+            "raw": True,
+            "ai": True,
+            "community": False,
+        }
+        enabled_capabilities = {
+            name for name in requested_capabilities if advertised.get(name, False)
+        }
         manifests = [
             json.loads(line)
             for line in (feed_root / "manifests/papers.jsonl")
@@ -104,7 +115,7 @@ def sync_feed(
             .splitlines()
             if line
         ]
-        if trust == "metadata-and-ai":
+        if trust == "metadata-and-ai" and "ai" in enabled_capabilities:
             manifests.extend(
                 json.loads(line)
                 for line in (feed_root / "manifests/analyses.jsonl")
@@ -178,6 +189,20 @@ def sync_feed(
                         feed_id=str(feed["feed_id"]),
                     )
                     rendered_notes += 1
+        community = {
+            "dry_run": dry_run,
+            "accepted": 0,
+            "private_user_records_modified": 0,
+        }
+        if "community" in enabled_capabilities:
+            from paperflow.community.subscriber import ingest_community
+
+            community = ingest_community(
+                workspace,
+                feed_root,
+                str(feed["feed_id"]),
+                dry_run=dry_run,
+            )
         return {
             "name": name,
             "feed_id": feed["feed_id"],
@@ -191,6 +216,9 @@ def sync_feed(
             "user_records_modified": 0,
             "remote_code_executed": False,
             "validation": validation,
+            "feed_schema_version": feed_version,
+            "capabilities": sorted(enabled_capabilities),
+            "community": community,
         }
 
 
@@ -200,7 +228,11 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
     if not source_url:
         return False
     paper_id = str(item.get("source_id") or item["paper_uid"]).replace(":", "_")
-    target = workspace / "80 Attachments/Papers" / f"{paper_id}.pdf"
+    year = str(item.get("year") or "Unclassified")
+    version = int(item.get("version") or 1)
+    target = (
+        workspace / "80 Attachments/Papers" / year / paper_id / f"v{version}.pdf"
+    )
     if target.exists():
         if not target.read_bytes()[:5] == b"%PDF-":
             raise ValueError(f"Existing PDF has an invalid header: {target}")

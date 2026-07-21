@@ -1,5 +1,7 @@
 """Installable PaperFlow package."""
 
-from paperflow.versioning import APPLICATION_VERSION
+from paperflow._version import __version__
 
-__version__ = APPLICATION_VERSION
+APPLICATION_VERSION = __version__
+
+__all__ = ["APPLICATION_VERSION", "__version__"]

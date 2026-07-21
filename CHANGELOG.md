@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.5.0 - 2026-07-21
+
+- Added a single `_version.py` application-version source and Workspace 3,
+  Feed 2, Annotation 1, and Community 1 contracts.
+- Made PDFs immutable and version-addressed, with SHA-256 indexes and explicit
+  revision-preserving reanchor workflows.
+- Added plugin-independent private Annotation and Review protocols with
+  Markdown truth, rebuildable JSON, conflict refusal, selectors, and anchors.
+- Added the official PDF++ integration with compatibility checks,
+  non-overwriting configuration, `.new` candidates, native-link fallback, and
+  direct-PDF-editing disabled by default.
+- Added opt-in Community Contributions, privacy/copyright scanning, local
+  outbox, dry-run GitHub PR planning, revisions/retractions, read-only
+  subscription cache, separate notes, preferences, and ratings.
+- Added Feed v2 capability negotiation and per-paper Community manifests while
+  retaining v1 Raw/AI paths.
+- Added the Obsidian reading workspace, five parallel feature entrances, and
+  six corresponding Bases.
+- Added Workspace v3 migration; old PDFs are copied to vN paths and never
+  deleted.
+- Made Workspace v3 re-render existing paper notes through the central
+  compose/render path, preserve user fields/tags/notes, and verify migrated
+  PDF links.
+- Added a formal-backup-only Workspace v3 rollback that defaults to dry-run and
+  never deletes paths absent from the backup.
+- Recomputed Community contribution `content_sha256` during subscription
+  ingestion and rejected tampered revisions before cache writes.
+
 ## 1.4.0 - 2026-07-19
 
 - Released the PaperFlow 1.4.0 implementation contract: Workspace schema 2,
