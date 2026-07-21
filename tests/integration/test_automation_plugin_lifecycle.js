@@ -246,7 +246,7 @@ async function main() {
 
   const paper = { path: "10 Papers/2025/pi05.md", extension: "md" };
   const pdf = { path: "80 Attachments/Papers/2025/2504.16054/v1.pdf", extension: "pdf" };
-  const annotation = { path: "60 Annotations/2025/arxiv_2504.16054/index.md" };
+  const annotation = { path: "Private Notes/Annotations/arxiv_2504.16054/index.md" };
   const review = { path: "60 Reviews/2025/arxiv_2504.16054.review.md" };
   const community = { path: "70 Community/2025/arxiv_2504.16054.community.md" };
   const files = new Map([
@@ -316,7 +316,18 @@ async function main() {
       }
     }
   };
-  const layoutResult = await AutomationPlugin.__test.openReadingWorkspace(layoutApp);
+  const workspacePlugin = new AutomationPlugin();
+  workspacePlugin.app = layoutApp;
+  let indexRequest = null;
+  workspacePlugin.runControlAction = async (action, payload) => {
+    indexRequest = { action, payload };
+    return { code: 0, stdout: JSON.stringify({ path: annotation.path }), stderr: "" };
+  };
+  const layoutResult = await workspacePlugin.openPaperReadingWorkspace();
+  assert.deepEqual(indexRequest, {
+    action: "annotation-index",
+    payload: { paperUid: "arxiv:2504.16054" }
+  });
   assert.equal(new Set(layoutLeaves).size, 4);
   assert.equal(pdfLeaf.file, pdf);
   assert.equal(annotationLeaf.file, annotation);
@@ -389,6 +400,18 @@ async function main() {
       color: "yellow"
     }
   );
+  assert.deepEqual(
+    AutomationPlugin.__test.parsePdfAnnotationLink(
+      "[[80 Attachments/Papers/2026/2607.00001/v3.pdf#page=9&amp;selection=4,1,7,22&amp;color=yellow]]"
+    ),
+    {
+      raw: selectionLink,
+      path: "80 Attachments/Papers/2026/2607.00001/v3.pdf",
+      page: 9,
+      selection: "4,1,7,22",
+      color: "yellow"
+    }
+  );
   const annotationPayloadValue = AutomationPlugin.__test.annotationPayload({
     paperUid: "arxiv:2607.00001",
     pdfPath: "80 Attachments/Papers/2026/2607.00001/v3.pdf",
@@ -408,6 +431,12 @@ async function main() {
       "--selected-text", "Why is this stable?",
       "--pdf-version", "3", "--apply"
     ]]
+  );
+  assert.deepEqual(
+    AutomationPlugin.__test.controlCommands("annotation-index", {
+      paperUid: "arxiv:2607.00001"
+    }),
+    [["annotation", "ensure-index", "arxiv:2607.00001", "--apply"]]
   );
   assert.throws(
     () => AutomationPlugin.__test.parsePdfAnnotationLink(

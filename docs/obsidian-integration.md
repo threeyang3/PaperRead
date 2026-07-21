@@ -50,19 +50,15 @@ clipboard denial, or an unverifiable selection fall back to an explicit page
 and selected-text form. Saving calls the PaperFlow CLI allowlist; the plugin
 does not bypass the Annotation schema or Nutstore conflict checks.
 
-The Automation plugin adds a bilingual annotation modal to the command palette,
-ribbon, PDF/paper file menu, reading workflow, and Control Center. Its optional
-PDF++ adapter feature-detects `pdf-plus:copy-link-to-selection`, invokes it in an
-isolated failure boundary, reads and validates the clipboard result, then
-prefills the modal. It never enables direct PDF editing. Missing commands,
-clipboard denial, or an unverifiable selection fall back to an explicit page
-and selected-text form. Saving calls the PaperFlow CLI allowlist; the plugin
-does not bypass the Annotation schema or Nutstore conflict checks.
-
 The layout creates four distinct leaves. Review is split directly from the PDF
 leaf with `createLeafBySplit`; Annotation and Community use separate right-side
 leaves. The command awaits `revealLeaf(pdfLeaf)` and then focuses that PDF leaf,
 so a successful command means all four files are open and the PDF is visible.
+
+Before arranging that layout, the plugin runs the allowlisted
+`annotation ensure-index` command and opens the configured path returned by
+the CLI. It does not hard-code a year or the default Annotation root. Index
+rebuilds preserve user-authored Markdown and leave legacy index files intact.
 
 The Automation plugin ships a self-contained `main.js`. Reading-workspace code
 is bundled into that entry point; startup does not use relative `require()`

@@ -38,3 +38,6 @@ class AnnotationService:
 
     def rebuild_index(self) -> dict:
         return self.store.rebuild_index(dry_run=self.dry_run)
+
+    def ensure_index(self, paper_uid: str) -> dict:
+        return self.store.rebuild_paper_index(paper_uid, dry_run=self.dry_run)

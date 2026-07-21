@@ -17,6 +17,11 @@ PDF++ 可用时，插件会尝试复制当前真实选区并预填表单。该�
 时会明确显示降级表单，由用户填写页码、所见文本和评论；不会伪造选区。保存
 通过中央 CLI 写入 User 层并刷新索引，Nutstore 双修改冲突仍会拒绝覆盖。
 
+默认可见索引位于 `60 Annotations/<paper_id>/index.md`。阅读工作区每次打开前
+都会运行 `paperflow annotation ensure-index <paper_uid> --apply` 并服从
+Workspace 的自定义标注根目录。旧版年份索引不会删除；其中真实用户正文仅在
+首次重建时带来源标记导入，空骨架不会导入。
+
 PDF 按 arXiv 版本保存为 vN，旧版本不覆盖。个人评分、AI 分数和社区评分分别
 显示。英文论文标题、摘要、引用、图注和正文不因中文界面被翻译。
 
@@ -48,9 +53,8 @@ dry-run，只恢复正式备份中的校验文件，不删除之后创建的用�
 `content_sha256`，拒绝被篡改的 revision。维护者必须完成完整 pytest、Node 生命周期、
 Doctor、audit、迁移、Base、Obsidian runtime、发布物白名单和干净 clone 验证。
 
-截至 2026-07-21，PaperRead 1.5.0 的源代码、113 项 pytest、2 项 Node 测试、
+截至 2026-07-21，PaperRead 1.5.0 的源代码、115 项 pytest、2 项 Node 测试、
 模拟 Workspace v3 迁移/回滚、Community 篡改拒绝和本地发布物验证已完成。
-真实 `ArxivLearn` Vault 已复制并渲染 32/32 篇，但旧 1.5.0 代码未更新
-Derived PDF 路径，验证因此拒绝全部 32 篇。安装修复 wheel 后应直接重跑
-`workspace-v3 --apply` 进入 repair mode，再执行 verify、Doctor、audit 与
-Obsidian 交互验收；无需手改论文。
+真实 `ArxivLearn` Vault 已安装修复 wheel，Workspace v3 验证通过，32/32 篇记录
+的 PDF、笔记和 Derived 路径均无错误；Doctor、audit、health、路径/Workspace
+验证及 Obsidian 交互验收均通过。规范 PDF 标注索引已创建，旧年份索引保持原样。

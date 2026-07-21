@@ -18,9 +18,8 @@
 - 命令面板、Ribbon、PDF/论文文件菜单与控制中心可创建私有 PDF 标注。若
   PDF++ 的 `copy-link-to-selection` 命令和剪贴板可用，会校验并预填真实选区；
   否则显示页码/文本表单。保存始终调用 PaperFlow CLI 并刷新标注索引。
-- 命令面板、Ribbon、PDF/论文文件菜单与控制中心可创建私有 PDF 标注。若
-  PDF++ 的 `copy-link-to-selection` 命令和剪贴板可用，会校验并预填真实选区；
-  否则显示页码/文本表单。保存始终调用 PaperFlow CLI 并刷新标注索引。
+- 阅读工作区先调用中央 `annotation ensure-index`，再打开 CLI 返回的配置路径；
+  不硬编码年份或默认标注根目录。旧索引不删除，用户正文只导入一次。
 - 直接启动 Vault 内固定 `.paperflow/.venv/Scripts/python.exe`，`shell: false`，不调用 PowerShell、CMD 或 Windows Task Scheduler。
 - 不把笔记、表单或剪贴板内容拼接进命令行。
 - Python 流水线仍使用 `.paperflow/runtime/pipeline.lock` 防止并发。
@@ -47,5 +46,4 @@ PDF leaf，避免右侧复用或 active leaf 变化覆盖目标视图。
 - `PaperFlow Automation: 立即运行每日流程`
 - `PaperFlow Automation: 显示自动化状态`
 - `PaperFlow Automation: 打开控制中心`
-- `PaperFlow Automation: 从当前 PDF / 选区创建标注`
 - `PaperFlow Automation: 从当前 PDF / 选区创建标注`

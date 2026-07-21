@@ -72,7 +72,10 @@ command palette, ribbon, file menu, or Control Center. PDF++ 0.40.31 can supply
 its selection-link syntax through a feature-detected command/clipboard adapter;
 otherwise the modal uses a native page link and explicit text input. All saves
 go through the PaperFlow CLI, private Annotation schema, conflict guard, and
-index rebuild. Direct PDF editing remains disabled.
+index rebuild. The reading workspace asks the central CLI for the configured
+per-paper index path instead of assuming a year-based folder; legacy index
+files are retained and user-authored text is imported without duplication.
+Direct PDF editing remains disabled.
 There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
 

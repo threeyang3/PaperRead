@@ -31,7 +31,7 @@ async function ensureMarkdown(app, filePath, content) {
   return app.vault.create(normalized, content);
 }
 
-async function openReadingWorkspace(app) {
+async function openReadingWorkspace(app, options = {}) {
   const paper = app.workspace.getActiveFile();
   if (!paper || paper.extension !== "md") {
     throw new Error("Open a generated PaperFlow paper note first");
@@ -45,7 +45,9 @@ async function openReadingWorkspace(app) {
   const pdf = app.vault.getAbstractFileByPath(String(metadata.paper_pdf_path));
   if (!pdf) throw new Error(`Local PDF is missing: ${metadata.paper_pdf_path}`);
 
-  const annotationPath = `60 Annotations/${year}/${paperId}/index.md`;
+  const annotationPath = String(
+    options.annotationPath || `60 Annotations/${paperId}/index.md`
+  ).replaceAll("\\", "/");
   const reviewPath = `60 Reviews/${year}/${paperId}.review.md`;
   const communityPath = `70 Community/${year}/${paperId}.community.md`;
   const annotation = await ensureMarkdown(
@@ -271,7 +273,7 @@ const ANNOTATION_MOTIVATIONS = Object.freeze({
 });
 
 function parsePdfAnnotationLink(value) {
-  const raw = String(value || "").trim();
+  const raw = String(value || "").trim().replaceAll("&amp;", "&");
   const match = /^\[\[([^#|\]]+\.pdf)#([^|\]]+)(?:\|[^\]]*)?\]\]$/i.exec(raw);
   if (!match) throw new Error("需要指向 PDF 页码的 Obsidian 链接。");
   const query = new URLSearchParams(match[2]);
@@ -499,6 +501,12 @@ function controlCommands(action, payload = {}) {
       ];
       return [command];
     }
+    case "annotation-index":
+      return [[
+        "annotation", "ensure-index",
+        cleanText(payload.paperUid, "Paper UID", 300),
+        "--apply"
+      ]];
     case "ai-save": {
       const profile = profileName(payload.profile);
       const provider = providerName(payload.provider);
@@ -869,7 +877,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       name: text("打开论文阅读工作区", "Open paper reading workspace"),
       callback: async () => {
         try {
-          await openReadingWorkspace(this.app);
+          await this.openPaperReadingWorkspace();
         } catch (error) {
           new Notice(
             text(
@@ -969,6 +977,24 @@ class PaperFlowAutomationPlugin extends Plugin {
         12000
       );
     }
+  }
+
+  async openPaperReadingWorkspace() {
+    const context = activePaperContext(this.app);
+    const result = await this.runControlAction("annotation-index", {
+      paperUid: context.paperUid
+    });
+    if (result.code !== 0) {
+      throw new Error(result.stderr || "Unable to refresh the annotation index");
+    }
+    let payload;
+    try {
+      payload = JSON.parse(result.stdout);
+    } catch {
+      throw new Error("PaperFlow returned an invalid annotation index path");
+    }
+    if (!payload.path) throw new Error("PaperFlow did not return an annotation index path");
+    return openReadingWorkspace(this.app, { annotationPath: payload.path });
   }
 
   installLocalizedPropertyLabels() {
@@ -2074,7 +2100,7 @@ class PaperFlowControlCenterView extends ItemView {
     });
     reading.addClass("paperflow-button");
     reading.addEventListener("click", () => {
-      void openReadingWorkspace(this.app).catch((error) => {
+      void this.plugin.openPaperReadingWorkspace().catch((error) => {
         new Notice(error.message, 10000);
       });
     });

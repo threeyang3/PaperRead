@@ -113,6 +113,16 @@ def annotation_sync(
     ).rebuild_index(dry_run=dry_run))
 
 
+@annotation_app.command("ensure-index")
+def annotation_ensure_index(
+    paper_uid: str,
+    dry_run: bool = typer.Option(True, "--dry-run/--apply"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    root, settings = _root(vault)
+    _echo(AnnotationService(root, settings, dry_run=dry_run).ensure_index(paper_uid))
+
+
 @annotation_app.command("reanchor")
 def annotation_reanchor(
     paper_uid: str,

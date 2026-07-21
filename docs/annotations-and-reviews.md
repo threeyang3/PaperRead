@@ -28,12 +28,23 @@ Annotation Schema 仍为 v1：`pdf_selection` 与 `highlight_color` 是向后兼
 paperflow annotation list
 paperflow annotation validate
 paperflow annotation sync --dry-run
+paperflow annotation ensure-index arxiv:2504.16054 --apply
 paperflow workspace rebuild-annotation-index --apply
 paperflow annotation create arxiv:2504.16054 `
   "[[80 Attachments/Papers/2025/2504.16054/v1.pdf#page=5]]" `
   --kind question --motivation questioning `
   --selected-text "actual visible text" --body "Why?" --apply
 ```
+
+每篇论文的可见索引位于 Workspace 配置的标注根目录下，默认是
+`60 Annotations/arxiv_2504.16054/index.md`。阅读工作区通过中央 CLI 获取该
+路径，不再假定 `年份/paper_id`。重建索引只替换
+`PAPERFLOW_ANNOTATION_INDEX_START/END` 之间的机器区块，保留 frontmatter
+扩展和区块外的用户正文。
+
+旧版年份目录中的 `index.md` 不会被删除或改写。若其中包含非标准骨架的用户
+正文，首次重建会带来源标记导入规范索引；再次运行不会重复导入。单条标注仍
+以 Markdown 为真源，索引只是可重建投影。
 
 ## 评审
 

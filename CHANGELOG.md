@@ -2,6 +2,15 @@
 
 ## 1.5.0 - 2026-07-21
 
+- Unified AnnotationStore, the visible per-paper index, and the reading
+  workspace on the configured Annotation root without a hard-coded year.
+  Index rebuilds atomically refresh the visible note, preserve user content,
+  and import user-authored legacy year-scaffold content without deleting the
+  legacy file.
+- Normalized HTML-escaped PDF++ links (`&amp;`) before parsing selection and
+  color, and added the central `annotation ensure-index` command.
+- Bumped the Automation integration resource contract to 10 for the updated
+  reading-workspace/index handshake.
 - Added a single `_version.py` application-version source and Workspace 3,
   Feed 2, Annotation 1, and Community 1 contracts.
 - Made PDFs immutable and version-addressed, with SHA-256 indexes and explicit

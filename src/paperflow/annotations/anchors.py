@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 from pathlib import Path
 from urllib.parse import parse_qs, unquote
@@ -22,6 +23,7 @@ PDF_SELECTION = re.compile(r"^\d+,\d+,\d+,\d+$")
 def parse_pdf_link(
     value: str, *, vault: Path, pdf_version: int, selected_text: str = ""
 ) -> AnnotationAnchor:
+    value = html.unescape(value)
     if not value.startswith("[[") or not value.endswith("]]"):
         raise ValueError("expected an Obsidian PDF wikilink")
     target = value[2:-2].split("|", 1)[0]

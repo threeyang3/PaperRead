@@ -99,7 +99,7 @@ def test_resources_install_internal_obsidian_automation(tmp_path: Path) -> None:
         ).read_text(encoding="utf-8")
     )
     assert state["plugin_version"] == "1.5.0"
-    assert state["integration_version"] == 9
+    assert state["integration_version"] == 10
 
     main = plugin / "main.js"
     main.write_text("// user customization\n", encoding="utf-8")

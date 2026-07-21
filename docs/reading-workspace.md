@@ -17,6 +17,13 @@ PaperFlow: Open paper reading workspace
 不会因当前 active leaf 改变而丢失；标注与 Community 使用不同的右侧 leaf。
 全部文件打开后，插件等待 PDF leaf 完成 reveal，并把焦点切回 PDF。
 
+打开布局前，插件通过中央 allowlist 调用
+`paperflow annotation ensure-index <paper_uid> --apply`，并使用 JSON 返回的
+实际路径。默认索引是 `60 Annotations/<paper_id>/index.md`；若 Workspace
+配置了其他标注根目录，则完全服从配置。旧版
+`60 Annotations/<year>/<paper_id>/index.md` 保留不动，其中的用户正文只会
+带来源标记导入一次。
+
 缺少标注、Review 或 Community Note 时，插件只创建私有/派生骨架，不创建公共
 贡献。控制中心提供“阅读、标注、评审、社区、发布贡献”五个并列入口；它们与
 抓取、分析和 Agent 设置没有前后继关系。

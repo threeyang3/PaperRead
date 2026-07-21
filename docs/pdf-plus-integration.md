@@ -37,3 +37,11 @@ PaperFlow 不会把文本伪造成 `selection=` 坐标。未安装 PDF++ 时生�
 
 PDF++ 链接的四元组选区坐标与 PaperFlow `TextQuoteSelector` 分开保存。版本更新
 后旧链接仍指向旧 PDF；重定位继续使用 Annotation revision/reanchor 流程。
+从 Obsidian DOM 或剪贴板取得的链接可能把查询参数分隔符编码为 `&amp;`；
+Automation 和 Python anchor parser 都会先进行 HTML 反转义，再校验 `page`、
+`selection` 与 `color`，不会把转义文本写入正式 anchor。
+
+阅读工作区打开前会执行
+`paperflow annotation ensure-index <paper_uid> --apply`。CLI 返回 Workspace
+配置所决定的规范索引路径，因此自定义标注根目录和旧版年份目录都不会使插件
+打开一个空的平行索引。

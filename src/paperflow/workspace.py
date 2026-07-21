@@ -82,7 +82,7 @@ class WorkspacePaths(StrictModel):
     manual_review: PathRule = PathRule(root="50 Inbox/Manual Review")
     annotation_note: PathRule = PathRule(
         root="60 Annotations",
-        template="{{year}}/{{paper_id}}/{{annotation_id}}.annotation.md",
+        template="{{paper_id}}/{{annotation_id}}.annotation.md",
     )
     paper_review: PathRule = PathRule(
         root="60 Reviews",
