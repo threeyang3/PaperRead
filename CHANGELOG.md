@@ -33,6 +33,9 @@
 - Made `workspace-v3 --apply` safely repair an already-schema-3 partial
   migration using its existing formal backup, and return a non-zero CLI result
   with `status=verification-failed` whenever final verification is not clean.
+- Bundled the reading-workspace implementation into the Automation plugin's
+  `main.js`, removing its Electron-incompatible runtime dependency on
+  `require("./reading-workspace")`.
 ## 1.4.0 - 2026-07-19
 
 - Released the PaperFlow 1.4.0 implementation contract: Workspace schema 2,

@@ -61,6 +61,9 @@ Advanced tools. Open a generated paper note and run **PaperFlow: Open paper
 reading workspace** to arrange the versioned PDF, private annotations, private
 review, and read-only Community Note. PDF++ is recommended; native Obsidian
 page links remain the fallback. These are independent capabilities.
+The installed plugin entry point is self-contained: `main.js` has no relative
+runtime module dependency, so Obsidian Electron can load it independently of
+the renderer's current working directory or CommonJS resolution base.
 There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
 

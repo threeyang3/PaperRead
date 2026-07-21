@@ -2,6 +2,8 @@
 
 const assert = require("node:assert/strict");
 const Module = require("node:module");
+const os = require("node:os");
+const path = require("node:path");
 
 let layoutReady;
 const vaultEvents = [];
@@ -159,6 +161,7 @@ class ItemView {
 class Modal {}
 
 const originalLoad = Module._load;
+const relativeModuleRequests = [];
 Module._load = function load(request, parent, isMain) {
   if (request === "obsidian") {
     return {
@@ -171,6 +174,12 @@ Module._load = function load(request, parent, isMain) {
       setIcon() {},
       Platform: { isDesktopApp: true }
     };
+  }
+  if (/^\.\.?[\\/]/.test(request)) {
+    relativeModuleRequests.push(request);
+    const error = new Error(`Cannot find module '${request}'`);
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
   }
   return originalLoad.call(this, request, parent, isMain);
 };
@@ -187,9 +196,20 @@ global.window = {
 };
 
 async function main() {
-  const AutomationPlugin = require(
+  const pluginMain = path.resolve(
+    __dirname,
     "../../integrations/obsidian-paperflow-automation/main.js"
   );
+  const originalCwd = process.cwd();
+  let AutomationPlugin;
+  try {
+    process.chdir(os.tmpdir());
+    AutomationPlugin = require(pluginMain);
+  } finally {
+    process.chdir(originalCwd);
+  }
+  assert.deepEqual(relativeModuleRequests, []);
+  assert.equal(typeof AutomationPlugin.__test.openReadingWorkspace, "function");
   assert.deepEqual(
     AutomationPlugin.__test.controlCommands("paper-add", {
       value: "2607.00001",

@@ -82,7 +82,9 @@ def test_resources_install_internal_obsidian_automation(tmp_path: Path) -> None:
         (plugin / "manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["version"] == "1.5.0"
-    assert (plugin / "reading-workspace.js").exists()
+    main_js = (plugin / "main.js").read_text(encoding="utf-8")
+    assert 'require("./' not in main_js
+    assert not (plugin / "reading-workspace.js").exists()
     assert "controlCenter" in __import__("json").loads(
         (plugin / "data.json").read_text(encoding="utf-8")
     )

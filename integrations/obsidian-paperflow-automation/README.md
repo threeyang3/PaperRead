@@ -32,6 +32,9 @@
 
 插件只在 Obsidian 桌面版打开时运行。手动命令：
 
+发布入口 `main.js` 已内联阅读工作区实现，不依赖运行时相对 `require()`。
+即使 Electron renderer 的当前目录不在插件目录，插件也可直接加载。
+
 - `PaperFlow Automation: 立即处理 Inbox`
 - `PaperFlow Automation: 立即运行每日流程`
 - `PaperFlow Automation: 显示自动化状态`

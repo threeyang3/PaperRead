@@ -721,7 +721,6 @@ def _install_automation_plugin(
     actions = []
     for name in [
         "main.js",
-        "reading-workspace.js",
         "manifest.json",
         "styles.css",
         "scheduler-core.js",
