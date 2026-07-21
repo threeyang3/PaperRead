@@ -104,7 +104,8 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             "PDF++ integration",
             (not pdf_plus["installed"]) or pdf_plus["compatible"],
             (
-                f"version={pdf_plus.get('version')}; direct PDF editing disabled"
+                f"version={pdf_plus.get('version')}; selection adapter="
+                f"{pdf_plus.get('selection_capture')}; direct PDF editing disabled"
                 if pdf_plus["installed"] else "not installed; native page-link fallback active"
             ),
         ))

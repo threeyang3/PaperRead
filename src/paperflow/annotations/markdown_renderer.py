@@ -13,8 +13,10 @@ END = "<!-- PAPERFLOW_ANNOTATION_END -->"
 def pdf_link(annotation: Annotation) -> str:
     anchor = annotation.preferred_revision.anchor
     fragment = f"page={anchor.page}"
-    if anchor.text_quote_selector and anchor.text_quote_selector.exact:
-        fragment += "&selection=" + quote(anchor.text_quote_selector.exact, safe="")
+    if anchor.pdf_selection:
+        fragment += "&selection=" + quote(anchor.pdf_selection, safe=",")
+        if anchor.highlight_color:
+            fragment += "&color=" + quote(anchor.highlight_color, safe="")
     return f"[[{anchor.pdf_path}#{fragment}]]"
 
 

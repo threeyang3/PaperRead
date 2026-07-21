@@ -38,6 +38,15 @@
   `require("./reading-workspace")`.
 - Fixed reading-workspace layout creation by anchoring the Review split to the
   PDF leaf, awaiting PDF reveal, and explicitly focusing the visible PDF leaf.
+- Added a bilingual PDF annotation loop to the Automation plugin: command
+  palette, ribbon, file-menu, reading-workspace and Control Center entries;
+  optional feature-detected PDF++ selection capture; explicit manual fallback;
+  and central CLI writes with automatic private-index refresh.
+- Bumped the Automation integration resource contract to 9 so an existing
+  1.5.0 installation safely stages the updated single-file plugin resources.
+- Separated PDF++ four-integer selection coordinates from quoted text, retained
+  versioned page/selection/color links, and kept Annotation schema v1 backward
+  compatible without fabricating selectors from legacy free text.
 
 ## 1.4.0 - 2026-07-19
 

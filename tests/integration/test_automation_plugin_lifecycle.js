@@ -11,9 +11,11 @@ const registeredEvents = [];
 const registeredIntervals = [];
 const registeredViews = [];
 const ribbonIcons = [];
+const registeredCommands = [];
 const saved = [];
 const openedLinks = [];
 let revealedLeaf = null;
+let openedModal = null;
 
 class FakeElement {
   constructor(tag = "div", options = {}) {
@@ -92,6 +94,14 @@ class Plugin {
         },
         async openLinkText(target, source, newLeaf) {
           openedLinks.push({ target, source, newLeaf });
+        },
+        on(name, callback) {
+          return { name, callback };
+        }
+      },
+      metadataCache: {
+        getFileCache() {
+          return { frontmatter: null };
         }
       },
       vault: {
@@ -103,6 +113,15 @@ class Plugin {
         on(name, callback) {
           vaultEvents.push({ name, callback });
           return { name };
+        },
+        getMarkdownFiles() {
+          return [];
+        }
+      },
+      commands: {
+        commands: {},
+        executeCommandById() {
+          return false;
         }
       }
     };
@@ -128,7 +147,9 @@ class Plugin {
     };
   }
 
-  addCommand() {}
+  addCommand(command) {
+    registeredCommands.push(command);
+  }
   addSettingTab() {}
   addRibbonIcon(icon, title) {
     ribbonIcons.push({ icon, title });
@@ -158,7 +179,19 @@ class ItemView {
     this.containerEl = this.contentEl;
   }
 }
-class Modal {}
+class Modal {
+  constructor(app) {
+    this.app = app;
+    this.contentEl = new FakeElement();
+  }
+  open() {
+    openedModal = this;
+    this.onOpen?.();
+  }
+  close() {
+    this.onClose?.();
+  }
+}
 
 const originalLoad = Module._load;
 const relativeModuleRequests = [];
@@ -212,7 +245,7 @@ async function main() {
   assert.equal(typeof AutomationPlugin.__test.openReadingWorkspace, "function");
 
   const paper = { path: "10 Papers/2025/pi05.md", extension: "md" };
-  const pdf = { path: "80 Attachments/Papers/2025/2504.16054/v1.pdf" };
+  const pdf = { path: "80 Attachments/Papers/2025/2504.16054/v1.pdf", extension: "pdf" };
   const annotation = { path: "60 Annotations/2025/arxiv_2504.16054/index.md" };
   const review = { path: "60 Reviews/2025/arxiv_2504.16054.review.md" };
   const community = { path: "70 Community/2025/arxiv_2504.16054.community.md" };
@@ -299,6 +332,24 @@ async function main() {
     review: review.path,
     community: community.path
   });
+  assert.deepEqual(AutomationPlugin.__test.activePaperContext({
+    workspace: { getActiveFile: () => pdf },
+    vault: { getMarkdownFiles: () => [paper] },
+    metadataCache: {
+      getFileCache: () => ({
+        frontmatter: {
+          type: "paper",
+          paper_uid: "arxiv:2504.16054",
+          paper_pdf_path: pdf.path,
+          paper_arxiv_version: "v1"
+        }
+      })
+    }
+  }), {
+    paperUid: "arxiv:2504.16054",
+    pdfPath: pdf.path,
+    pdfVersion: 1
+  });
   assert.deepEqual(
     AutomationPlugin.__test.controlCommands("paper-add", {
       value: "2607.00001",
@@ -326,6 +377,68 @@ async function main() {
   assert.deepEqual(
     AutomationPlugin.__test.controlCommands("paper-visuals"),
     [["paper", "visuals", "--all"]]
+  );
+  const selectionLink = "[[80 Attachments/Papers/2026/2607.00001/v3.pdf#page=9&selection=4,1,7,22&color=yellow]]";
+  assert.deepEqual(
+    AutomationPlugin.__test.parsePdfAnnotationLink(selectionLink),
+    {
+      raw: selectionLink,
+      path: "80 Attachments/Papers/2026/2607.00001/v3.pdf",
+      page: 9,
+      selection: "4,1,7,22",
+      color: "yellow"
+    }
+  );
+  const annotationPayloadValue = AutomationPlugin.__test.annotationPayload({
+    paperUid: "arxiv:2607.00001",
+    pdfPath: "80 Attachments/Papers/2026/2607.00001/v3.pdf",
+    pdfVersion: 3
+  }, {
+    pdfLink: selectionLink,
+    kind: "question",
+    selectedText: "Why is this stable?",
+    body: "Check the proof."
+  });
+  assert.deepEqual(
+    AutomationPlugin.__test.controlCommands("annotation-create", annotationPayloadValue),
+    [[
+      "annotation", "create", "arxiv:2607.00001", selectionLink,
+      "--kind", "question", "--motivation", "questioning",
+      "--body", "Check the proof.",
+      "--selected-text", "Why is this stable?",
+      "--pdf-version", "3", "--apply"
+    ]]
+  );
+  assert.throws(
+    () => AutomationPlugin.__test.parsePdfAnnotationLink(
+      "[[80 Attachments/paper.pdf#page=1&selection=fabricated%20text]]"
+    ),
+    /四个整数/
+  );
+  let executedCommand = "";
+  const adapter = await AutomationPlugin.__test.copyPdfPlusSelectionLink({
+    commands: {
+      commands: { [AutomationPlugin.__test.PDF_PLUS_SELECTION_COMMAND]: {} },
+      executeCommandById(command) {
+        executedCommand = command;
+        return true;
+      }
+    }
+  }, "80 Attachments/Papers/2026/2607.00001/v3.pdf", {
+    async readText() {
+      return selectionLink;
+    }
+  });
+  assert.equal(adapter.ok, true);
+  assert.equal(adapter.link, selectionLink);
+  assert.equal(executedCommand, "pdf-plus:copy-link-to-selection");
+  assert.deepEqual(
+    await AutomationPlugin.__test.copyPdfPlusSelectionLink(
+      { commands: { commands: {}, executeCommandById() {} } },
+      "80 Attachments/Papers/2026/2607.00001/v3.pdf",
+      { async readText() { return selectionLink; } }
+    ),
+    { ok: false, reason: "command-unavailable" }
   );
   assert.deepEqual(
     AutomationPlugin.__test.controlCommands("rebuild-relationships"),
@@ -443,6 +556,23 @@ async function main() {
   plugin.runJob = async () => {};
 
   await plugin.onload();
+  const currentPaper = { path: "10 Papers/2607.00001.md", extension: "md" };
+  plugin.app.workspace.getActiveFile = () => currentPaper;
+  plugin.app.metadataCache.getFileCache = () => ({
+    frontmatter: {
+      type: "paper",
+      paper_uid: "arxiv:2607.00001",
+      paper_pdf_path: "80 Attachments/Papers/2026/2607.00001/v3.pdf",
+      paper_arxiv_version: 3
+    }
+  });
+  const annotationCommand = registeredCommands.find((item) => item.id === "create-pdf-annotation");
+  assert.ok(annotationCommand);
+  annotationCommand.callback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(openedModal);
+  assert.equal(openedModal.contentEl.findByClass("paperflow-annotation-modal").length, 1);
+  assert.equal(openedModal.contentEl.findByClass("paperflow-annotation-field").length, 5);
   assert.equal(typeof layoutReady, "function");
   layoutReady();
   await new Promise((resolve) => setTimeout(resolve, 75));
@@ -451,18 +581,18 @@ async function main() {
     vaultEvents.map((event) => event.name),
     ["create", "modify", "rename"]
   );
-  assert.equal(registeredEvents.length, 3);
+  assert.equal(registeredEvents.length, 4);
   assert.equal(registeredIntervals.length, 2);
   assert.equal(registeredViews.length, 1);
   assert.equal(registeredViews[0].type, "paperflow-control-center");
-  assert.equal(ribbonIcons.length, 1);
+  assert.equal(ribbonIcons.length, 2);
   const view = registeredViews[0].factory({ app: plugin.app });
   await view.onOpen();
   assert.equal(view.contentEl.findByClass("paperflow-control-hero").length, 1);
   assert.equal(view.contentEl.findByClass("paperflow-automation-grid").length, 1);
   assert.equal(view.contentEl.findByClass("paperflow-automation-track").length, 3);
   assert.equal(view.contentEl.findByClass("paperflow-task-shelf").length, 1);
-  assert.equal(view.contentEl.findByClass("paperflow-task-entry").length, 6);
+  assert.equal(view.contentEl.findByClass("paperflow-task-entry").length, 7);
   await view.contentEl
     .findByClass("paperflow-task-entry")[0]
     .findByClass("paperflow-action")[0]

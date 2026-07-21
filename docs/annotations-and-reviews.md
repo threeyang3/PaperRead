@@ -11,6 +11,7 @@ section-comment、paper-review 和 rating。每条记录保存：
 - PDF 版本、SHA-256、Vault 相对路径和页码；
 - FragmentSelector；
 - 可选 TextQuoteSelector、TextPositionSelector 和矩形；
+- 可选 PDF++ 四元组 selection 与显示颜色；二者不等同于引用文本；
 - 所选文本 SHA-256；
 - 不可变 anchor revisions，其中恰好一个为 preferred。
 
@@ -18,11 +19,20 @@ Markdown 是人可读、可编辑真源，JSON 是可重建 sidecar。双方均�
 PaperFlow 停止覆盖并要求 Manual Review。边界外的未知 Markdown 和
 `extensions` 元数据会保留。
 
+Annotation Schema 仍为 v1：`pdf_selection` 与 `highlight_color` 是向后兼容的
+可选 anchor 字段，不需要 Workspace 迁移。旧版本将自由文本放进 `selection=`
+的记录仍可读取，但重新渲染时只输出页码；实际引用文本保留在
+`TextQuoteSelector`，不会生成无效 PDF 选区。
+
 ```powershell
 paperflow annotation list
 paperflow annotation validate
 paperflow annotation sync --dry-run
 paperflow workspace rebuild-annotation-index --apply
+paperflow annotation create arxiv:2504.16054 `
+  "[[80 Attachments/Papers/2025/2504.16054/v1.pdf#page=5]]" `
+  --kind question --motivation questioning `
+  --selected-text "actual visible text" --body "Why?" --apply
 ```
 
 ## 评审

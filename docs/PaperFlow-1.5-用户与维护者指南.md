@@ -8,10 +8,14 @@ PaperFlow 1.5 把“阅读 PDF、写个人标注、形成个人评审、查看�
 
 1. 在 Obsidian 打开一篇 PaperFlow 论文笔记。
 2. 命令面板运行“PaperFlow: 打开论文阅读工作区”。
-3. 左侧阅读 PDF；右侧写标注和 Review。推荐安装官方 PDF++，未安装仍可用
-   Obsidian 原生页码链接。
+3. 左侧阅读 PDF；从命令面板、Ribbon、文件菜单或控制中心选择“创建 PDF
+   标注”。推荐安装官方 PDF++；未安装仍可用 Obsidian 原生页码链接。
 4. 在控制中心的并列入口中查看“阅读、标注、评审、社区、发布贡献”。
 5. 运行 `paperflow annotation sync --dry-run` 检查标注协议。
+
+PDF++ 可用时，插件会尝试复制当前真实选区并预填表单。该命令或剪贴板不可用
+时会明确显示降级表单，由用户填写页码、所见文本和评论；不会伪造选区。保存
+通过中央 CLI 写入 User 层并刷新索引，Nutstore 双修改冲突仍会拒绝覆盖。
 
 PDF 按 arXiv 版本保存为 vN，旧版本不覆盖。个人评分、AI 分数和社区评分分别
 显示。英文论文标题、摘要、引用、图注和正文不因中文界面被翻译。
@@ -44,7 +48,7 @@ dry-run，只恢复正式备份中的校验文件，不删除之后创建的用�
 `content_sha256`，拒绝被篡改的 revision。维护者必须完成完整 pytest、Node 生命周期、
 Doctor、audit、迁移、Base、Obsidian runtime、发布物白名单和干净 clone 验证。
 
-截至 2026-07-21，PaperRead 1.5.0 的源代码、111 项 pytest、2 项 Node 测试、
+截至 2026-07-21，PaperRead 1.5.0 的源代码、113 项 pytest、2 项 Node 测试、
 模拟 Workspace v3 迁移/回滚、Community 篡改拒绝和本地发布物验证已完成。
 真实 `ArxivLearn` Vault 已复制并渲染 32/32 篇，但旧 1.5.0 代码未更新
 Derived PDF 路径，验证因此拒绝全部 32 篇。安装修复 wheel 后应直接重跑

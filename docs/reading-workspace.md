@@ -21,5 +21,10 @@ PaperFlow: Open paper reading workspace
 贡献。控制中心提供“阅读、标注、评审、社区、发布贡献”五个并列入口；它们与
 抓取、分析和 Agent 设置没有前后继关系。
 
-标注建议使用 PDF++ 复制链接，再用 PaperFlow 同步/校验命令固化 selector 和
-PDF hash。历史 PDF 仍可打开；切换版本不会自动重定位标注。
+Ribbon、命令面板、PDF/论文文件菜单和控制中心都提供“创建 PDF 标注”。安装
+PDF++ 时，一键入口优先运行其 Copy link to selection 命令并预填表单；否则
+明确退化到页码、所选文本和评论表单。高亮、评论、问题和批评均由 PaperFlow
+CLI 中央写入 User 层，并立即刷新 `60 Annotations` 索引；不会直接修改 PDF。
+
+标注链接固化 selector、PDF 版本和 SHA-256。历史 PDF 仍可打开；切换版本不会
+静默改写标注，需通过 revision/reanchor 流程定位新版本。

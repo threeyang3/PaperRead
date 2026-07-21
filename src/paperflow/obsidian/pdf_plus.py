@@ -33,6 +33,8 @@ def status(vault: Path) -> dict[str, Any]:
             "installed": False,
             "compatible": False,
             "fallback": "native-page-link",
+            "link_capability": "page",
+            "selection_capture": "manual-page-and-text",
         }
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     version = str(manifest.get("version", "0"))
@@ -42,7 +44,12 @@ def status(vault: Path) -> dict[str, Any]:
         "version": version,
         "compatible": Version(version) in SUPPORTED,
         "manifest": manifest,
-        "uses_private_api": False,
+        "paperflow_calls_pdf_plus_private_api": False,
+        "obsidian_command_boundary": "unstable-feature-detected",
+        "link_capability": "page-and-selection",
+        "selection_capture": "feature-detected-command-and-clipboard",
+        "selection_command": "pdf-plus:copy-link-to-selection",
+        "fallback": "native-page-link",
     }
 
 

@@ -15,6 +15,12 @@
 - Obsidian 工作区加载完成后默认自动打开控制中心；可在插件设置中关闭。
 - 控制中心“立即执行”区域可一键运行“补齐论文图片”，通过固定白名单命令
   从本地 PDF 提取有原文图注支撑的架构图、方法总览和关键结果图。
+- 命令面板、Ribbon、PDF/论文文件菜单与控制中心可创建私有 PDF 标注。若
+  PDF++ 的 `copy-link-to-selection` 命令和剪贴板可用，会校验并预填真实选区；
+  否则显示页码/文本表单。保存始终调用 PaperFlow CLI 并刷新标注索引。
+- 命令面板、Ribbon、PDF/论文文件菜单与控制中心可创建私有 PDF 标注。若
+  PDF++ 的 `copy-link-to-selection` 命令和剪贴板可用，会校验并预填真实选区；
+  否则显示页码/文本表单。保存始终调用 PaperFlow CLI 并刷新标注索引。
 - 直接启动 Vault 内固定 `.paperflow/.venv/Scripts/python.exe`，`shell: false`，不调用 PowerShell、CMD 或 Windows Task Scheduler。
 - 不把笔记、表单或剪贴板内容拼接进命令行。
 - Python 流水线仍使用 `.paperflow/runtime/pipeline.lock` 防止并发。
@@ -41,3 +47,5 @@ PDF leaf，避免右侧复用或 active leaf 变化覆盖目标视图。
 - `PaperFlow Automation: 立即运行每日流程`
 - `PaperFlow Automation: 显示自动化状态`
 - `PaperFlow Automation: 打开控制中心`
+- `PaperFlow Automation: 从当前 PDF / 选区创建标注`
+- `PaperFlow Automation: 从当前 PDF / 选区创建标注`

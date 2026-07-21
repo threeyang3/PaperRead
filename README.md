@@ -67,6 +67,12 @@ leaves; completion waits for and focuses the PDF leaf.
 The installed plugin entry point is self-contained: `main.js` has no relative
 runtime module dependency, so Obsidian Electron can load it independently of
 the renderer's current working directory or CommonJS resolution base.
+Use **PaperFlow: Create annotation from current PDF / selection** from the
+command palette, ribbon, file menu, or Control Center. PDF++ 0.40.31 can supply
+its selection-link syntax through a feature-detected command/clipboard adapter;
+otherwise the modal uses a native page link and explicit text input. All saves
+go through the PaperFlow CLI, private Annotation schema, conflict guard, and
+index rebuild. Direct PDF editing remains disabled.
 There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
 

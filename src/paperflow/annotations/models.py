@@ -50,6 +50,8 @@ class AnnotationAnchor(ExtensibleModel):
     text_quote_selector: TextQuoteSelector | None = None
     text_position_selector: TextPositionSelector | None = None
     selected_text_sha256: str = ""
+    pdf_selection: str = Field(default="", pattern=r"^(?:\d+,\d+,\d+,\d+)?$")
+    highlight_color: str = Field(default="", pattern=r"^[A-Za-z0-9_-]{0,64}$")
 
     @model_validator(mode="after")
     def page_consistent(self) -> "AnnotationAnchor":

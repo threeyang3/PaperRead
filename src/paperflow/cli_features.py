@@ -56,6 +56,7 @@ def annotation_create(
     kind: str = typer.Option("passage-comment", "--kind"),
     motivation: str = typer.Option("commenting", "--motivation"),
     body: str = typer.Option("", "--body"),
+    selected_text: str = typer.Option("", "--selected-text"),
     pdf_version: int = typer.Option(1, "--pdf-version", min=1),
     dry_run: bool = typer.Option(True, "--dry-run/--apply"),
     vault: Path | None = typer.Option(None, "--vault"),
@@ -63,7 +64,7 @@ def annotation_create(
     root, settings = _root(vault)
     _echo(AnnotationService(root, settings, dry_run=dry_run).create(
         paper_uid, pdf_link, pdf_version=pdf_version, kind=kind,
-        motivation=motivation, body=body,
+        motivation=motivation, body=body, selected_text=selected_text,
     ))
 
 

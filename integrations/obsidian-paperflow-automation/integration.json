@@ -1,6 +1,6 @@
 {
   "integration": "paperflow-automation",
-  "integration_version": 8,
+  "integration_version": 9,
   "plugin_id": "paperflow-automation",
   "version": "1.5.0",
   "requires_obsidian_open": true,

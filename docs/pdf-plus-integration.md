@@ -18,3 +18,22 @@ paperflow integration pdf-plus upgrade
 推荐配置关闭 PDF 直接编辑。若用户自行启用，编辑后的文件是 User-derived
 PDF，不再是 Raw，也不会发布到 Feed。PaperFlow 只解析公开的 Obsidian 链接
 语法，不调用 PDF++ 私有 JavaScript API；插件缺失时保留 page-only 原生链接。
+
+## 可视化标注适配
+
+Automation 插件的“从当前 PDF / 选区创建标注”按以下顺序运行：
+
+1. feature-detect `pdf-plus:copy-link-to-selection` 与剪贴板读取能力；
+2. 调用命令并校验复制结果确实是当前版本 PDF 的
+   `#page=N&selection=a,b,c,d` 链接；
+3. 打开已预填的 PaperFlow 表单；
+4. 通过 `paperflow annotation create --apply` 写入私有 User 数据并刷新索引。
+
+Obsidian 的命令管理器不是稳定公共 API，因此调用只存在于可失败的适配层，
+任何异常都会退化为表单。用户可粘贴 PDF++ 链接，或填写页码和实际所见文本；
+PaperFlow 不会把文本伪造成 `selection=` 坐标。未安装 PDF++ 时生成原生
+`[[file.pdf#page=N]]`，点击仍可返回正确版本和页码。PaperFlow 不修改
+`enablePDFEdit`，也不启用 `autoCopy` / `autoPaste`。
+
+PDF++ 链接的四元组选区坐标与 PaperFlow `TextQuoteSelector` 分开保存。版本更新
+后旧链接仍指向旧 PDF；重定位继续使用 Annotation revision/reanchor 流程。

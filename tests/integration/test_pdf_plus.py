@@ -15,7 +15,10 @@ def test_pdf_plus_detect_configure_and_preserve_user_settings(tmp_path: Path) ->
     (plugin / "data.json").write_text(
         '{"enablePDFEdit": true, "userCustom": 42}', encoding="utf-8"
     )
-    assert status(tmp_path)["compatible"]
+    detected = status(tmp_path)
+    assert detected["compatible"]
+    assert detected["link_capability"] == "page-and-selection"
+    assert detected["selection_capture"] == "feature-detected-command-and-clipboard"
     preview = configure(tmp_path, dry_run=True)
     assert preview["action"] == "merge-review"
     assert "enablePDFEdit" in preview["conflicts"]
@@ -31,3 +34,4 @@ def test_pdf_plus_missing_uses_official_install_dry_run(tmp_path: Path) -> None:
     assert result["action"] == "official-obsidian-install"
     assert result["command"][-1] == "id=pdf-plus"
     assert result["fallback"] == "native-page-link"
+    assert result["selection_capture"] == "manual-page-and-text"

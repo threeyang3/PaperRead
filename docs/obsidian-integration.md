@@ -41,6 +41,24 @@ and separate Annotation, Review, and Community projections. Official PDF++ is
 recommended and managed through `paperflow integration pdf-plus`; PaperFlow
 does not call its private API and falls back to native page links.
 
+The Automation plugin adds a bilingual annotation modal to the command palette,
+ribbon, PDF/paper file menu, reading workflow, and Control Center. Its optional
+PDF++ adapter feature-detects `pdf-plus:copy-link-to-selection`, invokes it in an
+isolated failure boundary, reads and validates the clipboard result, then
+prefills the modal. It never enables direct PDF editing. Missing commands,
+clipboard denial, or an unverifiable selection fall back to an explicit page
+and selected-text form. Saving calls the PaperFlow CLI allowlist; the plugin
+does not bypass the Annotation schema or Nutstore conflict checks.
+
+The Automation plugin adds a bilingual annotation modal to the command palette,
+ribbon, PDF/paper file menu, reading workflow, and Control Center. Its optional
+PDF++ adapter feature-detects `pdf-plus:copy-link-to-selection`, invokes it in an
+isolated failure boundary, reads and validates the clipboard result, then
+prefills the modal. It never enables direct PDF editing. Missing commands,
+clipboard denial, or an unverifiable selection fall back to an explicit page
+and selected-text form. Saving calls the PaperFlow CLI allowlist; the plugin
+does not bypass the Annotation schema or Nutstore conflict checks.
+
 The layout creates four distinct leaves. Review is split directly from the PDF
 leaf with `createLeafBySplit`; Annotation and Community use separate right-side
 leaves. The command awaits `revealLeaf(pdfLeaf)` and then focuses that PDF leaf,

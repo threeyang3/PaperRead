@@ -1,6 +1,8 @@
 {
   "enabled": true,
   "openControlCenterOnStartup": true,
+  "pdfAnnotationEnabled": true,
+  "preferPdfPlusSelectionLinks": true,
   "inboxIntervalMinutes": 5,
   "inboxEventDebounceMs": 1500,
   "dailyLocalTime": "08:00",

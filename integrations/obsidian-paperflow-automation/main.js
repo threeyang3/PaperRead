@@ -253,6 +253,124 @@ function cleanText(value, label, maximum = 300) {
   return result;
 }
 
+function boundedMultiline(value, label, maximum = 12000) {
+  const result = String(value || "");
+  if (result.length > maximum || /[\u0000\u000b\u000c\u000e-\u001f\u007f]/.test(result)) {
+    throw new Error(`${label}包含无效字符或过长。`);
+  }
+  return result;
+}
+
+const PDF_PLUS_SELECTION_COMMAND = "pdf-plus:copy-link-to-selection";
+const ANNOTATION_KINDS = new Set(["highlight", "passage-comment", "question", "critique"]);
+const ANNOTATION_MOTIVATIONS = Object.freeze({
+  highlight: "highlighting",
+  "passage-comment": "commenting",
+  question: "questioning",
+  critique: "assessing"
+});
+
+function parsePdfAnnotationLink(value) {
+  const raw = String(value || "").trim();
+  const match = /^\[\[([^#|\]]+\.pdf)#([^|\]]+)(?:\|[^\]]*)?\]\]$/i.exec(raw);
+  if (!match) throw new Error("需要指向 PDF 页码的 Obsidian 链接。");
+  const query = new URLSearchParams(match[2]);
+  const page = Number(query.get("page"));
+  if (!Number.isInteger(page) || page < 1) throw new Error("PDF 链接缺少有效页码。");
+  const selection = query.get("selection") || "";
+  if (selection && !/^\d+,\d+,\d+,\d+$/.test(selection)) {
+    throw new Error("PDF++ selection 必须是四个整数；不会把文本伪造成选区。");
+  }
+  const color = selection ? String(query.get("color") || "") : "";
+  if (color && !/^[A-Za-z0-9_-]{1,64}$/.test(color)) throw new Error("PDF++ 颜色无效。");
+  return { raw, path: match[1].replaceAll("\\", "/"), page, selection, color };
+}
+
+function nativePdfPageLink(pdfPath, page = 1) {
+  const normalized = String(pdfPath || "").replaceAll("\\", "/");
+  const number = Math.max(1, Math.trunc(Number(page) || 1));
+  return `[[${normalized}#page=${number}]]`;
+}
+
+function annotationPayload(context, values = {}) {
+  const parsed = parsePdfAnnotationLink(
+    String(values.pdfLink || "").trim() || nativePdfPageLink(context.pdfPath, values.page)
+  );
+  if (parsed.path !== String(context.pdfPath).replaceAll("\\", "/")) {
+    throw new Error("标注链接必须指向当前 PaperFlow 论文的 PDF 版本。");
+  }
+  const kind = String(values.kind || "highlight");
+  if (!ANNOTATION_KINDS.has(kind)) throw new Error(`未知标注类型：${kind}`);
+  return {
+    paperUid: context.paperUid,
+    pdfLink: parsed.raw,
+    pdfVersion: Math.max(1, Math.trunc(Number(context.pdfVersion) || 1)),
+    kind,
+    motivation: ANNOTATION_MOTIVATIONS[kind],
+    selectedText: String(values.selectedText || "").trim(),
+    body: String(values.body || "").trim()
+  };
+}
+
+function paperContextFromFrontmatter(frontmatter, pdfPath = "") {
+  const data = frontmatter || {};
+  if (data.type !== "paper" || !data.paper_uid || !data.paper_pdf_path) return null;
+  const expected = String(data.paper_pdf_path).replaceAll("\\", "/");
+  if (pdfPath && expected !== String(pdfPath).replaceAll("\\", "/")) return null;
+  const version = Number(String(data.paper_arxiv_version || "1").replace(/^v/i, ""));
+  return {
+    paperUid: String(data.paper_uid),
+    pdfPath: expected,
+    pdfVersion: Number.isInteger(version) && version >= 1 ? version : 1
+  };
+}
+
+function activePaperContext(app, requestedFile = null) {
+  const active = requestedFile || app.workspace.getActiveFile?.();
+  if (!active) throw new Error("请先打开 PaperFlow 论文笔记或对应 PDF。");
+  if (active.extension === "md") {
+    const context = paperContextFromFrontmatter(
+      app.metadataCache.getFileCache(active)?.frontmatter
+    );
+    if (context) return context;
+  }
+  if (active.extension === "pdf") {
+    for (const file of app.vault.getMarkdownFiles?.() || []) {
+      const context = paperContextFromFrontmatter(
+        app.metadataCache.getFileCache(file)?.frontmatter,
+        active.path
+      );
+      if (context) return context;
+    }
+  }
+  throw new Error("当前文件没有可验证的 PaperFlow paper_uid 与版本化 PDF 路径。");
+}
+
+async function copyPdfPlusSelectionLink(app, pdfPath, clipboard = globalThis.navigator?.clipboard) {
+  const manager = app.commands;
+  const execute = manager?.executeCommandById;
+  const registered = manager?.commands;
+  if (typeof execute !== "function" || (registered && !registered[PDF_PLUS_SELECTION_COMMAND])) {
+    return { ok: false, reason: "command-unavailable" };
+  }
+  if (!clipboard || typeof clipboard.readText !== "function") {
+    return { ok: false, reason: "clipboard-unavailable" };
+  }
+  try {
+    const invoked = await Promise.resolve(execute.call(manager, PDF_PLUS_SELECTION_COMMAND));
+    if (invoked === false) return { ok: false, reason: "command-rejected" };
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+    const raw = await clipboard.readText();
+    const parsed = parsePdfAnnotationLink(raw);
+    if (!parsed.selection || parsed.path !== String(pdfPath).replaceAll("\\", "/")) {
+      return { ok: false, reason: "no-current-selection" };
+    }
+    return { ok: true, link: parsed.raw };
+  } catch (error) {
+    return { ok: false, reason: "adapter-error", error: String(error?.message || error) };
+  }
+}
+
 function safeName(value, label = "名称") {
   const result = cleanText(value, label, 80);
   if (!/^[A-Za-z0-9._-]+$/.test(result)) {
@@ -362,6 +480,23 @@ function controlCommands(action, payload = {}) {
       }
       const command = ["paper", "analyze", paperUid];
       if (provider !== "configured") command.push("--provider", provider);
+      return [command];
+    }
+    case "annotation-create": {
+      const kind = String(payload.kind || "highlight");
+      const motivation = String(payload.motivation || ANNOTATION_MOTIVATIONS[kind] || "");
+      if (!ANNOTATION_KINDS.has(kind)) throw new Error(`未知标注类型：${kind}`);
+      if (motivation !== ANNOTATION_MOTIVATIONS[kind]) throw new Error("标注类型与 motivation 不匹配。");
+      const link = cleanText(payload.pdfLink, "PDF 标注链接", 4000);
+      parsePdfAnnotationLink(link);
+      const command = [
+        "annotation", "create", cleanText(payload.paperUid, "Paper UID", 300), link,
+        "--kind", kind, "--motivation", motivation,
+        "--body", boundedMultiline(payload.body, "标注正文"),
+        "--selected-text", boundedMultiline(payload.selectedText, "所选文本"),
+        "--pdf-version", String(Math.max(1, Math.trunc(Number(payload.pdfVersion) || 1))),
+        "--apply"
+      ];
       return [command];
     }
     case "ai-save": {
@@ -554,6 +689,8 @@ function controlCommands(action, payload = {}) {
 const DEFAULT_SETTINGS = {
   enabled: true,
   openControlCenterOnStartup: true,
+  pdfAnnotationEnabled: true,
+  preferPdfPlusSelectionLinks: true,
   inboxIntervalMinutes: 5,
   inboxEventDebounceMs: 1500,
   dailyLocalTime: "08:00",
@@ -717,6 +854,11 @@ class PaperFlowAutomationPlugin extends Plugin {
       text("打开 PaperFlow 控制中心", "Open PaperFlow Control Center"),
       () => void this.activateControlCenter()
     );
+    this.addRibbonIcon(
+      "highlighter",
+      text("从当前 PDF 选区创建 PaperFlow 标注", "Create PaperFlow annotation from current PDF selection"),
+      () => void this.openAnnotationModal({ preferSelection: true })
+    );
     this.addCommand({
       id: "open-control-center",
       name: text("打开控制中心", "Open Control Center"),
@@ -739,6 +881,23 @@ class PaperFlowAutomationPlugin extends Plugin {
         }
       }
     });
+    this.addCommand({
+      id: "create-pdf-annotation",
+      name: text("从当前 PDF / 选区创建标注", "Create annotation from current PDF / selection"),
+      callback: () => void this.openAnnotationModal({ preferSelection: true })
+    });
+    if (typeof this.app.workspace.on === "function") {
+      this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+        if (!this.settings.pdfAnnotationEnabled || !["md", "pdf"].includes(file?.extension)) return;
+        menu.addItem((item) => item
+          .setTitle(text("创建 PaperFlow PDF 标注", "Create PaperFlow PDF annotation"))
+          .setIcon("highlighter")
+          .onClick(() => void this.openAnnotationModal({
+            preferSelection: file.extension === "pdf",
+            requestedFile: file
+          })));
+      }));
+    }
     this.addCommand({
       id: "run-inbox-now",
       name: text("立即处理 Inbox", "Process Inbox now"),
@@ -788,6 +947,28 @@ class PaperFlowAutomationPlugin extends Plugin {
     }
     this.app.workspace.detachLeavesOfType?.(CONTROL_VIEW_TYPE);
     this.updateStatus(text("PaperFlow 自动化：已停止", "PaperFlow automation: stopped"));
+  }
+
+  async openAnnotationModal({ preferSelection = false, requestedFile = null } = {}) {
+    if (!this.settings.pdfAnnotationEnabled) {
+      new Notice(text("PDF 标注入口已在设置中关闭。", "PDF annotation entry is disabled in settings."));
+      return;
+    }
+    try {
+      const context = activePaperContext(this.app, requestedFile);
+      let initialLink = nativePdfPageLink(context.pdfPath, 1);
+      let adapter = { ok: false, reason: "manual" };
+      if (preferSelection && this.settings.preferPdfPlusSelectionLinks) {
+        adapter = await copyPdfPlusSelectionLink(this.app, context.pdfPath);
+        if (adapter.ok) initialLink = adapter.link;
+      }
+      new PaperFlowAnnotationModal(this.app, this, context, initialLink, adapter).open();
+    } catch (error) {
+      new Notice(
+        text(`无法创建 PDF 标注：${error.message}`, `Could not create PDF annotation: ${error.message}`),
+        12000
+      );
+    }
   }
 
   installLocalizedPropertyLabels() {
@@ -1233,6 +1414,103 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 }
 
+class PaperFlowAnnotationModal extends Modal {
+  constructor(app, plugin, context, initialLink, adapter) {
+    super(app);
+    this.plugin = plugin;
+    this.context = context;
+    this.initialLink = initialLink;
+    this.adapter = adapter;
+  }
+
+  field(parent, labelText, tag = "input") {
+    const label = parent.createEl("label", { cls: "paperflow-annotation-field" });
+    label.createEl("span", { text: labelText });
+    return label.createEl(tag);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("paperflow-annotation-modal");
+    contentEl.createEl("div", {
+      cls: "paperflow-eyebrow",
+      text: text("私有标注 / 中央写入", "PRIVATE ANNOTATION / CENTRAL WRITER")
+    });
+    contentEl.createEl("h2", {
+      text: text("创建 PDF 标注", "Create PDF annotation")
+    });
+    contentEl.createEl("p", {
+      text: this.adapter.ok
+        ? text("已从 PDF++ 读取并校验当前选区链接。", "The current PDF++ selection link was captured and verified.")
+        : text(
+            "未能可靠读取 PDF 选区。请粘贴 PDF++ 复制的选区链接，或填写页码；PaperFlow 不会伪造选区。",
+            "The PDF selection could not be read reliably. Paste a PDF++ selection link or enter a page; PaperFlow will not fabricate a selection."
+          )
+    });
+    contentEl.createEl("small", {
+      text: `${this.context.paperUid} · ${this.context.pdfPath} · v${this.context.pdfVersion}`
+    });
+
+    const parsed = parsePdfAnnotationLink(this.initialLink);
+    const page = this.field(contentEl, text("页码", "Page"));
+    page.type = "number";
+    page.min = "1";
+    page.value = String(parsed.page);
+    const link = this.field(contentEl, text("PDF / PDF++ 链接", "PDF / PDF++ link"));
+    link.value = this.initialLink;
+    page.addEventListener("change", () => {
+      try {
+        const current = parsePdfAnnotationLink(link.value);
+        if (!current.selection) link.value = nativePdfPageLink(this.context.pdfPath, page.value);
+      } catch {
+        link.value = nativePdfPageLink(this.context.pdfPath, page.value);
+      }
+    });
+
+    const kind = this.field(contentEl, text("类型", "Type"), "select");
+    for (const [value, zh, en] of [
+      ["highlight", "高亮", "Highlight"],
+      ["passage-comment", "评论", "Comment"],
+      ["question", "问题", "Question"],
+      ["critique", "批评", "Critique"]
+    ]) {
+      const option = kind.createEl("option", { text: text(zh, en) });
+      option.value = value;
+    }
+    kind.value = "highlight";
+    const selectedText = this.field(contentEl, text("所选文本（可选）", "Selected text (optional)"), "textarea");
+    selectedText.placeholder = text("粘贴实际看到的文字；不会写进 selection= 坐标", "Paste the text you actually see; it is not used as selection= coordinates");
+    const body = this.field(contentEl, text("评论 / 问题（可选）", "Comment / question (optional)"), "textarea");
+
+    const actions = contentEl.createDiv({ cls: "paperflow-modal-actions" });
+    const cancel = actions.createEl("button", { text: text("取消", "Cancel") });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", {
+      cls: "mod-cta",
+      text: text("保存并刷新标注索引", "Save and refresh annotation index")
+    });
+    save.addEventListener("click", async () => {
+      try {
+        const payload = annotationPayload(this.context, {
+          pdfLink: link.value,
+          page: page.value,
+          kind: kind.value,
+          selectedText: selectedText.value,
+          body: body.value
+        });
+        const result = await this.plugin.runControlAction("annotation-create", payload);
+        if (result.code === 0) this.close();
+      } catch (error) {
+        new Notice(text(`标注未保存：${error.message}`, `Annotation was not saved: ${error.message}`), 12000);
+      }
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 class PaperFlowConfirmModal extends Modal {
   constructor(app, options) {
     super(app);
@@ -1627,7 +1905,12 @@ class PaperFlowControlCenterView extends ItemView {
     copy.createEl("strong", { text: title });
     entry.createEl("p", { text: description });
     const actions = this.buttonRow(entry);
-    if (options.target) {
+    if (options.onClick) {
+      const button = actions.createEl("button", { cls: "paperflow-action" });
+      setIcon(button, options.actionIcon);
+      button.createSpan({ text: options.label });
+      button.addEventListener("click", options.onClick);
+    } else if (options.target) {
       this.vaultButton(actions, options.label, options.actionIcon, options.target);
     } else {
       this.button(
@@ -1689,6 +1972,18 @@ class PaperFlowControlCenterView extends ItemView {
         label: text("打开阅读队列", "Open reading queue"),
         actionIcon: "arrow-up-right",
         target: "00 Dashboard/Bases/Reading Queue.base"
+      }
+    );
+    this.taskEntry(
+      shelf,
+      text("标注", "ANNOTATE"),
+      text("标注当前 PDF", "Annotate the current PDF"),
+      text("优先读取 PDF++ 选区；不可用时明确退化到页码与手填文本", "Prefer the PDF++ selection; otherwise fall back explicitly to a page and manual text"),
+      "highlighter",
+      {
+        label: text("创建标注", "Create annotation"),
+        actionIcon: "message-square-plus",
+        onClick: () => void this.plugin.openAnnotationModal({ preferSelection: true })
       }
     );
     this.taskEntry(
@@ -1782,6 +2077,13 @@ class PaperFlowControlCenterView extends ItemView {
       void openReadingWorkspace(this.app).catch((error) => {
         new Notice(error.message, 10000);
       });
+    });
+    const annotate = quick.createEl("button", {
+      text: text("标注当前 PDF", "Annotate current PDF")
+    });
+    annotate.addClass("paperflow-button");
+    annotate.addEventListener("click", () => {
+      void this.plugin.openAnnotationModal({ preferSelection: true });
     });
 
     const featureNav = container.createDiv({ cls: "paperflow-feature-nav" });
@@ -2360,6 +2662,32 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName(text("启用 PDF 标注入口", "Enable PDF annotation entry"))
+      .setDesc(text(
+        "提供命令面板、Ribbon、文件菜单和控制中心入口；所有写入仍由 PaperFlow CLI 完成。",
+        "Adds command-palette, ribbon, file-menu, and Control Center entries; all writes still go through the PaperFlow CLI."
+      ))
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.pdfAnnotationEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.pdfAnnotationEnabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName(text("优先从 PDF++ 复制当前选区", "Prefer copying the current selection from PDF++"))
+      .setDesc(text(
+        "仅在命令和剪贴板均可用时调用；失败会打开手动表单，不启用 PDF 直接编辑。",
+        "Used only when both the command and clipboard are available; failures open the manual form and never enable direct PDF editing."
+      ))
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.preferPdfPlusSelectionLinks)
+        .onChange(async (value) => {
+          this.plugin.settings.preferPdfPlusSelectionLinks = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
       .setName(text("Inbox 轮询间隔（分钟）", "Inbox interval (minutes)"))
       .addText((input) => input
         .setValue(String(this.plugin.settings.inboxIntervalMinutes))
@@ -2403,6 +2731,9 @@ module.exports = PaperFlowAutomationPlugin;
 module.exports.__test = {
   PAPER_PROPERTY_LABELS_ZH,
   controlCommands,
+  activePaperContext,
+  annotationPayload,
+  copyPdfPlusSelectionLink,
   githubUrl,
   isInboxRequestPath,
   mergedSettings,
@@ -2410,6 +2741,9 @@ module.exports.__test = {
   isChinese,
   propertyLabelCss,
   openReadingWorkspace,
+  nativePdfPageLink,
+  parsePdfAnnotationLink,
+  PDF_PLUS_SELECTION_COMMAND,
   safePaperId,
   text
 };

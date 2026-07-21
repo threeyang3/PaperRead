@@ -22,7 +22,8 @@
 }
 
 .paperflow-control-center *,
-.paperflow-confirm-modal * {
+.paperflow-confirm-modal *,
+.paperflow-annotation-modal * {
   box-sizing: border-box;
 }
 
@@ -389,6 +390,35 @@ button.paperflow-action.danger {
 
 .paperflow-confirm-modal {
   border-top: 4px solid var(--pf-red, #c94e49);
+}
+
+.paperflow-annotation-modal {
+  border-top: 4px solid var(--pf-blue, #4576a5);
+}
+
+.paperflow-annotation-modal h2 {
+  margin-bottom: 8px;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 28px;
+}
+
+.paperflow-annotation-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.paperflow-annotation-field input,
+.paperflow-annotation-field select,
+.paperflow-annotation-field textarea {
+  width: 100%;
+}
+
+.paperflow-annotation-field textarea {
+  min-height: 84px;
+  resize: vertical;
 }
 
 .paperflow-confirm-modal h2 {

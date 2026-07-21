@@ -4,14 +4,17 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from paperflow.annotations.anchors import parse_pdf_link
 from paperflow.annotations.markdown_parser import parse_annotation
 from paperflow.annotations.markdown_renderer import render_annotation
 from paperflow.annotations.models import Annotation, AnnotationRevision
 from paperflow.annotations.reanchor import reanchor_quote
+from paperflow.annotations.service import AnnotationService
 from paperflow.annotations.store import AnnotationStore
-from paperflow.workspace import WorkspaceSettings, default_workspace_dict
+from paperflow.cli import app
+from paperflow.workspace import WorkspaceSettings, default_workspace_dict, init_workspace
 
 
 def _pdf(vault: Path, version: int = 1) -> Path:
@@ -24,9 +27,10 @@ def _pdf(vault: Path, version: int = 1) -> Path:
 def _annotation(vault: Path) -> Annotation:
     pdf = _pdf(vault)
     anchor = parse_pdf_link(
-        "[[80 Attachments/Papers/2026/2607.00001/v1.pdf#page=7&selection=robot%20policy]]",
+        "[[80 Attachments/Papers/2026/2607.00001/v1.pdf#page=7&selection=12,0,14,38&color=yellow]]",
         vault=vault,
         pdf_version=1,
+        selected_text="robot policy",
     )
     return Annotation(
         annotation_id="ann-test",
@@ -52,7 +56,11 @@ def test_pdf_plus_and_native_link_round_trip(tmp_path: Path) -> None:
     markdown = tmp_path / result["markdown"]
     parsed, _ = parse_annotation(markdown)
     assert parsed == annotation
-    assert "page=7&selection=robot%20policy" in markdown.read_text(encoding="utf-8")
+    rendered = markdown.read_text(encoding="utf-8")
+    assert "page=7&selection=12,0,14,38&color=yellow" in rendered
+    assert "> robot policy" in rendered
+    assert parsed.preferred_revision.anchor.pdf_selection == "12,0,14,38"
+    assert parsed.preferred_revision.anchor.highlight_color == "yellow"
     assert parsed.preferred_revision.anchor.pdf_sha256 == hashlib.sha256(
         _pdf(tmp_path).read_bytes()
     ).hexdigest()
@@ -82,8 +90,55 @@ def test_selector_validation_and_page_fallback(tmp_path: Path) -> None:
     )
     assert page.page == 3
     assert page.text_quote_selector is None
+    quoted_page = parse_pdf_link(
+        "[[80 Attachments/Papers/2026/2607.00001/v1.pdf#page=3]]",
+        vault=tmp_path,
+        pdf_version=1,
+        selected_text="manual visible text",
+    )
+    manual = _annotation(tmp_path).model_copy(deep=True)
+    manual.revisions[0].anchor = quoted_page
+    rendered = render_annotation(manual)
+    assert "> manual visible text" in rendered
+    assert "selection=" not in rendered
     with pytest.raises(ValueError, match="escapes"):
         parse_pdf_link("[[../outside.pdf#page=1]]", vault=tmp_path, pdf_version=1)
+
+
+def test_annotation_service_rebuilds_private_index_after_create(tmp_path: Path) -> None:
+    _pdf(tmp_path)
+    settings = WorkspaceSettings.model_validate(default_workspace_dict())
+    result = AnnotationService(tmp_path, settings).create(
+        "arxiv:2607.00001",
+        "[[80 Attachments/Papers/2026/2607.00001/v1.pdf#page=2&selection=1,2,3,4]]",
+        pdf_version=1,
+        kind="question",
+        motivation="questioning",
+        selected_text="Why this assumption?",
+        body="Check the appendix.",
+    )
+    assert result["index"]["annotations"] == 1
+    index = tmp_path / settings.paths.user_annotations.root / "index.json"
+    assert index.exists()
+
+
+def test_annotation_cli_accepts_quote_separately_and_applies(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    _pdf(tmp_path)
+    result = CliRunner().invoke(app, [
+        "annotation", "create", "arxiv:2607.00001",
+        "[[80 Attachments/Papers/2026/2607.00001/v1.pdf#page=5&selection=2,3,4,5]]",
+        "--kind", "highlight", "--motivation", "highlighting",
+        "--selected-text", "actual selected text", "--pdf-version", "1",
+        "--apply", "--vault", str(tmp_path),
+    ])
+    assert result.exit_code == 0, result.output
+    assert '"annotations": 1' in result.output
+    notes = list((tmp_path / "60 Annotations").rglob("*.annotation.md"))
+    assert len(notes) == 1
+    content = notes[0].read_text(encoding="utf-8")
+    assert "selection=2,3,4,5" in content
+    assert "> actual selected text" in content
 
 
 def test_reanchor_strategy_matrix() -> None:
