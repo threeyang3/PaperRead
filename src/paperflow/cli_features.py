@@ -359,7 +359,14 @@ def attach_feature_apps(
         vault: Path | None = typer.Option(None, "--vault"),
     ):
         root = resolve_vault_root(vault)
-        _echo(apply_workspace_v3(root) if apply_changes else plan_workspace_v3(root))
+        result = (
+            apply_workspace_v3(root)
+            if apply_changes
+            else plan_workspace_v3(root)
+        )
+        _echo(result)
+        if apply_changes and not result.get("verification", {}).get("ok", False):
+            raise typer.Exit(1)
 
     @migrate_app.command("verify-workspace-v3")
     def verify_v3(vault: Path | None = typer.Option(None, "--vault")):

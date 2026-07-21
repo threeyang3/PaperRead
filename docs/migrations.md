@@ -48,6 +48,17 @@ central compose/render path while preserving user fields, tags and bounded user
 notes; verifies note/PDF links; and rebuilds every Base. Network, AI, public PR,
 and old-PDF deletion counts are zero.
 
+The migration atomically updates the aggregate compatibility record and the
+rebuildable Derived PDF path fields that `compose_record()` applies last.
+Extraction/visual source PDF fields are updated only when they use the modeled
+PDF path keys; visual PNG asset paths and PDF hashes remain unchanged.
+
+Running `workspace-v3 --apply` again on schema 3 enters repair mode and reuses
+the existing formal pre-1.5 backup. It is the supported recovery for a partial
+1.5 apply with stale Derived paths. Verification failure produces
+`status=verification-failed` and a non-zero CLI exit instead of reporting a
+successful apply.
+
 `rollback-workspace-v3` is dry-run by default. It restores only checksummed
 files from a formal `pre-paperflow-1.5-*` backup and never deletes paths absent
 from that backup, so later user-created files are preserved. Add `--apply` only

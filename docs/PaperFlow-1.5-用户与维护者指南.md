@@ -44,8 +44,9 @@ dry-run，只恢复正式备份中的校验文件，不删除之后创建的用�
 `content_sha256`，拒绝被篡改的 revision。维护者必须完成完整 pytest、Node 生命周期、
 Doctor、audit、迁移、Base、Obsidian runtime、发布物白名单和干净 clone 验证。
 
-截至 2026-07-21，PaperRead 1.5.0 的源代码、110 项 pytest、2 项 Node 测试、
+截至 2026-07-21，PaperRead 1.5.0 的源代码、111 项 pytest、2 项 Node 测试、
 模拟 Workspace v3 迁移/回滚、Community 篡改拒绝和本地发布物验证已完成。
-真实 `ArxivLearn` Vault 的 v3
-dry-run/apply、Doctor、audit 与 Obsidian 交互验收仍须在该 Vault 项目执行；
-此代码仓库的测试通过不等同于真实 Vault 已迁移。
+真实 `ArxivLearn` Vault 已复制并渲染 32/32 篇，但旧 1.5.0 代码未更新
+Derived PDF 路径，验证因此拒绝全部 32 篇。安装修复 wheel 后应直接重跑
+`workspace-v3 --apply` 进入 repair mode，再执行 verify、Doctor、audit 与
+Obsidian 交互验收；无需手改论文。

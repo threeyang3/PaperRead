@@ -34,6 +34,20 @@ similarity, record source/evidence/confidence, and project only Obsidian
 wikilinks into the flat paper frontmatter. `compose_record()` is the sole
 render input path and merges Raw, AI, User, and Derived layers.
 
+Because Derived is applied after the aggregate compatibility record, path
+migrations must update modeled rebuildable fields such as `paper_pdf_path`,
+`pdf_path`, and `source_pdf_path` in the Derived record before rendering.
+Workspace v3 performs those updates atomically. Visual asset `path` values
+remain PNG paths and are never rewritten as PDF paths; visual manifest v1 binds
+to the source PDF by SHA-256 rather than by a mutable path.
+
+Because Derived is applied after the aggregate compatibility record, path
+migrations must update modeled rebuildable fields such as `paper_pdf_path`,
+`pdf_path`, and `source_pdf_path` in the Derived record before rendering.
+Workspace v3 performs those updates atomically. Visual asset `path` values
+remain PNG paths and are never rewritten as PDF paths; visual manifest v1 binds
+to the source PDF by SHA-256 rather than by a mutable path.
+
 Schema and application versions are independent. Data newer than the installed
 reader is rejected; older data requires an explicit migration.
 

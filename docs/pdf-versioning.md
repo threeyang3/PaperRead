@@ -20,3 +20,7 @@ paperflow annotation reanchor arxiv:2504.16054 \
 
 无法可靠匹配时生成
 `50 Inbox/Manual Review/Annotation Reanchor/` 任务，旧 anchor 永久保留。
+
+Workspace v3 同时更新聚合论文记录和实际参与 `compose_record()` 的 Derived PDF
+路径，再重渲染正文及 `#page=N` 链接。视觉 PNG 路径保持不变；manifest v1 的
+`pdf_sha256` 也不因同一 PDF 被复制到 vN 路径而改变。

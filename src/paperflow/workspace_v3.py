@@ -13,6 +13,7 @@ from paperflow.config import load_config
 from paperflow.obsidian.bases import rebuild_bases, validate_bases
 from paperflow.obsidian.frontmatter import read_note
 from paperflow.pipeline.render import render_uid
+from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json, iso_beijing
 from paperflow.versioning import VERSIONS
 from paperflow.workspace import default_workspace_dict, dump_yaml, load_workspace_settings
@@ -20,6 +21,7 @@ from paperflow.workspace_ops import create_workspace_backup
 
 
 MIGRATION_ID = "workspace-0003-pdf-community-annotations"
+DERIVED_PDF_PATH_KEYS = {"paper_pdf_path", "pdf_path", "source_pdf_path"}
 
 
 def _yaml(path: Path) -> dict[str, Any]:
@@ -43,6 +45,120 @@ def _target_pdf(root: Path, record: dict[str, Any]) -> Path:
     ).replace(":", "_")
     version = int(record.get("paper_arxiv_version") or 1)
     return root / "80 Attachments/Papers" / year / paper_id / f"v{version}.pdf"
+
+
+def _derived_record_paths(root: Path, record: dict[str, Any]) -> list[Path]:
+    paper_id = safe_component(
+        str(record.get("paper_arxiv_id") or record["paper_uid"]).replace(":", "_")
+    )
+    candidates = [root / ".paperflow/data/derived" / f"{paper_id}.json"]
+    configured = str((record.get("layer_paths") or {}).get("derived") or "")
+    if configured:
+        relative = Path(configured)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"Unsafe Derived layer path: {configured}")
+        candidate = (root / relative).resolve()
+        if not candidate.is_relative_to(root.resolve()):
+            raise ValueError(f"Derived layer path escapes Workspace: {configured}")
+        candidates.append(candidate)
+    return list(dict.fromkeys(path.resolve() for path in candidates))
+
+
+def _rewrite_derived_pdf_paths(value: Any, target: str) -> int:
+    """Rewrite only modeled/rebuildable PDF path fields, never asset paths."""
+    changed = 0
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if key in DERIVED_PDF_PATH_KEYS and item != target:
+                value[key] = target
+                changed += 1
+            elif isinstance(item, (dict, list)):
+                changed += _rewrite_derived_pdf_paths(item, target)
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, (dict, list)):
+                changed += _rewrite_derived_pdf_paths(item, target)
+    return changed
+
+
+def _update_derived_pdf_paths(
+    root: Path,
+    record: dict[str, Any],
+    target: str,
+) -> dict[str, Any]:
+    updated_files = []
+    updated_fields = 0
+    manifests_checked = []
+    for path in _derived_record_paths(root, record):
+        if not path.is_file():
+            continue
+        value = json.loads(path.read_text(encoding="utf-8"))
+        derived = value.get("derived")
+        if not isinstance(derived, dict):
+            raise ValueError(f"{path}: expected a DerivedRecord mapping")
+        changed = _rewrite_derived_pdf_paths(derived, target)
+        if changed:
+            atomic_json(path, value)
+            updated_files.append(path.relative_to(root).as_posix())
+            updated_fields += changed
+        extraction = derived.get("extraction") or {}
+        for asset in extraction.get("visual_assets", []):
+            asset_path = str(asset.get("path") or "")
+            if not asset_path:
+                continue
+            manifest = (root / asset_path).parent / "manifest.json"
+            if manifest.is_file():
+                manifests_checked.append(manifest.relative_to(root).as_posix())
+                manifest_value = json.loads(manifest.read_text(encoding="utf-8"))
+                manifest_changed = _rewrite_derived_pdf_paths(manifest_value, target)
+                if manifest_changed:
+                    atomic_json(manifest, manifest_value)
+                    updated_fields += manifest_changed
+    return {
+        "files": sorted(set(updated_files)),
+        "fields": updated_fields,
+        "visual_manifests_checked": sorted(set(manifests_checked)),
+    }
+
+
+def _derived_pdf_path_mismatches(
+    root: Path,
+    record: dict[str, Any],
+    target: str,
+) -> list[str]:
+    mismatches = []
+
+    def inspect(value: Any, location: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                child = f"{location}.{key}"
+                if key in DERIVED_PDF_PATH_KEYS and item != target:
+                    mismatches.append(f"{child}={item}")
+                elif isinstance(item, (dict, list)):
+                    inspect(item, child)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                if isinstance(item, (dict, list)):
+                    inspect(item, f"{location}[{index}]")
+
+    for path in _derived_record_paths(root, record):
+        if not path.is_file():
+            continue
+        value = json.loads(path.read_text(encoding="utf-8"))
+        derived = value.get("derived") or {}
+        inspect(derived, path.relative_to(root).as_posix())
+        extraction = derived.get("extraction") or {}
+        for asset in extraction.get("visual_assets", []):
+            asset_path = str(asset.get("path") or "")
+            if not asset_path:
+                continue
+            manifest = (root / asset_path).parent / "manifest.json"
+            if manifest.is_file():
+                inspect(
+                    json.loads(manifest.read_text(encoding="utf-8")),
+                    manifest.relative_to(root).as_posix(),
+                )
+    return mismatches
 
 
 def _backup_path(root: Path, backup: Path | None = None) -> Path:
@@ -91,6 +207,7 @@ def plan_workspace_v3(root: Path) -> dict[str, Any]:
     found = int(workspace.get("versions", {}).get("workspace", 1))
     pdfs = []
     missing = []
+    derived_repairs = []
     for _, record in _records(root):
         relative = str(record.get("paper_pdf_path") or "")
         source = root / relative if relative else None
@@ -105,14 +222,26 @@ def plan_workspace_v3(root: Path) -> dict[str, Any]:
         pdfs.append(item)
         if source and not source.exists():
             missing.append(item)
+        mismatches = _derived_pdf_path_mismatches(
+            root,
+            record,
+            target.relative_to(root).as_posix(),
+        )
+        if mismatches:
+            derived_repairs.append({
+                "paper_uid": record["paper_uid"],
+                "mismatches": mismatches,
+            })
     return {
         "migration_id": MIGRATION_ID,
         "from_version": found,
         "to_version": VERSIONS.workspace_schema_version,
         "dry_run": True,
+        "repair_mode": found == VERSIONS.workspace_schema_version,
         "records": len(pdfs),
         "pdf_copies": sum(int(item["copy_required"]) for item in pdfs),
         "missing_pdfs": missing,
+        "derived_repairs": derived_repairs,
         "new_roots": [
             "60 Annotations", "60 Reviews", "70 Community",
             ".paperflow/data/user/annotations",
@@ -130,33 +259,42 @@ def plan_workspace_v3(root: Path) -> dict[str, Any]:
 
 def apply_workspace_v3(root: Path) -> dict[str, Any]:
     plan = plan_workspace_v3(root)
-    if plan["from_version"] == VERSIONS.workspace_schema_version:
-        return {**plan, "dry_run": False, "status": "already-applied",
-                "verification": verify_workspace_v3(root)}
-    backup = create_workspace_backup(
-        root, label="pre-paperflow-1.5", include_pdfs=True
-    )
-    workspace_path = root / ".paperflow/workspace.yaml"
-    value = _yaml(workspace_path)
-    defaults = default_workspace_dict()
-    value.setdefault("versions", {}).update(defaults["versions"])
-    value.setdefault("paths", {})
-    for key, rule in defaults["paths"].items():
-        value["paths"].setdefault(key, rule)
-    value["paths"]["pdf"]["template"] = "{{year}}/{{paper_id}}/v{{version}}.pdf"
-    value.setdefault("annotations", defaults["annotations"])
-    value.setdefault("community", defaults["community"])
-    value.setdefault("publishing", {})[
-        "include_community_contributions"
-    ] = bool(
-        value.get("publishing", {}).get("include_community_contributions", False)
-    )
-    for source in value.get("subscriptions", {}).get("sources", []):
-        source.setdefault("capabilities", ["raw", "ai"])
-    dump_yaml(workspace_path, value)
+    if plan["from_version"] > VERSIONS.workspace_schema_version:
+        raise RuntimeError(
+            f"Workspace schema {plan['from_version']} is newer than schema 3"
+        )
+    repair_mode = bool(plan["repair_mode"])
+    if repair_mode:
+        backup = _backup_path(root)
+        _validated_backup_files(root, backup)
+    else:
+        backup = create_workspace_backup(
+            root, label="pre-paperflow-1.5", include_pdfs=True
+        )
+        workspace_path = root / ".paperflow/workspace.yaml"
+        value = _yaml(workspace_path)
+        defaults = default_workspace_dict()
+        value.setdefault("versions", {}).update(defaults["versions"])
+        value.setdefault("paths", {})
+        for key, rule in defaults["paths"].items():
+            value["paths"].setdefault(key, rule)
+        value["paths"]["pdf"]["template"] = "{{year}}/{{paper_id}}/v{{version}}.pdf"
+        value.setdefault("annotations", defaults["annotations"])
+        value.setdefault("community", defaults["community"])
+        value.setdefault("publishing", {})[
+            "include_community_contributions"
+        ] = bool(
+            value.get("publishing", {}).get(
+                "include_community_contributions", False
+            )
+        )
+        for source in value.get("subscriptions", {}).get("sources", []):
+            source.setdefault("capabilities", ["raw", "ai"])
+        dump_yaml(workspace_path, value)
 
     copied = []
     updated = []
+    derived_updates = []
     for record_path, record in _records(root):
         old_relative = str(record.get("paper_pdf_path") or "")
         source = root / old_relative if old_relative else None
@@ -172,9 +310,19 @@ def apply_workspace_v3(root: Path) -> dict[str, Any]:
                 shutil.copy2(source, target)
                 copied.append(target.relative_to(root).as_posix())
         if target.exists():
-            record["paper_pdf_path"] = target.relative_to(root).as_posix()
+            target_relative = target.relative_to(root).as_posix()
+            record["paper_pdf_path"] = target_relative
             atomic_json(record_path, record)
             updated.append(record["paper_uid"])
+            derived_result = _update_derived_pdf_paths(
+                root,
+                record,
+                target_relative,
+            )
+            derived_updates.append({
+                "paper_uid": record["paper_uid"],
+                **derived_result,
+            })
             versions = []
             for item in sorted(target.parent.glob("v*.pdf")):
                 try:
@@ -197,19 +345,26 @@ def apply_workspace_v3(root: Path) -> dict[str, Any]:
             continue
         render_uid(cfg, str(record["paper_uid"]))
         rendered.append(note_relative)
+    defaults = default_workspace_dict()
     for rule in defaults["paths"].values():
         (root / rule["root"]).mkdir(parents=True, exist_ok=True)
     rebuild_bases(root)
+    verification = verify_workspace_v3(root)
     event = {
         **plan,
         "dry_run": False,
-        "status": "applied",
+        "status": (
+            "verification-failed"
+            if not verification["ok"]
+            else "repaired" if repair_mode else "applied"
+        ),
         "at": iso_beijing(),
         "backup": backup.relative_to(root).as_posix(),
         "copied_pdfs": copied,
         "updated_records": updated,
+        "derived_updates": derived_updates,
         "rendered_notes": rendered,
-        "verification": verify_workspace_v3(root),
+        "verification": verification,
     }
     history = root / ".paperflow/state/migrations/history.jsonl"
     history.parent.mkdir(parents=True, exist_ok=True)
@@ -274,6 +429,7 @@ def verify_workspace_v3(root: Path) -> dict[str, Any]:
     hash_mismatches = []
     missing_notes = []
     note_link_mismatches = []
+    derived_path_mismatches = []
     for _, record in _records(root):
         relative = str(record.get("paper_pdf_path") or "")
         if not relative:
@@ -296,6 +452,9 @@ def verify_workspace_v3(root: Path) -> dict[str, Any]:
         )
         if not entry or entry["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest():
             hash_mismatches.append(relative)
+        derived_path_mismatches.extend(
+            _derived_pdf_path_mismatches(root, record, relative)
+        )
         note_relative = str(record.get("note_path") or "")
         if note_relative:
             note = root / note_relative
@@ -303,9 +462,16 @@ def verify_workspace_v3(root: Path) -> dict[str, Any]:
                 missing_notes.append(note_relative)
             else:
                 frontmatter, body = read_note(note)
+                legacy_relative = (
+                    path.parent.with_suffix(".pdf").relative_to(root).as_posix()
+                )
                 if (
                     frontmatter.get("paper_pdf_path") != relative
-                    or f"[[{relative}]]" not in body
+                    or f"[[{relative}" not in body
+                    or (
+                        legacy_relative != relative
+                        and legacy_relative in body
+                    )
                 ):
                     note_link_mismatches.append(note_relative)
     bases = validate_bases(
@@ -319,6 +485,7 @@ def verify_workspace_v3(root: Path) -> dict[str, Any]:
             and not hash_mismatches
             and not missing_notes
             and not note_link_mismatches
+            and not derived_path_mismatches
             and not bases
         ),
         "workspace_schema": settings.versions.workspace,
@@ -327,6 +494,7 @@ def verify_workspace_v3(root: Path) -> dict[str, Any]:
         "hash_mismatches": hash_mismatches,
         "missing_notes": missing_notes,
         "note_link_mismatches": note_link_mismatches,
+        "derived_path_mismatches": derived_path_mismatches,
         "base_errors": bases,
         "user_notes_modified": 0,
     }

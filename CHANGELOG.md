@@ -27,7 +27,12 @@
   never deletes paths absent from the backup.
 - Recomputed Community contribution `content_sha256` during subscription
   ingestion and rejected tampered revisions before cache writes.
-
+- Fixed Workspace v3 rendering when the rebuildable Derived layer still held a
+  legacy `paper_pdf_path`; migration now atomically updates modeled Derived PDF
+  source paths before composing notes while preserving visual PNG paths.
+- Made `workspace-v3 --apply` safely repair an already-schema-3 partial
+  migration using its existing formal backup, and return a non-zero CLI result
+  with `status=verification-failed` whenever final verification is not clean.
 ## 1.4.0 - 2026-07-19
 
 - Released the PaperFlow 1.4.0 implementation contract: Workspace schema 2,

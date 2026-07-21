@@ -128,6 +128,13 @@ links while preserving `user_*`, user tags and bounded user notes. Its explicit
 rollback is dry-run by default, restores only checksummed formal-backup files,
 and does not delete later user-created paths. Legacy files are preserved.
 
+The same `workspace-v3 --apply` command is deliberately re-runnable on schema
+3. It repairs a partial 1.5 migration by atomically updating rebuildable
+Derived PDF path fields before re-rendering; Raw, AI, User and visual PNG paths
+are not changed. A failed final verification reports
+`status=verification-failed` and exits non-zero while retaining the formal
+backup.
+
 ## Public Feed safety
 
 `paperflow publish build` only creates a local, deterministic Feed.

@@ -1,10 +1,12 @@
 # PaperFlow 1.5.0 verification matrix
 
 Source and release-artifact verification completed on 2026-07-21 in the
-`PaperRead` repository. The real `E:/ObsidianVaults/ArxivLearn` Workspace facts
-below remain the 2026-07-19 schema-2 baseline; Workspace v3 dry-run/apply,
-Doctor, audit and Obsidian interaction must still be executed in that separate
-Vault project.
+`PaperRead` repository. A real `ArxivLearn` v3 apply then copied and rendered
+32/32 records, but verification correctly rejected all 32 notes because the
+original 1.5.0 migration left legacy PDF paths in the Derived layer. The source
+fix and regression tests below are complete; that Vault must install the fixed
+wheel and run schema-3 repair/verify before Doctor and audit are considered
+complete.
 
 | Capability | Verdict | Evidence |
 | --- | --- | --- |
@@ -25,12 +27,12 @@ Vault project.
 | Repository separation | Pass | `PaperRead` contains the MIT-licensed application; `ArXiv-data` is an independent public CC BY 4.0 Feed repository. Software releases and data refreshes no longer share a default branch or update cadence. |
 | Public Feed round trip | Pass | The independent `ArXiv-data` GitHub Feed contains 29 Raw + 29 AI records and passed schema, privacy, provenance, checksum, and Windows clone validation. Remote sync created 58 read-only cache records with 0 conflicts, 0 User writes, and no remote code execution; a second sync created 0 and reused all 58. |
 | Cross-platform Feed checksums | Pass | Generated Feed text is LF-stable and includes `.gitattributes`. A regression test clones with Windows `core.autocrlf=true` and validates every checksum; the same fix was pushed and verified through a real GitHub clone. |
-| Workspace v3 migration and rollback | Source pass; real Vault pending | Automated migration tests copy rather than delete legacy PDFs, update PDF indexes, re-render existing notes only through `compose_record` and the central renderer, preserve `user_*`, user tags and `USER_NOTES_START/END`, and verify frontmatter/body PDF links. The explicit rollback is dry-run by default, validates a formal checksummed backup, restores only listed files and deletes nothing absent from the backup. The real ArxivLearn Vault still requires its own dry-run/apply/verify. |
+| Workspace v3 migration and rollback | Source repair pass; real Vault repair pending | Regression coverage now includes a realistic `layer_paths.derived` record with a stale `paper_pdf_path`, extraction PDF source path, visual asset and page link. Apply atomically repairs Derived before compose/render, preserves visual PNG paths and all User content, and verifies aggregate/Derived/note links. Re-running apply on schema 3 uses the existing formal backup and reports `repaired`; verification failure reports `verification-failed` with a non-zero CLI exit. The real 32-paper Vault still needs this repair run. |
 | Community contribution integrity | Pass | Publisher and subscriber share one canonical JSON `content_sha256` rule. Subscription ingestion rejects a revision whose body or any other hashed payload field was altered, before writing the read-only cache. Privacy/copyright gates remain fail-closed. |
 | Path and Workspace validation | Pass | `paths validate`, `workspace validate`, `health`, migration verification, paper validation, and audit passed. Doctor's static/data checks passed; its two live-Obsidian checks remain in the runtime handoff item below. |
 | Release packaging | Pass | The final build creates wheel, sdist, curated `PaperFlow-portable-1.5.0.zip`, `PaperFlow-Template-Vault-1.5.0.zip`, schema/template ZIPs, checksums, and migration notes. Positive-whitelist audits and four packaging tests exclude papers, PDFs, user notes, runtime state, caches, logs, databases, browser state, and arbitrary `.obsidian` state. |
 | Clean installation | Source package pass; real Vault pending | The 1.5.0 wheel and sdist build successfully and expose one `_version.py` source. Installing that wheel into the real ArxivLearn managed runtime and running its live Doctor remain Vault-project steps. |
-| Automated regression | Pass | All 110 tests in the authoritative repository `tests/` tree and both Node plugin suites (2/2) pass, including Workspace v3 render/link preservation, safe rollback, Community tamper rejection, encoding/title guards, immutable Raw captures, Feed privacy, source/Vault separation, lifecycle, and scheduler coverage. Runtime environments do not contain a second test source tree. |
+| Automated regression | Pass | All 111 tests in the authoritative repository `tests/` tree and both Node plugin suites (2/2) pass, including realistic Derived-path Workspace v3 repair/link preservation, safe rollback, explicit verification failure, Community tamper rejection, encoding/title guards, immutable Raw captures, Feed privacy, source/Vault separation, lifecycle, and scheduler coverage. Runtime environments do not contain a second test source tree. |
 | Doctor and product audit | Source checks pass; real Vault pending | Doctor and audit were run against an isolated initialized Workspace. Application 1.5.0, the ten independent version contracts, config, paths, SQLite, schemas, templates, Automation plugin and archive/privacy checks passed. Empty-workspace data counts, Form Flow, first Inbox runtime and ChatGPT Web availability remain expected environment checks; they require the real ArxivLearn Vault and interactive desktop environment. |
 | Runtime plugin health | Environment handoff pending | Static/runtime plugin state separation and installation passed. Codex could only launch Obsidian under the isolated `codexsandboxoffline` account, producing no attachable visible window; therefore live DOM, screenshot, console, and first Inbox runtime checks must be repeated after the user opens Obsidian interactively. |
 

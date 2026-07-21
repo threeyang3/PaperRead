@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
-from paperflow.obsidian.frontmatter import read_note
+from typer.testing import CliRunner
+
+from paperflow.cli import app
+from paperflow.data.compose import compose_record
+from paperflow.obsidian.frontmatter import read_note, write_note
 from paperflow.workspace import dump_yaml, default_workspace_dict
+from paperflow.workspace_ops import create_workspace_backup
 from paperflow.workspace_v3 import (
     apply_workspace_v3,
     plan_workspace_v3,
@@ -30,17 +36,46 @@ def test_workspace_v3_dry_run_and_apply_preserve_legacy_pdf(tmp_path: Path) -> N
     pdf = tmp_path / "80 Attachments/Papers/2026/2607.00001.pdf"
     pdf.parent.mkdir(parents=True)
     pdf.write_bytes(b"%PDF-1.7\nimmutable")
+    old_pdf_relative = pdf.relative_to(tmp_path).as_posix()
+    asset_dir = pdf.with_suffix(".assets")
+    asset_dir.mkdir()
+    asset = asset_dir / "figure-1-p3.png"
+    asset.write_bytes(b"derived-image")
+    asset_relative = asset.relative_to(tmp_path).as_posix()
+    manifest = asset_dir / "manifest.json"
+    manifest.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "paper_uid": "arxiv:2607.00001",
+            "pdf_sha256": hashlib.sha256(pdf.read_bytes()).hexdigest(),
+            "assets": [{
+                "id": "figure-1",
+                "figure_number": "1",
+                "kind": "architecture",
+                "caption": "A sufficiently long source caption.",
+                "page": 3,
+                "path": asset_relative,
+                "width": 100,
+                "height": 80,
+                "sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
+                "score": 99.0,
+            }],
+        }),
+        encoding="utf-8",
+    )
+    original_manifest = manifest.read_bytes()
     note = tmp_path / "10 Papers/2026/arxiv_2607.00001.md"
     note.parent.mkdir(parents=True)
     note.write_text(
         "---\n"
         "paper_uid: arxiv:2607.00001\n"
-        f"paper_pdf_path: {pdf.relative_to(tmp_path).as_posix()}\n"
+        f"paper_pdf_path: {old_pdf_relative}\n"
         "user_reading_status: reading\n"
         "user_custom_flag: keep-me\n"
         "tags: [paper, personal-tag]\n"
         "---\n\n"
-        f"PDF: [[{pdf.relative_to(tmp_path).as_posix()}]]\n\n"
+        f"PDF: [[{old_pdf_relative}]]\n\n"
+        f"Page: [[{old_pdf_relative}#page=3]]\n\n"
         "<!-- USER_NOTES_START -->private note<!-- USER_NOTES_END -->\n",
         encoding="utf-8",
     )
@@ -49,6 +84,9 @@ def test_workspace_v3_dry_run_and_apply_preserve_legacy_pdf(tmp_path: Path) -> N
     template.write_text(
         "# {{ paper_title_display }}\n\n"
         "PDF: [[{{ paper_pdf_path }}]]\n\n"
+        "Page: [[{{ paper_pdf_path }}#page=3]]\n\n"
+        "{% for visual in extraction.get('visual_assets', []) %}"
+        "![[{{ visual.path }}]]\n{% endfor %}\n"
         "<!-- USER_NOTES_START --><!-- USER_NOTES_END -->\n",
         encoding="utf-8",
     )
@@ -58,12 +96,36 @@ def test_workspace_v3_dry_run_and_apply_preserve_legacy_pdf(tmp_path: Path) -> N
         "paper_arxiv_version": 1,
         "paper_year": 2026,
         "paper_title": "Migration test paper",
-        "paper_pdf_path": pdf.relative_to(tmp_path).as_posix(),
+        "paper_pdf_path": old_pdf_relative,
         "note_path": note.relative_to(tmp_path).as_posix(),
+    }
+    derived_path = tmp_path / ".paperflow/data/derived/2607.00001.json"
+    record["layer_paths"] = {
+        "raw": ".paperflow/data/raw/arxiv/2607.00001/v1.json",
+        "user": ".paperflow/data/user/2607.00001.yaml",
+        "derived": derived_path.relative_to(tmp_path).as_posix(),
     }
     record_path = tmp_path / ".paperflow/data/papers/arxiv_2607.00001.json"
     record_path.parent.mkdir(parents=True)
     record_path.write_text(json.dumps(record), encoding="utf-8")
+    derived_path.parent.mkdir(parents=True)
+    derived_path.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "paper_uid": record["paper_uid"],
+            "extensions": {},
+            "derived": {
+                "paper_pdf_path": old_pdf_relative,
+                "note_path": record["note_path"],
+                "layer_paths": record["layer_paths"],
+                "extraction": {
+                    "pdf_path": old_pdf_relative,
+                    "visual_assets": [{"path": asset_relative, "page": 3}],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
 
     plan = plan_workspace_v3(tmp_path)
     assert plan["pdf_copies"] == 1
@@ -76,6 +138,7 @@ def test_workspace_v3_dry_run_and_apply_preserve_legacy_pdf(tmp_path: Path) -> N
     migrated = json.loads(record_path.read_text(encoding="utf-8"))
     assert migrated["paper_pdf_path"].endswith("/v1.pdf")
     assert result["verification"]["ok"]
+    assert result["status"] == "applied"
     assert result["rendered_notes"] == [note.relative_to(tmp_path).as_posix()]
     frontmatter, body = read_note(note)
     assert frontmatter["paper_pdf_path"] == target.relative_to(tmp_path).as_posix()
@@ -84,10 +147,46 @@ def test_workspace_v3_dry_run_and_apply_preserve_legacy_pdf(tmp_path: Path) -> N
     assert "personal-tag" in frontmatter["tags"]
     assert "private note" in body
     assert f"[[{target.relative_to(tmp_path).as_posix()}]]" in body
+    assert f"[[{target.relative_to(tmp_path).as_posix()}#page=3]]" in body
+    assert old_pdf_relative not in body
+    derived = json.loads(derived_path.read_text(encoding="utf-8"))["derived"]
+    assert derived["paper_pdf_path"] == target.relative_to(tmp_path).as_posix()
+    assert derived["extraction"]["pdf_path"] == target.relative_to(tmp_path).as_posix()
+    assert derived["extraction"]["visual_assets"][0]["path"] == asset_relative
+    assert manifest.read_bytes() == original_manifest
+    composed = compose_record(
+        tmp_path,
+        {"paper_uid": record["paper_uid"], "metadata": migrated},
+        overlay=migrated,
+    )
+    assert composed["paper_pdf_path"] == target.relative_to(tmp_path).as_posix()
     manifest = Path(tmp_path / result["backup"] / "manifest.json")
     assert manifest.exists()
     assert any(item["path"] == ".obsidian" or item["path"].startswith(".obsidian/")
                for item in json.loads(manifest.read_text(encoding="utf-8"))["files"]) is False
+
+    # A schema-3 Workspace left half-applied by the original 1.5.0 code can be
+    # repaired by safely rerunning the same apply command.
+    broken_derived = json.loads(derived_path.read_text(encoding="utf-8"))
+    broken_derived["derived"]["paper_pdf_path"] = old_pdf_relative
+    broken_derived["derived"]["extraction"]["pdf_path"] = old_pdf_relative
+    derived_path.write_text(json.dumps(broken_derived), encoding="utf-8")
+    broken_frontmatter, broken_body = read_note(note)
+    broken_frontmatter["paper_pdf_path"] = old_pdf_relative
+    write_note(
+        note,
+        broken_frontmatter,
+        broken_body.replace(target.relative_to(tmp_path).as_posix(), old_pdf_relative),
+    )
+    repair_plan = plan_workspace_v3(tmp_path)
+    assert repair_plan["repair_mode"] is True
+    assert repair_plan["derived_repairs"]
+    repaired = apply_workspace_v3(tmp_path)
+    assert repaired["status"] == "repaired"
+    assert repaired["verification"]["ok"]
+    repaired_frontmatter, repaired_body = read_note(note)
+    assert repaired_frontmatter["paper_pdf_path"] == target.relative_to(tmp_path).as_posix()
+    assert old_pdf_relative not in repaired_body
 
     later_user_file = tmp_path / "60 Annotations/later-user-file.annotation.md"
     later_user_file.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +200,46 @@ def test_workspace_v3_dry_run_and_apply_preserve_legacy_pdf(tmp_path: Path) -> N
     assert target.exists()
     restored = json.loads(record_path.read_text(encoding="utf-8"))
     assert restored["paper_pdf_path"] == pdf.relative_to(tmp_path).as_posix()
+    restored_derived = json.loads(derived_path.read_text(encoding="utf-8"))["derived"]
+    assert restored_derived["paper_pdf_path"] == old_pdf_relative
     restored_frontmatter, restored_body = read_note(note)
     assert restored_frontmatter["user_custom_flag"] == "keep-me"
     assert "private note" in restored_body
+
+
+def test_workspace_v3_reports_verification_failure(tmp_path: Path) -> None:
+    data = default_workspace_dict()
+    dump_yaml(tmp_path / ".paperflow/workspace.yaml", data)
+    pdf = tmp_path / "80 Attachments/Papers/2026/2607.00002/v1.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.7\nverification-failure")
+    record = {
+        "paper_uid": "arxiv:2607.00002",
+        "paper_arxiv_id": "2607.00002",
+        "paper_arxiv_version": 1,
+        "paper_year": 2026,
+        "paper_pdf_path": pdf.relative_to(tmp_path).as_posix(),
+        "note_path": "10 Papers/2026/missing.md",
+    }
+    record_path = tmp_path / ".paperflow/data/papers/arxiv_2607.00002.json"
+    record_path.parent.mkdir(parents=True)
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    create_workspace_backup(
+        tmp_path,
+        label="pre-paperflow-1.5",
+        include_pdfs=True,
+    )
+
+    result = apply_workspace_v3(tmp_path)
+
+    assert result["status"] == "verification-failed"
+    assert result["verification"]["ok"] is False
+    assert result["verification"]["missing_notes"] == [record["note_path"]]
+    assert (tmp_path / result["backup"] / "manifest.json").is_file()
+
+    cli = CliRunner().invoke(
+        app,
+        ["migrate", "workspace-v3", "--apply", "--vault", str(tmp_path)],
+    )
+    assert cli.exit_code == 1
+    assert '"status": "verification-failed"' in cli.output
