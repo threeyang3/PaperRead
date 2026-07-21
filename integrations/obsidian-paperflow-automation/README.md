@@ -34,6 +34,8 @@
 
 发布入口 `main.js` 已内联阅读工作区实现，不依赖运行时相对 `require()`。
 即使 Electron renderer 的当前目录不在插件目录，插件也可直接加载。
+阅读工作区会创建四个独立 leaf；Review 固定从 PDF leaf 分栏，最后等待并聚焦
+PDF leaf，避免右侧复用或 active leaf 变化覆盖目标视图。
 
 - `PaperFlow Automation: 立即处理 Inbox`
 - `PaperFlow Automation: 立即运行每日流程`

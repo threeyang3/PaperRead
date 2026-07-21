@@ -36,6 +36,9 @@
 - Bundled the reading-workspace implementation into the Automation plugin's
   `main.js`, removing its Electron-incompatible runtime dependency on
   `require("./reading-workspace")`.
+- Fixed reading-workspace layout creation by anchoring the Review split to the
+  PDF leaf, awaiting PDF reveal, and explicitly focusing the visible PDF leaf.
+
 ## 1.4.0 - 2026-07-19
 
 - Released the PaperFlow 1.4.0 implementation contract: Workspace schema 2,

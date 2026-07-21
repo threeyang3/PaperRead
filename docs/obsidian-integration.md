@@ -41,6 +41,11 @@ and separate Annotation, Review, and Community projections. Official PDF++ is
 recommended and managed through `paperflow integration pdf-plus`; PaperFlow
 does not call its private API and falls back to native page links.
 
+The layout creates four distinct leaves. Review is split directly from the PDF
+leaf with `createLeafBySplit`; Annotation and Community use separate right-side
+leaves. The command awaits `revealLeaf(pdfLeaf)` and then focuses that PDF leaf,
+so a successful command means all four files are open and the PDF is visible.
+
 The Automation plugin ships a self-contained `main.js`. Reading-workspace code
 is bundled into that entry point; startup does not use relative `require()`
 calls whose resolution could depend on Electron's renderer context or cwd.

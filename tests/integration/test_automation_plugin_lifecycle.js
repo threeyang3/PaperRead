@@ -210,6 +210,95 @@ async function main() {
   }
   assert.deepEqual(relativeModuleRequests, []);
   assert.equal(typeof AutomationPlugin.__test.openReadingWorkspace, "function");
+
+  const paper = { path: "10 Papers/2025/pi05.md", extension: "md" };
+  const pdf = { path: "80 Attachments/Papers/2025/2504.16054/v1.pdf" };
+  const annotation = { path: "60 Annotations/2025/arxiv_2504.16054/index.md" };
+  const review = { path: "60 Reviews/2025/arxiv_2504.16054.review.md" };
+  const community = { path: "70 Community/2025/arxiv_2504.16054.community.md" };
+  const files = new Map([
+    [pdf.path, pdf],
+    [annotation.path, annotation],
+    [review.path, review],
+    [community.path, community]
+  ]);
+  const layoutLeaves = [];
+  const makeLeaf = (name) => {
+    const leaf = {
+      name,
+      async openFile(file) {
+        this.file = file;
+      }
+    };
+    layoutLeaves.push(leaf);
+    return leaf;
+  };
+  const pdfLeaf = makeLeaf("pdf");
+  const annotationLeaf = makeLeaf("annotation");
+  const reviewLeaf = makeLeaf("review");
+  const communityLeaf = makeLeaf("community");
+  const layoutWorkspace = {
+    getActiveFile() {
+      return paper;
+    },
+    getLeaf(kind, direction) {
+      assert.equal(kind, "split");
+      assert.equal(direction, "vertical");
+      return pdfLeaf;
+    },
+    createLeafBySplit(anchor, direction) {
+      assert.equal(anchor, pdfLeaf);
+      assert.equal(direction, "horizontal");
+      return reviewLeaf;
+    },
+    getRightLeaf(split) {
+      return split ? communityLeaf : annotationLeaf;
+    },
+    async revealLeaf(leaf) {
+      await Promise.resolve();
+      this.revealedLeaf = leaf;
+    },
+    setActiveLeaf(leaf, options) {
+      this.activeLeaf = leaf;
+      this.activeOptions = options;
+    }
+  };
+  const layoutApp = {
+    workspace: layoutWorkspace,
+    metadataCache: {
+      getFileCache() {
+        return {
+          frontmatter: {
+            type: "paper",
+            paper_uid: "arxiv:2504.16054",
+            paper_year: 2025,
+            paper_pdf_path: pdf.path
+          }
+        };
+      }
+    },
+    vault: {
+      getAbstractFileByPath(filePath) {
+        return files.get(filePath);
+      }
+    }
+  };
+  const layoutResult = await AutomationPlugin.__test.openReadingWorkspace(layoutApp);
+  assert.equal(new Set(layoutLeaves).size, 4);
+  assert.equal(pdfLeaf.file, pdf);
+  assert.equal(annotationLeaf.file, annotation);
+  assert.equal(reviewLeaf.file, review);
+  assert.equal(communityLeaf.file, community);
+  assert.equal(layoutWorkspace.revealedLeaf, pdfLeaf);
+  assert.equal(layoutWorkspace.activeLeaf, pdfLeaf);
+  assert.deepEqual(layoutWorkspace.activeOptions, { focus: true });
+  assert.deepEqual(layoutResult, {
+    paper: paper.path,
+    pdf: pdf.path,
+    annotation: annotation.path,
+    review: review.path,
+    community: community.path
+  });
   assert.deepEqual(
     AutomationPlugin.__test.controlCommands("paper-add", {
       value: "2607.00001",

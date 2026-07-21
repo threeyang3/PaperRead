@@ -67,12 +67,15 @@ async function openReadingWorkspace(app) {
   const pdfLeaf = app.workspace.getLeaf("split", "vertical");
   await pdfLeaf.openFile(pdf);
   const annotationLeaf = app.workspace.getRightLeaf(false);
+  if (!annotationLeaf) throw new Error("Unable to create the annotation leaf");
   await annotationLeaf.openFile(annotation);
-  const reviewLeaf = app.workspace.getLeaf("split", "horizontal");
+  const reviewLeaf = app.workspace.createLeafBySplit(pdfLeaf, "horizontal");
   await reviewLeaf.openFile(review);
   const communityLeaf = app.workspace.getRightLeaf(true);
+  if (!communityLeaf) throw new Error("Unable to create the Community leaf");
   await communityLeaf.openFile(community);
-  app.workspace.revealLeaf(pdfLeaf);
+  await app.workspace.revealLeaf(pdfLeaf);
+  app.workspace.setActiveLeaf(pdfLeaf, { focus: true });
   return {
     paper: paper.path,
     pdf: pdf.path,
