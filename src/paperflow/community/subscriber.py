@@ -31,7 +31,14 @@ def ingest_community(
     feed_id: str,
     *,
     dry_run: bool = True,
+    community_note_root: str = "70 Community",
 ) -> dict[str, Any]:
+    resolved_vault = vault.resolve()
+    resolved_note_root = (vault / community_note_root).resolve()
+    try:
+        resolved_note_root.relative_to(resolved_vault)
+    except ValueError as exc:
+        raise ValueError("Community note root must stay inside the vault") from exc
     files = sorted(feed_root.glob("papers/*/community/*/*/r*.json"))
     accepted: list[CommunityContribution] = []
     planned = []
@@ -50,15 +57,65 @@ def ingest_community(
         accepted.append(value)
         if not dry_run:
             atomic_json(target, value.model_dump(mode="json"))
+    all_items: dict[tuple[str, str], CommunityContribution] = {}
+    cache_root = vault / ".paperflow/data/community/subscriptions"
+    if not dry_run and cache_root.exists():
+        cached_files = cache_root.glob("*/papers/*/community/*/*/r*.json")
+        candidates = [
+            CommunityContribution.model_validate_json(path.read_text(encoding="utf-8"))
+            for path in cached_files
+        ]
+    else:
+        candidates = accepted
+    for item in candidates:
+        key = (item.creator, item.contribution_id)
+        previous = all_items.get(key)
+        if previous is None or item.revision > previous.revision:
+            all_items[key] = item
+    rendered_notes = []
+    for paper_uid in sorted({item.paper_uid for item in all_items.values()}):
+        year = _paper_year(feed_root, paper_uid)
+        paper_id = paper_uid.replace(":", "_")
+        output = resolved_note_root / year / f"{paper_id}.community.md"
+        rendered_notes.append(
+            render_community_note(
+                vault,
+                paper_uid,
+                list(all_items.values()),
+                output,
+                dry_run=dry_run,
+            )
+        )
     return {
         "dry_run": dry_run,
         "feed_id": feed_id,
         "accepted": len(accepted),
         "paths": planned,
         "ratings": community_rating_summary(accepted),
+        "rendered_notes": rendered_notes,
         "private_user_records_modified": 0,
         "remote_code_executed": False,
     }
+
+
+def _paper_year(feed_root: Path, paper_uid: str) -> str:
+    for path in feed_root.glob("papers/*/raw/v*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(payload.get("paper_uid")) != paper_uid:
+            continue
+        metadata = payload.get("metadata") or {}
+        year = str(metadata.get("paper_year") or "")
+        if not year:
+            year = str(metadata.get("paper_submitted_date") or "")[:4]
+        return year if re_full_year(year) else "Unclassified"
+    return "Unclassified"
+
+
+def re_full_year(value: str) -> bool:
+    return len(value) == 4 and value.isdigit()
 
 
 def render_community_note(vault: Path, paper_uid: str,

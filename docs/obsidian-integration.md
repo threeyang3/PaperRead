@@ -10,11 +10,12 @@ bundle as `.new` for merge review. Known managed files are backed up before
 safe replacement.
 
 Bases are generated from configured Base, paper-note, and Inbox roots.
-Generated paper notes record `system_template_version: 5`. Re-rendering first
+Generated paper notes record `system_template_version: 6`. Re-rendering first
 merges the User sidecar and existing `user_*` properties and preserves all text
 inside `USER_NOTES_START/END`.
 
-Template v5 adds a bilingual, adaptive category-grouped visual guide backed by local,
+Template v6 keeps searchable metadata in YAML while removing repeated metadata and
+empty boilerplate from the body. It adds a bilingual, adaptive category-grouped visual guide backed by local,
 checksummed PDF figure crops. Original captions fold by default, and every
 figure links to the source PDF page. Existing Workspaces use
 `paperflow migrate workspace-v2 --apply`; routine refresh is available as

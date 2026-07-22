@@ -25,6 +25,14 @@ Workspace 的自定义标注根目录。旧版年份索引不会删除；其中�
 PDF 按 arXiv 版本保存为 vN，旧版本不覆盖。个人评分、AI 分数和社区评分分别
 显示。英文论文标题、摘要、引用、图注和正文不因中文界面被翻译。
 
+论文模板 v6 将作者、arXiv、PDF、主页、代码、数据集等机器可查询信息集中在
+YAML 属性，不再在正文重复。正文只保留概述、单一阅读建议、问题、贡献、方法、
+实验、结果、质量判断、局限和关系；没有内容的生成章节不会出现，连续空行会
+压缩。`USER_NOTES_START/END` 内的用户内容按原文保留。
+
+视觉导读优先下载版本固定的 arXiv HTML 原始 PNG，并记录来源 URL；获取或校验
+失败时才使用有图注支撑的 PDF 裁剪。图片数量仍由质量和语义覆盖自适应决定。
+
 ## 隐私
 
 - 标注和 Review 位于 User 层，默认永不发布。
@@ -32,6 +40,8 @@ PDF 按 arXiv 版本保存为 vN，旧版本不覆盖。个人评分、AI 分数
 - 只有显式 select 才生成公共快照；引用最多 500 字符。
 - 路径、邮箱、凭据、HTML/脚本、图片、PDF、全文和用户字段会被阻止。
 - 真实 GitHub PR 不自动执行。
+- 本地论文 Markdown 不属于 Feed AI 数据源；修改显示笔记不会改变已发布 AI 分析。
+- 社区 outbox 是显式选择时生成的不可变快照，后续私有编辑不会回写快照。
 
 ## 升级
 
@@ -53,8 +63,11 @@ dry-run，只恢复正式备份中的校验文件，不删除之后创建的用�
 `content_sha256`，拒绝被篡改的 revision。维护者必须完成完整 pytest、Node 生命周期、
 Doctor、audit、迁移、Base、Obsidian runtime、发布物白名单和干净 clone 验证。
 
-截至 2026-07-21，PaperRead 1.5.0 的源代码、115 项 pytest、2 项 Node 测试、
+截至 2026-07-22，PaperRead 1.5.0 的源代码、122 项 pytest、Automation Node 生命周期测试、
 模拟 Workspace v3 迁移/回滚、Community 篡改拒绝和本地发布物验证已完成。
 真实 `ArxivLearn` Vault 已安装修复 wheel，Workspace v3 验证通过，32/32 篇记录
 的 PDF、笔记和 Derived 路径均无错误；Doctor、audit、health、路径/Workspace
 验证及 Obsidian 交互验收均通过。规范 PDF 标注索引已创建，旧年份索引保持原样。
+模板 v6 已对 32/32 篇论文完成正式视觉迁移；π0.5 的 12 张入选图中 10 张来自
+arXiv HTML 原图、2 张安全回退为 PDF 裁剪。两条社区标注/评论已通过 ArXiv-data
+GitHub 主分支完成发布—重新克隆—本地只读笔记往返，User 层修改数为 0。

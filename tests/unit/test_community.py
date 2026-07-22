@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from paperflow.community.publisher import build_outbox, build_pr_tree, immutable_snapshot
+from paperflow.community.publisher import (
+    build_outbox,
+    build_pr_tree,
+    immutable_snapshot,
+    normalize_private_contribution,
+)
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.community.subscriber import community_rating_summary, ingest_community
 
@@ -39,6 +44,66 @@ def test_private_annotation_requires_explicit_immutable_snapshot(tmp_path: Path)
     value = json.loads((tmp_path / ".paperflow/data/community/outbox" / result["path"]).read_text(encoding="utf-8"))
     assert value["creator"] == "threeyang3"
     assert not any(key.startswith("user_") for key in value)
+
+
+def test_private_annotation_projection_excludes_local_pdf_coordinates() -> None:
+    private = {
+        "type": "paperflow-user-annotation",
+        "schema_version": 1,
+        "annotation_id": "ann-1",
+        "paper_uid": "arxiv:2607.00001",
+        "kind": "passage-comment",
+        "motivation": "commenting",
+        "body": "Public comment",
+        "tags": ["method"],
+        "created_at": "2026-07-20T10:00:00+08:00",
+        "updated_at": "2026-07-20T10:00:00+08:00",
+        "revisions": [{
+            "revision": 1,
+            "preferred": True,
+            "reanchor_method": "created",
+            "confidence": 1,
+            "status": "exact-hash-match",
+            "created_at": "2026-07-20T10:00:00+08:00",
+            "anchor": {
+                "pdf_version": 1,
+                "pdf_sha256": "a" * 64,
+                "pdf_path": "80 Attachments/Papers/private.pdf",
+                "page": 2,
+                "fragment_selector": {"type": "FragmentSelector", "page": 2, "rect": [1, 2, 3, 4]},
+                "text_quote_selector": {"type": "TextQuoteSelector", "exact": "quote", "prefix": "before", "suffix": "after"},
+                "selected_text_sha256": "b" * 64,
+                "pdf_selection": "1,2,3,4",
+                "highlight_color": "yellow",
+            },
+        }],
+    }
+
+    public = normalize_private_contribution(private)
+    snapshot = immutable_snapshot(
+        public, creator="threeyang3", license_name="CC-BY-4.0"
+    )
+    payload = snapshot.model_dump(mode="json")
+
+    assert payload["contribution_id"] == "ann-1"
+    assert payload["anchor"]["exact_quote"] == "quote"
+    assert set(payload["anchor"]) == {
+        "pdf_version", "pdf_sha256", "page", "exact_quote", "prefix", "suffix"
+    }
+    assert "private.pdf" not in json.dumps(payload)
+
+
+def test_outbox_snapshot_is_unchanged_after_private_source_edit(tmp_path: Path) -> None:
+    private = _private()
+    snapshot = immutable_snapshot(
+        private, creator="threeyang3", license_name="CC-BY-4.0"
+    )
+    result = build_outbox(tmp_path, snapshot, dry_run=False)
+    outbox = tmp_path / ".paperflow/data/community/outbox" / result["path"]
+    before = outbox.read_bytes()
+    private["body"] = "Locally edited later"
+
+    assert outbox.read_bytes() == before
 
 
 @pytest.mark.parametrize("body,expected", [
@@ -82,6 +147,12 @@ def test_subscription_is_read_only_and_scores_are_separate(tmp_path: Path) -> No
     assert result["private_user_records_modified"] == 0
     assert result["ratings"]["median"] == 5
     assert result["ratings"]["small_sample_warning"] is True
+    note = (
+        tmp_path
+        / "vault/70 Community/Unclassified/arxiv_2607.00001.community.md"
+    )
+    assert note.is_file()
+    assert "@reader · rating · r1" in note.read_text(encoding="utf-8")
 
 
 def test_subscription_rejects_tampered_content_hash(tmp_path: Path) -> None:

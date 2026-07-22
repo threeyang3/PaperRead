@@ -14,6 +14,13 @@ AI, User, and Derived records; unknown properties are retained in
 
 # Visual asset migration
 
+Template bundle v6 removes duplicated metadata and empty generated sections,
+compresses generated whitespace while preserving the user-notes boundary, and
+prefers version-pinned arXiv HTML originals with PDF-crop fallback. Apply it with
+`paperflow migrate visual-assets --apply`; the command backs up the Workspace,
+rebuilds Derived manifests, installs templates, and re-renders through the central
+composer.
+
 Template bundle v5 expands the caption-backed visual guide and adds formally
 migrated relationship projections to the flat paper YAML schema. It adaptively groups figures by architecture/method,
 experiments/results, and task/hardware context, folds source captions, and links

@@ -2,6 +2,15 @@
 
 ## 1.5.0 - 2026-07-21
 
+- Added template bundle v6: queryable metadata stays in YAML while generated
+  body duplication, empty boilerplate sections, and excessive blank lines are
+  removed without changing preserved user notes.
+- Preferred version-pinned original arXiv HTML PNG figures, with strict host,
+  content-type, size, and image validation plus caption-backed PDF crop fallback.
+- Made private Annotation/Review selection project into the public Community
+  contract, excluding local PDF paths and coordinates; normalized before hashing.
+- Rendered verified Community subscriptions into visible read-only per-paper notes,
+  and added regression coverage proving Markdown edits cannot alter Feed AI data.
 - Unified AnnotationStore, the visible per-paper index, and the reading
   workspace on the configured Annotation root without a hard-coded year.
   Index rebuilds atomically refresh the visible note, preserve user content,

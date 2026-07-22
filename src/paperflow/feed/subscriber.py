@@ -86,6 +86,7 @@ def sync_feed(
     auto_download_pdf: bool = False,
     auto_render_notes: bool = False,
     capabilities: list[str] | None = None,
+    community_note_root: str = "70 Community",
 ) -> dict[str, Any]:
     assert_no_sync_conflicts(workspace)
     if trust not in {"metadata-only", "metadata-and-ai", "disabled"}:
@@ -202,6 +203,7 @@ def sync_feed(
                 feed_root,
                 str(feed["feed_id"]),
                 dry_run=dry_run,
+                community_note_root=community_note_root,
             )
         return {
             "name": name,

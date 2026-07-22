@@ -21,7 +21,8 @@ from paperflow.pipeline.import_paper import import_paper
 from paperflow.pipeline.inbox import process_inbox
 from paperflow.pipeline.render import render_uid
 from paperflow.pipeline.visuals import refresh_record_visuals
-from paperflow.data.store import persist_layer_records
+from paperflow.data.records import split_legacy_record
+from paperflow.paths.templates import safe_component
 from paperflow.scheduler import windows
 from paperflow.validation import validate_all
 from paperflow.utils import atomic_json, atomic_write, iso_beijing, now_beijing
@@ -1479,6 +1480,7 @@ def source_sync(
             auto_download_pdf=item.auto_download_pdf,
             auto_render_notes=item.auto_render_notes,
             capabilities=item.capabilities,
+            community_note_root=settings.paths.community_note.root,
         )
         for item in selected
     ]
@@ -1608,7 +1610,27 @@ def _refresh_visual_records(
                 max_assets=max_assets,
             )
             if c.workspace:
-                record["layer_paths"] = persist_layer_records(c.root, record)
+                paper_id = safe_component(
+                    str(
+                        record.get("paper_arxiv_id")
+                        or record["paper_uid"]
+                    ).replace(":", "_")
+                )
+                derived_path = (
+                    c.root / ".paperflow/data/derived" / f"{paper_id}.json"
+                )
+                layer_paths = dict(record.get("layer_paths") or {})
+                layer_paths["derived"] = derived_path.relative_to(c.root).as_posix()
+                record["layer_paths"] = layer_paths
+                _, _, _, derived = split_legacy_record(record)
+                if derived_path.exists():
+                    existing_derived = json.loads(
+                        derived_path.read_text(encoding="utf-8")
+                    )
+                    derived.extensions = dict(
+                        existing_derived.get("extensions") or {}
+                    )
+                atomic_json(derived_path, derived.model_dump(mode="json"))
             atomic_json(path, record)
             render_uid(c, str(record["paper_uid"]))
             results.append(
@@ -1654,13 +1676,15 @@ def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
     backup = create_workspace_backup(c.root, label="pre-visual-assets")
     workspace_path = c.root / ".paperflow/workspace.yaml"
     template_names = ["Paper Note Template.md", "Paper Note Template.en.md"]
-    official_v3_hashes = {
-        "Paper Note Template.md": (
-            "4a6ebd51a9226b2f4abe9e39813e03f15d06b6afd883ca610e7e2d9ee4cf0ddf"
-        ),
-        "Paper Note Template.en.md": (
-            "34f4fee88ceda1d41c414beabd2892a5af5a339fcf72f1e5a6069b2b4cebeaac"
-        ),
+    official_previous_hashes = {
+        "Paper Note Template.md": {
+            "4a6ebd51a9226b2f4abe9e39813e03f15d06b6afd883ca610e7e2d9ee4cf0ddf",
+            "e7ff700ed43bb0f2dd72e3eae8cfa002cd1f0ee07f7a1a1821dd257ac6b36e73",
+        },
+        "Paper Note Template.en.md": {
+            "34f4fee88ceda1d41c414beabd2892a5af5a339fcf72f1e5a6069b2b4cebeaac",
+            "72726400b1ead5da93100a245d2fe3ff29814fcaef5b371900c411943e3f356a",
+        },
     }
     template_source = _distribution_resource("templates")
     for name in template_names:
@@ -1673,15 +1697,15 @@ def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
             if target.exists()
             else ""
         )
-        is_official_v3 = target_hash == official_v3_hashes[name]
-        if target_text and target_text != source_text and not is_official_v3:
+        is_official_previous = target_hash in official_previous_hashes[name]
+        if target_text and target_text != source_text and not is_official_previous:
             candidate = target.with_name(target.name + ".new")
             atomic_write(candidate, source_text)
             raise RuntimeError(
                 f"Customized template requires merge review: "
                 f"{candidate.relative_to(c.root).as_posix()}"
             )
-        if target_text != source_text and (not target_text or is_official_v3):
+        if target_text != source_text and (not target_text or is_official_previous):
             atomic_write(target, source_text)
     workspace_data = YAML(typ="safe").load(
         workspace_path.read_text(encoding="utf-8")

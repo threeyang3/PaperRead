@@ -20,7 +20,7 @@ class VersionContract:
     public_feed_schema_version: int = 2
     annotation_schema_version: int = 1
     community_data_schema_version: int = 1
-    template_bundle_version: int = 5
+    template_bundle_version: int = 6
     form_flow_integration_version: int = 1
 
     def model_dump(self) -> dict[str, Any]:

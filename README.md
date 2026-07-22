@@ -80,11 +80,14 @@ There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
 
 Imported PDFs now produce a caption-backed visual guide in each paper note.
+For arXiv papers, PaperFlow first tries the version-pinned HTML reading page
+and downloads the original single-image figure; unavailable or composite
+figures safely fall back to PDF cropping.
 Architecture, framework, overview, and pipeline figures are prioritized; the
-original figure text and captions are not translated. Template v5 selects a
+original figure text and captions are not translated. Template v6 selects a
 variable number of traceable figures by quality, semantic coverage, and
-duplication, with 12 only as a safety ceiling. Captions collapse by default and every image links
-to its original PDF page. Existing papers can be updated from the Control
+duplication, with 12 only as a safety ceiling. Captions collapse by default and every image records
+its HTML/PDF provenance and links to its original PDF page. Existing papers can be updated from the Control
 Center with **Extract paper figures** or with `paperflow paper visuals --all`.
 The derived PNGs and manifests stay local and are excluded from Public Feeds.
 

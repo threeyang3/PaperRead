@@ -22,7 +22,7 @@ def test_version_contract_is_explicit_and_independent() -> None:
     assert VERSIONS.public_feed_schema_version == 2
     assert VERSIONS.annotation_schema_version == 1
     assert VERSIONS.community_data_schema_version == 1
-    assert VERSIONS.template_bundle_version == 5
+    assert VERSIONS.template_bundle_version == 6
     assert VERSIONS.form_flow_integration_version == 1
 
 

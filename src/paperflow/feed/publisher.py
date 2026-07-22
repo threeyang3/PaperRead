@@ -384,9 +384,21 @@ def build_feed(
         "community-retraction.schema.json",
         "community-manifest.schema.json",
     ]:
-        schema_source = root / "schemas" / name
-        if schema_source.exists():
-            _copy_if_changed(schema_source, schema_dir / name)
+        candidates = [
+            root / "schemas" / name,
+            root / ".paperflow/schemas" / name,
+        ]
+        schema_source = next(
+            (candidate for candidate in candidates if candidate.is_file()),
+            None,
+        )
+        if schema_source is None:
+            from paperflow.workspace import _distribution_resource
+
+            schema_source = _distribution_resource("schemas") / name
+        if not schema_source.is_file():
+            raise FileNotFoundError(f"Required Feed schema is missing: {name}")
+        _copy_if_changed(schema_source, schema_dir / name)
     checksums = []
     for path in sorted(
         item

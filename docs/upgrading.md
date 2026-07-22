@@ -31,3 +31,7 @@ paper-data subscription and must never be used as an application update source.
 After installing 1.5.0, run `paperflow migrate workspace-v3 --dry-run`, review
 the per-paper PDF copy plan, then apply and verify Workspace v3. Old PDFs remain
 rollback material; migration does not enable Community publication.
+
+For template bundle v6 and HTML-first figure extraction, run
+`paperflow migrate visual-assets --dry-run` and then `--apply`. Custom templates
+remain merge candidates; user fields, tags, and `USER_NOTES_START/END` are preserved.

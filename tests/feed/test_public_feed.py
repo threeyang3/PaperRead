@@ -28,6 +28,7 @@ from paperflow.feed import (
 )
 from paperflow.feed.git_ops import normalize_github_repository_url
 from paperflow.feed.subscriber import _download_linked_pdf
+from paperflow.community.publisher import build_outbox, immutable_snapshot
 from paperflow.workspace import (
     WorkspaceSettings,
     default_workspace_dict,
@@ -106,6 +107,10 @@ def _workspace(tmp_path: Path) -> tuple[Path, str]:
         "raw-paper.schema.json",
         "ai-analysis.schema.json",
         "feed.schema.json",
+        "community-contribution.schema.json",
+        "community-profile.schema.json",
+        "community-retraction.schema.json",
+        "community-manifest.schema.json",
     ]:
         shutil.copy2(repository_root / "schemas" / name, schema_dir / name)
     return root, identity.analysis_id
@@ -221,6 +226,104 @@ def test_publisher_does_not_republish_subscription_cache(
         encoding="utf-8"
     )
     assert "9999.00001" not in text
+
+
+def test_rendered_markdown_edits_cannot_change_published_ai_analysis(
+    tmp_path: Path,
+) -> None:
+    publisher, _ = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(publisher, _settings(), feed)
+    analysis_manifest = json.loads(
+        (feed / "manifests/analyses.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    published_ai = feed / analysis_manifest["path"]
+    before = published_ai.read_bytes()
+    note = publisher / "10 Papers/2026/2607.00001.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "---\ntype: paper\n---\n\nLocally rewritten analysis and user notes.\n",
+        encoding="utf-8",
+    )
+
+    build_feed(publisher, _settings(), feed)
+
+    assert published_ai.read_bytes() == before
+    assert b"Locally rewritten" not in published_ai.read_bytes()
+
+
+def test_community_annotation_round_trip_renders_read_only_local_note(
+    tmp_path: Path,
+) -> None:
+    publisher, _ = _workspace(tmp_path)
+    snapshot = immutable_snapshot(
+        {
+            "contribution_id": "ann-roundtrip",
+            "paper_uid": "arxiv:2607.00001",
+            "kind": "passage-comment",
+            "body": "A published annotation comment.",
+            "tags": ["method"],
+            "anchor": {
+                "pdf_version": 1,
+                "pdf_sha256": "a" * 64,
+                "page": 2,
+                "exact_quote": "A short verified quote.",
+            },
+            "created_at": "2026-07-20T10:00:00+08:00",
+        },
+        creator="threeyang3",
+        license_name="CC-BY-4.0",
+    )
+    build_outbox(publisher, snapshot, dry_run=False)
+    settings = _settings()
+    settings = settings.model_copy(
+        update={
+            "publishing": settings.publishing.model_copy(
+                update={"include_community_contributions": True}
+            )
+        }
+    )
+    feed = tmp_path / "feed"
+    build_feed(publisher, settings, feed)
+    subscriber = tmp_path / "subscriber"
+
+    result = sync_feed(
+        subscriber,
+        url=str(feed),
+        name="community",
+        trust="metadata-and-ai",
+        capabilities=["raw", "ai", "community"],
+    )
+
+    assert result["community"]["accepted"] == 1
+    assert result["community"]["private_user_records_modified"] == 0
+    note = (
+        subscriber
+        / "70 Community/Unclassified/arxiv_2607.00001.community.md"
+    )
+    assert note.is_file()
+    text = note.read_text(encoding="utf-8")
+    assert "A published annotation comment." in text
+    assert "A short verified quote." in text
+    assert not (subscriber / ".paperflow/data/user").exists()
+
+
+def test_feed_build_uses_installed_workspace_schemas(tmp_path: Path) -> None:
+    publisher, _ = _workspace(tmp_path)
+    installed = publisher / ".paperflow/schemas"
+    installed.parent.mkdir(parents=True, exist_ok=True)
+    (publisher / "schemas").replace(installed)
+    feed = tmp_path / "feed"
+
+    result = build_feed(publisher, _settings(), feed)
+
+    schema = json.loads(
+        (feed / "schemas/feed.schema.json").read_text(encoding="utf-8")
+    )
+    assert result["validation"]["ok"]
+    assert schema["properties"]["feed_schema_version"]["enum"] == [1, 2]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="Git not installed")

@@ -10,6 +10,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from paperflow.community.models import CommunityContribution
+from paperflow.annotations.models import Annotation, PaperReview
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.utils import atomic_json, iso_beijing
 
@@ -33,6 +34,56 @@ def verify_content_sha256(value: dict[str, Any]) -> bool:
         expected,
         canonical_content_sha256(value),
     )
+
+
+def normalize_private_contribution(source: dict[str, Any]) -> dict[str, Any]:
+    """Project a private annotation/review into the explicitly public contract."""
+    source_type = str(source.get("type") or "")
+    if source_type == "paperflow-user-annotation":
+        annotation = Annotation.model_validate(source)
+        revision = annotation.preferred_revision
+        quote = revision.anchor.text_quote_selector
+        return {
+            "contribution_id": annotation.annotation_id,
+            "paper_uid": annotation.paper_uid,
+            "kind": annotation.kind,
+            "body": annotation.body,
+            "tags": annotation.tags,
+            "created_at": annotation.created_at,
+            "anchor": {
+                "pdf_version": revision.anchor.pdf_version,
+                "pdf_sha256": revision.anchor.pdf_sha256,
+                "page": revision.anchor.page,
+                "exact_quote": (quote.exact if quote else "")[:500],
+                "prefix": (quote.prefix if quote else "")[:120],
+                "suffix": (quote.suffix if quote else "")[:120],
+            },
+        }
+    if source_type == "paperflow-user-paper-review":
+        review = PaperReview.model_validate(source)
+        sections = [
+            ("摘要", review.summary),
+            ("优点", review.strengths),
+            ("局限", review.weaknesses),
+            ("问题", review.questions),
+            ("复现笔记", review.reproduction_notes),
+            ("结论", review.verdict),
+        ]
+        return {
+            "contribution_id": review.review_id,
+            "paper_uid": review.paper_uid,
+            "kind": "paper-review",
+            "body": "\n\n".join(
+                f"### {heading}\n\n{body}" for heading, body in sections if body
+            ),
+            "tags": [],
+            "rating": review.rating,
+            "anchor": None,
+            "created_at": review.created_at,
+        }
+    if source_type == "paperflow-community-draft":
+        return source
+    raise ValueError(f"Unsupported private contribution type: {source_type or 'missing'}")
 
 
 def immutable_snapshot(
@@ -60,8 +111,10 @@ def immutable_snapshot(
         "created_at": str(source.get("created_at") or iso_beijing()),
         "extensions": dict(source.get("extensions") or {}),
     }
-    public["content_sha256"] = canonical_content_sha256(public)
-    contribution = CommunityContribution.model_validate(public)
+    public["content_sha256"] = ""
+    normalized = CommunityContribution.model_validate(public).model_dump(mode="json")
+    normalized["content_sha256"] = canonical_content_sha256(normalized)
+    contribution = CommunityContribution.model_validate(normalized)
     findings = scan_community_contribution(contribution.model_dump(mode="json"))
     if findings:
         raise ValueError("Community privacy scan failed: " + ", ".join(findings))

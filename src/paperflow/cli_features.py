@@ -15,7 +15,12 @@ from paperflow.annotations.models import PaperReview
 from paperflow.annotations.service import AnnotationService
 from paperflow.annotations.store import AnnotationStore
 from paperflow.community.models import CommunityContribution
-from paperflow.community.publisher import build_outbox, build_pr_tree, immutable_snapshot
+from paperflow.community.publisher import (
+    build_outbox,
+    build_pr_tree,
+    immutable_snapshot,
+    normalize_private_contribution,
+)
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.community.subscriber import ingest_community
 from paperflow.obsidian.pdf_plus import (
@@ -231,7 +236,24 @@ def community_select(
     root, settings = _root(vault)
     if not settings.community.publish_enabled:
         raise typer.BadParameter("community.publish_enabled is false")
-    private = json.loads(source.read_text(encoding="utf-8"))
+    resolved = source.resolve()
+    allowed_roots = [
+        (root / settings.paths.user_annotations.root).resolve(),
+        (root / settings.paths.paper_review.root).resolve(),
+    ]
+    if not any(resolved.is_relative_to(candidate) for candidate in allowed_roots):
+        raise typer.BadParameter(
+            "source must be a PaperFlow private annotation JSON or review Markdown"
+        )
+    if resolved.suffix.casefold() == ".json":
+        private = json.loads(resolved.read_text(encoding="utf-8"))
+    elif resolved.suffix.casefold() == ".md":
+        from paperflow.obsidian.frontmatter import read_note
+
+        private, _ = read_note(resolved)
+    else:
+        raise typer.BadParameter("source must end in .json or .md")
+    private = normalize_private_contribution(private)
     snapshot = immutable_snapshot(private, creator=creator, license_name=license_name)
     _echo(build_outbox(root, snapshot, dry_run=dry_run))
 

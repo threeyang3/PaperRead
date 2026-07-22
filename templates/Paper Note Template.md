@@ -3,48 +3,30 @@
 > [!abstract] 一句话概述
 > {{ ai_summary_short }}
 
-## 基本信息
-
-- 作者：{{ paper_authors | join('、') }}
-- arXiv：[{{ paper_arxiv_id }}]({{ paper_abs_url }})
-- PDF：[[{{ paper_pdf_path }}]]
-- 项目主页：{{ paper_project_url }}
-- 代码：{{ paper_code_url }}
-- 数据集：{{ paper_dataset_url }}
-- 主题：{{ ai_topic_links | join('、') }}
-- AI 推荐结论：{{ ai_recommendation }}
-
+{% if ai_recommendation %}
 ## 阅读建议
 
-### 是否值得阅读
-
 {{ ai_recommendation }}
+{% if ai_relevance_reason is defined and ai_relevance_reason %}
 
-### 推荐阅读对象
-
-具身智能、机器人学习与机器人操作研究者。
-
-### 建议重点阅读章节
-
-方法、实验、局限性。
-
-### 可以快速略过的部分
-
-依据个人背景略过熟悉的相关工作。
+**与当前研究方向的关联：** {{ ai_relevance_reason }}
+{% endif %}
+{% endif %}
 
 {% if extraction.get('visual_assets', []) %}
 ## 论文视觉导读
 
 > [!info] 图像覆盖
-> 已从原 PDF 提取 {{ extraction.get('visual_assets', []) | length }} 张可追溯关键图片。优先阅读架构与方法图，再用实验结果图核对论文结论。
+> 收录 {{ extraction.get('visual_assets', []) | length }} 张可追溯关键图片；优先采用 arXiv HTML 原图，不可用时回退到 PDF 裁剪。
 
 {% set architecture_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'architecture') | list %}
 {% set result_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'result') | list %}
 {% set other_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'figure') | list %}
-{% if architecture_visuals %}
-### 架构、系统与方法图
+{% for heading, visuals in [('架构、系统与方法图', architecture_visuals), ('实验与关键结果图', result_visuals), ('任务、硬件与其他关键图', other_visuals)] %}
+{% if visuals %}
+### {{ heading }}
 
-{% for visual in architecture_visuals %}
+{% for visual in visuals %}
 #### Figure {{ visual.figure_number }} · PDF 第 {{ visual.page }} 页
 
 ![[{{ visual.path }}|950]]
@@ -52,117 +34,57 @@
 > [!quote]- 原文图注
 > {{ visual.caption }}
 >
-> [[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
+> 来源：{% if visual.get('source_type') == 'arxiv-html' %}[arXiv HTML 原图]({{ visual.get('source_url') }})；{% else %}PDF 裁剪；{% endif %}[[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
 
 {% endfor %}
 {% endif %}
-{% if result_visuals %}
-### 实验与关键结果图
-
-{% for visual in result_visuals %}
-#### Figure {{ visual.figure_number }} · PDF 第 {{ visual.page }} 页
-
-![[{{ visual.path }}|950]]
-
-> [!quote]- 原文图注
-> {{ visual.caption }}
->
-> [[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
-
 {% endfor %}
 {% endif %}
-{% if other_visuals %}
-### 任务、硬件与其他关键图
 
-{% for visual in other_visuals %}
-#### Figure {{ visual.figure_number }} · PDF 第 {{ visual.page }} 页
-
-![[{{ visual.path }}|950]]
-
-> [!quote]- 原文图注
-> {{ visual.caption }}
->
-> [[{{ paper_pdf_path }}#page={{ visual.page }}|在原 PDF 中打开本页]]
-
-{% endfor %}
-{% endif %}
-{% endif %}
+{% if sections.get('problem') %}
 ## 论文解决的问题
 
-{{ sections.get('problem', '') }}
+{{ sections.get('problem') }}
+{% endif %}
 
+{% if sections.get('contributions') %}
 ## 核心贡献
 
 {% for item in sections.get('contributions', []) %}- {{ item }}
 {% endfor %}
+{% endif %}
+
+{% if sections.get('method') %}
 ## 方法概述
 
-{{ sections.get('method', '') }}
+{{ sections.get('method') }}
+{% endif %}
 
-### 输入与输出
-
-### 模型结构
-
-### 训练方式
-
-### 推理与控制流程
-
+{% if sections.get('experiments') %}
 ## 实验设计
 
-{{ sections.get('experiments', '') }}
+{{ sections.get('experiments') }}
+{% endif %}
 
-### 任务与数据集
-
-### 对比基线
-
-### 主要指标
-
-### 消融实验
-
-### 真机实验
-
+{% if sections.get('results') %}
 ## 关键结果
 
-{{ sections.get('results', '') }}
+{{ sections.get('results') }}
+{% endif %}
 
-## 创新性分析
+## 研究质量判断
 
-- 评分：{{ ai_novelty_score }}/5
-- 评分证据：{{ ai_novelty_reason }}
-- 与已有工作的区别：见论文相关工作与方法章节。
-- 可能只是工程组合的部分：需结合相关工作复核。
+- **创新性 {{ ai_novelty_score }}/5：** {{ ai_novelty_reason }}
+- **完成度 {{ ai_completeness_score }}/5：** {{ ai_completeness_reason }}
+- **可复现性 {{ ai_reproducibility_score }}/5：** {{ ai_reproducibility_reason }}
 
-## 完成度分析
-
-- 评分：{{ ai_completeness_score }}/5
-- 评分证据：{{ ai_completeness_reason }}
-- 实验覆盖：见实验章节。
-- 未验证的问题：见局限性。
-
-## 可复现性分析
-
-- 评分：{{ ai_reproducibility_score }}/5
-- 评分证据：{{ ai_reproducibility_reason }}
-- 是否开源代码：{{ paper_has_code }}
-- 是否提供训练配置：无法确认
-- 是否提供数据或仿真环境：{{ paper_has_dataset }}
-- 是否提供模型权重：无法确认
-- 预估复现障碍：需核验依赖、数据和计算资源。
-
+{% if sections.get('limitations') %}
 ## 局限性与潜在问题
 
-{{ sections.get('limitations', '') }}
+{{ sections.get('limitations') }}
+{% endif %}
 
-## 与我的研究方向的关系
-
-### 对具身智能研究的价值
-
-### 对机器人操作研究的价值
-
-### 对触觉和富接触任务的价值
-
-### 可以借鉴到现有项目的内容
-
+{% if paper_cites or ai_related_papers or ai_method_links or ai_dataset_links %}
 ## 关系与双链
 
 {% if paper_cites %}
@@ -187,14 +109,11 @@
 
 {{ ai_dataset_links | join('、') }}
 {% endif %}
+{% endif %}
 
-## 版本记录
-
-- {{ version_change_note }}
-
-## AI 分析来源与可信度
-
-分析提供方：{{ ai_analysis_provider }}；模型：{{ ai_analysis_model }}；Prompt：{{ ai_analysis_prompt_version }}；时间：{{ ai_analyzed_at }}。
+> [!info]- 版本与 AI 来源
+> {{ version_change_note }}
+> 提供方：{{ ai_analysis_provider }}；模型：{{ ai_analysis_model }}；Prompt：{{ ai_analysis_prompt_version }}；时间：{{ ai_analyzed_at }}。
 
 <!-- USER_NOTES_START -->
 
