@@ -11,7 +11,12 @@ from paperflow.data.user_store import merge_user_data, save_user_record
 from paperflow.relationships import derive_relationships
 from paperflow.sync_safety import ExpectedFile
 from paperflow.text_quality import display_title, title_aliases, user_display_title, short_title
-from paperflow.obsidian.artifacts import ensure_ai_analysis_note, hub_links, MIGRATION_MARKER
+from paperflow.obsidian.artifacts import (
+    ensure_ai_analysis_note,
+    has_external_user_note,
+    hub_links,
+    MIGRATION_MARKER,
+)
 from paperflow.obsidian.view_model import build_paper_view_model, PAPER_VIEW_MODEL_CONTEXT_VERSION
 from paperflow.template_sets import TemplateSetManager
 
@@ -101,7 +106,7 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
     if note_path.exists():
         old_frontmatter, old_body = read_note(note_path)
         notes = extract_user_notes(old_body)
-        if notes is None and MIGRATION_MARKER not in old_body:
+        if notes is None and not has_external_user_note(root, record, old_body):
             review = root / "50 Inbox/Manual Review" / f"{note_path.stem}-merge-{now_beijing().strftime('%Y%m%d-%H%M%S')}.md"
             atomic_write(review, f"# {tr(ui_locale, 'manual_review.title')}\n\n{tr(ui_locale, 'manual_review.message')}\n\n" + body)
             raise RuntimeError(f"Unsafe merge refused; review {review.relative_to(root).as_posix()}")

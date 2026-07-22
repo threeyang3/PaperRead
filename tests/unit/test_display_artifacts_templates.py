@@ -15,6 +15,7 @@ from paperflow.workspace import init_workspace, load_workspace_settings
 from paperflow.workspace import install_workspace_resources
 from paperflow.obsidian.note_renderer import render_paper
 from paperflow.obsidian.frontmatter import read_note
+from paperflow.validation import validate_all
 
 
 def _record() -> dict:
@@ -139,3 +140,106 @@ def test_successful_render_clears_stale_manual_review_state(tmp_path: Path):
     frontmatter, _ = read_note(note)
     assert frontmatter["system_requires_manual_review"] is False
     assert frontmatter["system_error"] == ""
+
+
+def test_validation_accepts_migrated_hub_marker(tmp_path: Path):
+    init_workspace(tmp_path)
+    note = tmp_path / "10 Papers/2025/2504.16054.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "---\n"
+        "type: paper\n"
+        "paper_uid: arxiv:2504.16054\n"
+        "user_reading_status: inbox\n"
+        "user_learning_status: none\n"
+        "user_reproduction_status: none\n"
+        "user_added_tags: []\n"
+        "paper_authors: []\n"
+        "paper_categories: []\n"
+        "ai_topics: []\n"
+        "ai_method_family: []\n"
+        "ai_task_types: []\n"
+        "ai_robot_platforms: []\n"
+        "ai_datasets: []\n"
+        "ai_baselines: []\n"
+        "ai_topic_links: []\n"
+        "ai_method_links: []\n"
+        "ai_dataset_links: []\n"
+        "paper_cites: []\n"
+        "paper_citation_ids: []\n"
+        "ai_related_papers: []\n"
+        "paper_has_code: false\n"
+        "paper_has_project_page: false\n"
+        "paper_has_dataset: false\n"
+        "user_favorite: false\n"
+        "system_requires_manual_review: false\n"
+        "paper_arxiv_version: 1\n"
+        "ai_relevance_score: 0\n"
+        "ai_novelty_score: 0\n"
+        "ai_completeness_score: 0\n"
+        "ai_reproducibility_score: 0\n"
+        "ai_overall_score: 0\n"
+        "user_priority: 3\n"
+        "user_rating: 0\n"
+        "---\n\n"
+        "# Hub\n\n"
+        "<!-- paperflow-user-note-migrated source=legacy sha256=abc -->\n",
+        encoding="utf-8",
+    )
+    assert not [error for error in validate_all(tmp_path) if "user note markers" in error]
+
+
+def test_validation_accepts_legacy_migrated_user_note_link(tmp_path: Path):
+    init_workspace(tmp_path)
+    user_note = tmp_path / "60 User Notes/2025/2504.16054.notes.md"
+    user_note.parent.mkdir(parents=True, exist_ok=True)
+    user_note.write_text(
+        "---\n"
+        "type: paper-user-note\n"
+        "paper_uid: arxiv:2504.16054\n"
+        "---\n\n# 我的笔记\n",
+        encoding="utf-8",
+    )
+    note = tmp_path / "10 Papers/2025/2504.16054.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "---\n"
+        "type: paper\n"
+        "paper_uid: arxiv:2504.16054\n"
+        "user_reading_status: inbox\n"
+        "user_learning_status: none\n"
+        "user_reproduction_status: none\n"
+        "user_added_tags: []\n"
+        "paper_authors: []\n"
+        "paper_categories: []\n"
+        "ai_topics: []\n"
+        "ai_method_family: []\n"
+        "ai_task_types: []\n"
+        "ai_robot_platforms: []\n"
+        "ai_datasets: []\n"
+        "ai_baselines: []\n"
+        "ai_topic_links: []\n"
+        "ai_method_links: []\n"
+        "ai_dataset_links: []\n"
+        "paper_cites: []\n"
+        "paper_citation_ids: []\n"
+        "ai_related_papers: []\n"
+        "paper_has_code: false\n"
+        "paper_has_project_page: false\n"
+        "paper_has_dataset: false\n"
+        "user_favorite: false\n"
+        "system_requires_manual_review: false\n"
+        "paper_arxiv_version: 1\n"
+        "ai_relevance_score: 0\n"
+        "ai_novelty_score: 0\n"
+        "ai_completeness_score: 0\n"
+        "ai_reproducibility_score: 0\n"
+        "ai_overall_score: 0\n"
+        "user_priority: 3\n"
+        "user_rating: 0\n"
+        "---\n\n"
+        "# Hub\n\n"
+        "> 已迁移到 [[60 User Notes/2025/2504.16054.notes]]。\n",
+        encoding="utf-8",
+    )
+    assert not [error for error in validate_all(tmp_path) if "user note markers" in error]

@@ -5,6 +5,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from ruamel.yaml import YAML
 from paperflow.obsidian.bases import validate_bases
+from paperflow.obsidian.artifacts import has_external_user_note
 from paperflow.obsidian.frontmatter import read_note
 
 READING = {"inbox", "queued", "skimming", "reading", "read", "archived", "rejected"}
@@ -101,7 +102,16 @@ def validate_all(root: Path) -> list[str]:
         try:
             frontmatter, body = read_note(path)
             if frontmatter.get("type") != "paper": errors.append(f"{path}: type is not paper")
-            if "<!-- USER_NOTES_START -->" not in body or "<!-- USER_NOTES_END -->" not in body: errors.append(f"{path}: user note markers missing")
+            # Migrated Hubs intentionally replace the inline user section with
+            # a link to 60 User Notes.  The migration marker is the durable
+            # proof that the old prose was extracted and should be accepted by
+            # validation in place of the legacy inline markers.
+            has_inline_user_notes = (
+                "<!-- USER_NOTES_START -->" in body
+                and "<!-- USER_NOTES_END -->" in body
+            )
+            if not has_inline_user_notes and not has_external_user_note(root, frontmatter, body):
+                errors.append(f"{path}: user note markers missing")
             if frontmatter.get("user_reading_status") not in READING: errors.append(f"{path}: invalid user_reading_status")
             if frontmatter.get("user_learning_status") not in LEARNING: errors.append(f"{path}: invalid user_learning_status")
             if frontmatter.get("user_reproduction_status") not in REPRODUCTION: errors.append(f"{path}: invalid user_reproduction_status")

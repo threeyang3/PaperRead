@@ -22,6 +22,47 @@ USER_RE = re.compile(
     r"<!-- USER_NOTES_START -->(.*?)<!-- USER_NOTES_END -->", re.S
 )
 MIGRATION_MARKER = "paperflow-user-note-migrated"
+MIGRATED_LINK_RE = re.compile(
+    r"(?:已迁移到|migrated\s+to)\s+\[\[([^\]]+)\]\]",
+    re.IGNORECASE,
+)
+
+
+def has_external_user_note(root: Path, record: dict[str, Any], body: str) -> bool:
+    """Return whether a Hub safely points at its independent User Note.
+
+    Older migrations wrote the link but predated the durable marker.  Accept
+    those links only when the target is inside the Vault, has the expected
+    artifact type, and belongs to the same paper UID.
+    """
+    if MIGRATION_MARKER in body:
+        return True
+    uid = _uid(record)
+    if not uid:
+        return False
+    root_resolved = root.resolve()
+    for value in MIGRATED_LINK_RE.findall(body):
+        relative = value.strip()
+        candidate = root / relative
+        if candidate.suffix.casefold() != ".md":
+            candidate = Path(str(candidate) + ".md")
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(root_resolved)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        try:
+            frontmatter, _ = read_note(candidate)
+        except Exception:
+            continue
+        if (
+            frontmatter.get("type") == "paper-user-note"
+            and str(frontmatter.get("paper_uid") or "") == uid
+        ):
+            return True
+    return False
 
 
 def artifact_path(root: Path, settings: Any, record: dict[str, Any], name: str) -> Path:
