@@ -19,6 +19,10 @@ Markdown 是人可读、可编辑真源，JSON 是可重建 sidecar。双方均�
 PaperFlow 停止覆盖并要求 Manual Review。边界外的未知 Markdown 和
 `extensions` 元数据会保留。
 
+标注笔记的阅读视图使用简洁投影：文件路径和机器属性仍用于稳定链接与审计，
+但正文只显示中文标注类型、原文摘录和“打开 PDF · 第 N 页”；PDF++ 的 selection
+四元组、哈希和重定位状态保留在隐藏属性/机器区块中。
+
 Annotation Schema 仍为 v1：`pdf_selection` 与 `highlight_color` 是向后兼容的
 可选 anchor 字段，不需要 Workspace 迁移。旧版本将自由文本放进 `selection=`
 的记录仍可读取，但重新渲染时只输出页码；实际引用文本保留在

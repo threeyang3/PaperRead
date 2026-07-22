@@ -152,7 +152,7 @@ def test_subscription_is_read_only_and_scores_are_separate(tmp_path: Path) -> No
         / "vault/70 Community/Unclassified/arxiv_2607.00001.community.md"
     )
     assert note.is_file()
-    assert "@reader · rating · r1" in note.read_text(encoding="utf-8")
+    assert "### 评分 · @reader" in note.read_text(encoding="utf-8")
 
 
 def test_subscription_rejects_tampered_content_hash(tmp_path: Path) -> None:

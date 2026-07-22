@@ -9,6 +9,27 @@ from paperflow.obsidian.frontmatter import dump_frontmatter
 START = "<!-- PAPERFLOW_ANNOTATION_START -->"
 END = "<!-- PAPERFLOW_ANNOTATION_END -->"
 
+KIND_LABELS = {
+    "highlight": "高亮",
+    "passage-comment": "段落评论",
+    "question": "疑问",
+    "critique": "批评",
+    "figure-comment": "图评论",
+    "section-comment": "章节评论",
+    "paper-review": "论文评审",
+    "rating": "评分",
+}
+
+
+def kind_label(kind: str) -> str:
+    return KIND_LABELS.get(kind, kind)
+
+
+def _display_quote(value: str) -> str:
+    # The exact quote remains in the machine record; remove a leading colon
+    # copied from a PDF title fragment from the reader-facing projection.
+    return value.replace("\n", " ").strip().lstrip(":： ").strip()
+
 
 def pdf_link(annotation: Annotation) -> str:
     anchor = annotation.preferred_revision.anchor
@@ -17,12 +38,16 @@ def pdf_link(annotation: Annotation) -> str:
         fragment += "&selection=" + quote(anchor.pdf_selection, safe=",")
         if anchor.highlight_color:
             fragment += "&color=" + quote(anchor.highlight_color, safe="")
-    return f"[[{anchor.pdf_path}#{fragment}]]"
+    return f"[[{anchor.pdf_path}#{fragment}|打开 PDF · 第 {anchor.page} 页]]"
 
 
 def render_annotation(annotation: Annotation, unknown_markdown: str = "") -> str:
     revision = annotation.preferred_revision
+    label = kind_label(annotation.kind)
     metadata = {
+        "title": f"标注 · {label}",
+        "aliases": [f"{label} · {annotation.annotation_id}", annotation.annotation_id],
+        "cssclasses": ["paperflow-annotation"],
         "annotation_id": annotation.annotation_id,
         "paper_uid": annotation.paper_uid,
         "kind": annotation.kind,
@@ -35,7 +60,7 @@ def render_annotation(annotation: Annotation, unknown_markdown: str = "") -> str
     machine = json.dumps(annotation.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
     selector = revision.anchor.text_quote_selector
     quote_text = (
-        "\n> " + selector.exact.replace("\n", "\n> ") + "\n"
+        "\n> [!quote] 原文摘录\n> " + _display_quote(selector.exact) + "\n"
         if selector and selector.exact else ""
     )
     preserved = unknown_markdown.rstrip()
@@ -44,7 +69,7 @@ def render_annotation(annotation: Annotation, unknown_markdown: str = "") -> str
     return (
         dump_frontmatter(metadata) + "\n" + preserved
         + f"{START}\n<!-- {machine} -->\n"
-        + f"## {annotation.kind}\n\n{pdf_link(annotation)}\n"
+        + f"## {label}\n\n来源：{pdf_link(annotation)}\n"
         + quote_text
         + ("\n" + annotation.body.strip() if annotation.body.strip() else "")
         + f"\n{END}\n"

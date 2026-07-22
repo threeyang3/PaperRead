@@ -8,7 +8,58 @@ from typing import Any
 from paperflow.community.models import CommunityContribution, CommunityRetraction
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.community.publisher import verify_content_sha256
+from paperflow.obsidian.frontmatter import dump_frontmatter, read_note
+from paperflow.text_quality import display_title
 from paperflow.utils import atomic_json, atomic_write, iso_beijing
+
+
+COMMUNITY_KIND_LABELS = {
+    "highlight": "高亮",
+    "passage-comment": "段落评论",
+    "question": "疑问",
+    "critique": "批评",
+    "figure-comment": "图评论",
+    "section-comment": "章节评论",
+    "paper-review": "论文评审",
+    "rating": "评分",
+    "reply": "回复",
+}
+
+
+def _community_kind_label(kind: str) -> str:
+    return COMMUNITY_KIND_LABELS.get(kind, kind)
+
+
+def _display_quote(value: str) -> str:
+    return value.replace("\n", " ").strip().lstrip(":： ").strip()
+
+
+def _paper_context(vault: Path, feed_root: Path, paper_uid: str) -> tuple[str, str]:
+    paper_id = paper_uid.replace(":", "_")
+    source_id = paper_uid.split(":", 1)[-1]
+    candidates = [
+        *(vault / "10 Papers").rglob(f"{paper_id}.md"),
+        *(vault / "10 Papers").rglob(f"{source_id}.md"),
+    ]
+    for note in sorted(set(candidates)):
+        try:
+            frontmatter, _ = read_note(note)
+        except Exception:
+            continue
+        title = frontmatter.get("paper_title_display") or frontmatter.get("title")
+        pdf_path = frontmatter.get("paper_pdf_path") or ""
+        if title:
+            return display_title(str(title)), str(pdf_path)
+    for raw in sorted(feed_root.glob(f"papers/{paper_id}/raw/v*.json")):
+        try:
+            payload = json.loads(raw.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        metadata = payload.get("metadata") or {}
+        title = metadata.get("paper_title")
+        if title:
+            return display_title(str(title)), ""
+    return paper_uid, ""
 
 
 def community_rating_summary(items: list[CommunityContribution]) -> dict[str, Any]:
@@ -74,9 +125,10 @@ def ingest_community(
             all_items[key] = item
     rendered_notes = []
     for paper_uid in sorted({item.paper_uid for item in all_items.values()}):
-        year = _paper_year(feed_root, paper_uid)
+        year = _paper_year(feed_root, paper_uid, vault)
         paper_id = paper_uid.replace(":", "_")
         output = resolved_note_root / year / f"{paper_id}.community.md"
+        paper_title, pdf_path = _paper_context(vault, feed_root, paper_uid)
         rendered_notes.append(
             render_community_note(
                 vault,
@@ -84,6 +136,8 @@ def ingest_community(
                 list(all_items.values()),
                 output,
                 dry_run=dry_run,
+                paper_title=paper_title,
+                pdf_path=pdf_path,
             )
         )
     return {
@@ -98,7 +152,7 @@ def ingest_community(
     }
 
 
-def _paper_year(feed_root: Path, paper_uid: str) -> str:
+def _paper_year(feed_root: Path, paper_uid: str, vault: Path | None = None) -> str:
     for path in feed_root.glob("papers/*/raw/v*.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -111,6 +165,12 @@ def _paper_year(feed_root: Path, paper_uid: str) -> str:
         if not year:
             year = str(metadata.get("paper_submitted_date") or "")[:4]
         return year if re_full_year(year) else "Unclassified"
+    if vault is not None:
+        source_id = paper_uid.split(":", 1)[-1]
+        for note in sorted((vault / "10 Papers").rglob(f"{source_id}.md")):
+            year = note.parent.name
+            if re_full_year(year):
+                return year
     return "Unclassified"
 
 
@@ -120,19 +180,44 @@ def re_full_year(value: str) -> bool:
 
 def render_community_note(vault: Path, paper_uid: str,
                           items: list[CommunityContribution],
-                          output: Path, *, dry_run: bool = True) -> dict[str, Any]:
+                          output: Path, *, dry_run: bool = True,
+                          paper_title: str = "", pdf_path: str = "") -> dict[str, Any]:
     visible = [item for item in items if item.paper_uid == paper_uid]
+    title = paper_title or paper_uid
+    metadata = {
+        "type": "paperflow-community-note",
+        "title": f"社区观点 · {title}",
+        "aliases": [f"Community · {paper_uid.replace(':', '_')}"],
+        "cssclasses": ["paperflow-community"],
+        "paper_uid": paper_uid,
+        "community_count": len(visible),
+        "updated_at": iso_beijing(),
+    }
     lines = [
-        "---", "type: paperflow-community-note", f"paper_uid: {paper_uid}",
-        f"community_count: {len(visible)}", f"updated_at: {iso_beijing()}", "---",
-        "", "# 社区观点", "",
-        "> 社区内容是只读订阅数据，与个人标注、个人评分和 AI 分析分层保存。", "",
+        dump_frontmatter(metadata).rstrip(), "", f"# 社区观点 · {title}", "",
+        f"> {len(visible)} 条只读社区贡献；个人标注、评分和 AI 分析保持独立。", "",
+        "## 贡献", "",
     ]
     for item in visible:
+        label = _community_kind_label(item.kind)
         lines.extend([
-            f"## @{item.creator} · {item.kind} · r{item.revision}", "",
-            (f"> {item.anchor.exact_quote}" if item.anchor and item.anchor.exact_quote else ""),
-            item.body, "",
+            f"### {label} · @{item.creator}", "",
+        ])
+        if item.anchor and item.anchor.exact_quote:
+            lines.extend([
+                f"> [!quote] 原文摘录 · 第 {item.anchor.page} 页",
+                f"> {_display_quote(item.anchor.exact_quote)}",
+            ])
+            if pdf_path:
+                lines.extend(["", f"来源：[[{pdf_path}#page={item.anchor.page}|打开 PDF · 第 {item.anchor.page} 页]]"])
+            lines.append("")
+        if item.body.strip():
+            lines.extend([item.body.strip(), ""])
+        lines.extend([
+            "> [!info]- 贡献信息",
+            f"> 修订：r{item.revision} · 许可：{item.license}",
+            f"> ID：`{item.contribution_id}`",
+            "",
         ])
     if not dry_run:
         atomic_write(output, "\n".join(lines).rstrip() + "\n")

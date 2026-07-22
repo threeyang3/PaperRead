@@ -421,6 +421,19 @@ button.paperflow-action.danger {
   resize: vertical;
 }
 
+/* Generated annotation/community notes keep machine metadata in YAML, while
+   the reading view presents the human-facing projection only. */
+.markdown-preview-view.paperflow-annotation .inline-title,
+.markdown-source-view.paperflow-annotation .inline-title,
+.markdown-preview-view.paperflow-community .inline-title,
+.markdown-source-view.paperflow-community .inline-title,
+.markdown-preview-view.paperflow-annotation .metadata-container,
+.markdown-source-view.paperflow-annotation .metadata-container,
+.markdown-preview-view.paperflow-community .metadata-container,
+.markdown-source-view.paperflow-community .metadata-container {
+  display: none !important;
+}
+
 .paperflow-confirm-modal h2 {
   font-family: "Iowan Old Style", "Palatino Linotype", serif;
   font-size: 28px;

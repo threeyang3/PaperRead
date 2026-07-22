@@ -305,6 +305,9 @@ def test_community_annotation_round_trip_renders_read_only_local_note(
     )
     assert note.is_file()
     text = note.read_text(encoding="utf-8")
+    assert "# 社区观点 · Safe public paper" in text
+    assert "### 段落评论 · @threeyang3" in text
+    assert "passage-comment" not in text
     assert "A published annotation comment." in text
     assert "A short verified quote." in text
     assert not (subscriber / ".paperflow/data/user").exists()

@@ -58,6 +58,8 @@ def test_pdf_plus_and_native_link_round_trip(tmp_path: Path) -> None:
     assert parsed == annotation
     rendered = markdown.read_text(encoding="utf-8")
     assert "page=7&selection=12,0,14,38&color=yellow" in rendered
+    assert "## 段落评论" in rendered
+    assert "来源：[[80 Attachments/Papers/2026/2607.00001/v1.pdf#page=7&selection=12,0,14,38&color=yellow|打开 PDF · 第 7 页]]" in rendered
     assert "> robot policy" in rendered
     assert parsed.preferred_revision.anchor.pdf_selection == "12,0,14,38"
     assert parsed.preferred_revision.anchor.highlight_color == "yellow"
