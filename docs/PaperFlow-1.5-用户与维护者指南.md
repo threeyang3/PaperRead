@@ -63,7 +63,7 @@ dry-run，只恢复正式备份中的校验文件，不删除之后创建的用�
 `content_sha256`，拒绝被篡改的 revision。维护者必须完成完整 pytest、Node 生命周期、
 Doctor、audit、迁移、Base、Obsidian runtime、发布物白名单和干净 clone 验证。
 
-截至 2026-07-22，PaperRead 1.5.0 的源代码、122 项 pytest、Automation Node 生命周期测试、
+截至 2026-07-22，PaperRead 1.5.0 的源代码、126 项 pytest、Automation Node 生命周期测试、
 模拟 Workspace v3 迁移/回滚、Community 篡改拒绝和本地发布物验证已完成。
 真实 `ArxivLearn` Vault 已安装修复 wheel，Workspace v3 验证通过，32/32 篇记录
 的 PDF、笔记和 Derived 路径均无错误；Doctor、audit、health、路径/Workspace
@@ -71,3 +71,24 @@ Doctor、audit、迁移、Base、Obsidian runtime、发布物白名单和干净 
 模板 v6 已对 32/32 篇论文完成正式视觉迁移；π0.5 的 12 张入选图中 10 张来自
 arXiv HTML 原图、2 张安全回退为 PDF 裁剪。两条社区标注/评论已通过 ArXiv-data
 GitHub 主分支完成发布—重新克隆—本地只读笔记往返，User 层修改数为 0。
+
+## Paper Workspace 与模板集（1.5.0）
+
+一篇论文现在有独立的工作区对象：`10 Papers` 是稳定 Paper Hub，`20 AI
+Analyses` 是可重建的 AI 分析快照，`60 User Notes` 是不会被 PaperFlow 重写的
+用户正文；标注、复盘和社区记录仍分别位于 `60 Annotations`、`60 Reviews` 和
+`70 Community`。ID 文件名默认不变，显示标题由 `paper_display_title` 和
+`paper_short_title` 提供，用户可用 `user_display_title` 覆盖显示而不修改 Raw/AI。
+
+已有论文的 `USER_NOTES_START/END` 迁移流程：
+
+```powershell
+paperflow workspace backup
+paperflow migrate user-notes --dry-run
+paperflow migrate user-notes --apply
+```
+
+迁移会在 `.paperflow/backups` 保存清单和原文；目标冲突会跳过并生成报告，旧 Hub
+保留迁移标记。内置/自定义 Template Set 通过
+`paperflow templates list|copy|use|validate|preview|export|import|doctor` 管理，
+模板只接收版本化 Paper View Model（context version 1），并在 Jinja sandbox 中执行。

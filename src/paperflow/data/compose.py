@@ -7,7 +7,7 @@ from typing import Any
 from ruamel.yaml import YAML
 
 from paperflow.paths.templates import safe_component
-from paperflow.text_quality import display_title
+from paperflow.text_quality import display_title, short_title, user_display_title
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -47,4 +47,11 @@ def compose_record(
     record["paper_title_display"] = display_title(
         str(record.get("paper_title") or paper_id)
     )
+    record["paper_short_title"] = short_title(
+        str(record.get("paper_title") or paper_id)
+    )
+    override = user_display_title(record)
+    record["paper_display_title"] = override or record["paper_title_display"]
+    record["display_title"] = record["paper_display_title"]
+    record["file_name"] = f"{safe_component(paper_id)}.md"
     return record

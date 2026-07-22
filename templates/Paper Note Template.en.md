@@ -3,6 +3,14 @@
 > [!abstract] One-sentence overview
 > {{ ai_summary_short }}
 
+## Workspace
+
+{% if links.ai_analysis %}- AI analysis: [[{{ links.ai_analysis | replace('.md', '') }}]]{% endif %}
+{% if links.user_note %}- My notes: [[{{ links.user_note | replace('.md', '') }}]]{% endif %}
+{% if links.annotations %}- Annotations: [[{{ links.annotations | replace('.md', '') }}]]{% endif %}
+{% if links.review %}- Review: [[{{ links.review | replace('.md', '') }}]]{% endif %}
+{% if links.community %}- Community: [[{{ links.community | replace('.md', '') }}]]{% endif %}
+
 {% if ai_recommendation %}
 ## Reading recommendation
 
@@ -74,9 +82,9 @@
 
 ## Research quality assessment
 
-- **Novelty {{ ai_novelty_score }}/5:** {{ ai_novelty_reason }}
-- **Completeness {{ ai_completeness_score }}/5:** {{ ai_completeness_reason }}
-- **Reproducibility {{ ai_reproducibility_score }}/5:** {{ ai_reproducibility_reason }}
+- Novelty: **{{ ai_novelty_score }}/5** — {{ ai_novelty_reason }}
+- Completeness: **{{ ai_completeness_score }}/5** — {{ ai_completeness_reason }}
+- Reproducibility: **{{ ai_reproducibility_score }}/5** — {{ ai_reproducibility_reason }}
 
 {% if sections.get('limitations') %}
 ## Limitations

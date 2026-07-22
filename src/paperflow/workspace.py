@@ -70,6 +70,18 @@ class WorkspacePaths(StrictModel):
         root="10 Papers",
         template="{{year}}/{{paper_id}}.md",
     )
+    paper_hub: PathRule = PathRule(
+        root="10 Papers",
+        template="{{year}}/{{paper_id}}.md",
+    )
+    ai_analysis_note: PathRule = PathRule(
+        root="20 AI Analyses",
+        template="{{year}}/{{paper_id}}.analysis.md",
+    )
+    user_note: PathRule = PathRule(
+        root="60 User Notes",
+        template="{{year}}/{{paper_id}}.notes.md",
+    )
     base: PathRule = PathRule(root="00 Dashboard/Bases")
     dashboard: PathRule = PathRule(root="00 Dashboard")
     daily_brief: PathRule = PathRule(

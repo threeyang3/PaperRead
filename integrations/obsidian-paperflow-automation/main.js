@@ -586,6 +586,18 @@ function controlCommands(action, payload = {}) {
         "source", "trust", safeName(payload.name, "订阅名称"), mode
       ]];
     }
+    case "templates-list":
+      return [["templates", "list"]];
+    case "templates-validate":
+      return [["templates", "validate"]];
+    case "templates-use": {
+      const setId = safeName(payload.setId || "academic-zh", "模板集 ID");
+      return [["templates", "use", setId]];
+    }
+    case "user-notes-plan":
+      return [["migrate", "user-notes", "--dry-run"]];
+    case "user-notes-apply":
+      return [["migrate", "user-notes", "--apply"]];
     case "publish-status":
       return [["publish", "status"]];
     case "publish-plan":
@@ -2136,6 +2148,7 @@ class PaperFlowControlCenterView extends ItemView {
     this.renderPaperCard(grid);
     this.renderAnalyzeCard(grid);
     this.renderAiCard(grid);
+    this.renderWorkspaceArtifactsCard(grid);
     this.renderActivityCard(grid);
 
     const advanced = container.createEl("details", {
@@ -2591,6 +2604,24 @@ class PaperFlowControlCenterView extends ItemView {
     this.button(actions, text("查看配置", "Show config"), "settings-2", "config-show");
     this.button(actions, "Form Flow status", "file-check", "form-flow-status");
     this.button(actions, text("检查更新", "Check updates"), "circle-arrow-up", "update-check");
+  }
+
+  renderWorkspaceArtifactsCard(grid) {
+    const body = this.section(
+      grid,
+      "04",
+      text("阅读工作区", "READING WORKSPACE"),
+      text("独立 Hub、AI 分析、用户笔记与模板集", "Independent Hub, AI analysis, user notes, and template sets"),
+      "paperflow-card-accent"
+    );
+    const actions = this.buttonRow(body);
+    this.button(actions, text("模板集列表", "List template sets"), "layout-template", "templates-list");
+    this.button(actions, text("验证模板集", "Validate templates"), "badge-check", "templates-validate");
+    this.button(actions, text("使用中文模板", "Use Chinese templates"), "languages", "templates-use", () => ({ setId: "academic-zh" }));
+    this.button(actions, text("用户笔记迁移预览", "User-note migration preview"), "file-search", "user-notes-plan");
+    this.button(actions, text("应用用户笔记迁移", "Apply user-note migration"), "file-output", "user-notes-apply", () => ({}), "danger");
+    const hint = body.createEl("p", { cls: "paperflow-card-hint" });
+    hint.setText(text("迁移前请确认同步插件处于稳定状态；应用操作会保留备份。", "Ensure sync is settled before applying; a backup is kept."));
   }
 
   renderActivityCard(grid) {

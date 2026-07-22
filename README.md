@@ -91,6 +91,17 @@ its HTML/PDF provenance and links to its original PDF page. Existing papers can 
 Center with **Extract paper figures** or with `paperflow paper visuals --all`.
 The derived PNGs and manifests stay local and are excluded from Public Feeds.
 
+Paper Workspace artifacts are separated by ownership: `10 Papers` is the
+stable Paper Hub, `20 AI Analyses` contains generated analysis snapshots, and
+`60 User Notes` contains prose that PaperFlow never regenerates. Existing
+`USER_NOTES_START/END` blocks can be migrated with a backup and dry-run:
+`paperflow migrate user-notes --dry-run` followed by `--apply`. Display titles
+(`paper_display_title`/`paper_short_title`) are derived from the source title;
+ID-based filenames remain stable and user aliases are preserved. Built-in and
+custom Template Sets are managed with `paperflow templates list|copy|use|validate|preview`.
+Templates receive a versioned Paper View Model and run inside a Jinja sandbox.
+See [docs/paper-workspace-artifacts.md](docs/paper-workspace-artifacts.md).
+
 Three Obsidian-native automation tracks can independently synchronize enabled
 Feed subscriptions, run opt-in safety-gated publishing on a data-source host,
 and discover/SHA256-stage stable PaperFlow releases. Applying an update remains

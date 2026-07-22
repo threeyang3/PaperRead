@@ -6,6 +6,8 @@ from typing import Any
 
 from paperflow.sync_safety import find_sync_conflicts
 from paperflow.text_quality import suspicious_text
+from paperflow.obsidian.artifacts import artifact_path
+from paperflow.workspace import load_workspace_settings
 
 
 def scan_workspace_health(root: Path) -> dict[str, Any]:
@@ -29,7 +31,20 @@ def scan_workspace_health(root: Path) -> dict[str, Any]:
         note_text = (
             note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
         )
+        analysis_text = ""
         if assets and not any(f"![[{item.get('path')}" in note_text for item in assets):
+            try:
+                _, settings = load_workspace_settings(root)
+                analysis_path = artifact_path(root, settings, record, "ai_analysis_note")
+                if analysis_path.is_file():
+                    analysis_text = analysis_path.read_text(encoding="utf-8")
+            except Exception:
+                analysis_text = ""
+        if assets and not any(
+            f"![[{item.get('path')}" in text
+            for text in (note_text, analysis_text)
+            for item in assets
+        ):
             missing_visual_embeds.append(str(record.get("paper_uid") or path.stem))
         for asset in assets:
             candidate = root / str(asset.get("path") or "")
@@ -39,7 +54,7 @@ def scan_workspace_health(root: Path) -> dict[str, Any]:
         path.relative_to(root).as_posix() for path in find_sync_conflicts(root)
     ]
     return {
-        "ok": not (mojibake or broken_assets or conflicts),
+        "ok": not (mojibake or missing_visual_embeds or broken_assets or conflicts),
         "mojibake": mojibake,
         "missing_visual_embeds": missing_visual_embeds,
         "broken_assets": broken_assets,

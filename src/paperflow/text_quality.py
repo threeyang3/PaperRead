@@ -74,13 +74,49 @@ def display_title(source_title: str) -> str:
     return " ".join(value.split()).strip()
 
 
+def short_title(source_title: str, *, max_length: int = 72) -> str:
+    """Return a deterministic, human-friendly title fragment.
+
+    This is deliberately derived from the source title and never replaces it.
+    A subtitle after a colon/em dash is omitted when the leading fragment is
+    meaningful; otherwise the display title is safely truncated.
+    """
+    value = display_title(source_title)
+    if not value:
+        return "Untitled"
+    first = re.split(r"\s*(?::|[\u2013\u2014]|\\ - )\s*", value, maxsplit=1)[0]
+    candidate = first.strip() if len(first.strip()) >= 4 else value
+    if len(candidate) <= max_length:
+        return candidate
+    return candidate[: max_length - 1].rstrip(" ,.;:-") + "…"
+
+
+def user_display_title(record: dict[str, Any]) -> str:
+    """Resolve a user title override without allowing Raw/AI to own it."""
+    for key in ("user_display_title", "user_title"):
+        value = str(record.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def title_aliases(record: dict[str, Any]) -> list[str]:
     aliases: list[str] = []
+    paper_id = str(record.get("paper_arxiv_id") or "").strip()
+    override = user_display_title(record)
     for value in (
         str(record.get("paper_title") or ""),
         str(record.get("paper_title_display") or ""),
-        str(record.get("paper_arxiv_id") or ""),
+        str(record.get("paper_short_title") or short_title(str(record.get("paper_title") or ""))),
+        override,
+        paper_id,
+        f"arXiv {paper_id}" if paper_id else "",
     ):
+        if value and value not in aliases:
+            aliases.append(value)
+    # Preserve aliases authored in Obsidian while deduplicating deterministically.
+    for value in record.get("aliases", []) or []:
+        value = str(value).strip()
         if value and value not in aliases:
             aliases.append(value)
     return aliases

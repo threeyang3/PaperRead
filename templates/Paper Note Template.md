@@ -3,6 +3,14 @@
 > [!abstract] 一句话概述
 > {{ ai_summary_short }}
 
+## 工作区导航
+
+{% if links.ai_analysis %}- AI 分析：[[{{ links.ai_analysis | replace('.md', '') }}]]{% endif %}
+{% if links.user_note %}- 我的笔记：[[{{ links.user_note | replace('.md', '') }}]]{% endif %}
+{% if links.annotations %}- 标注：[[{{ links.annotations | replace('.md', '') }}]]{% endif %}
+{% if links.review %}- 复盘：[[{{ links.review | replace('.md', '') }}]]{% endif %}
+{% if links.community %}- 社区：[[{{ links.community | replace('.md', '') }}]]{% endif %}
+
 {% if ai_recommendation %}
 ## 阅读建议
 
@@ -74,9 +82,9 @@
 
 ## 研究质量判断
 
-- **创新性 {{ ai_novelty_score }}/5：** {{ ai_novelty_reason }}
-- **完成度 {{ ai_completeness_score }}/5：** {{ ai_completeness_reason }}
-- **可复现性 {{ ai_reproducibility_score }}/5：** {{ ai_reproducibility_reason }}
+- 创新性：**{{ ai_novelty_score }}/5** — {{ ai_novelty_reason }}
+- 完成度：**{{ ai_completeness_score }}/5** — {{ ai_completeness_reason }}
+- 可复现性：**{{ ai_reproducibility_score }}/5** — {{ ai_reproducibility_reason }}
 
 {% if sections.get('limitations') %}
 ## 局限性与潜在问题

@@ -59,6 +59,9 @@ from paperflow.ai.providers import (
     make_provider,
 )
 from paperflow.health import scan_workspace_health
+from paperflow.template_sets import TemplateSetManager
+from paperflow.obsidian.artifacts import apply_user_note_migration, plan_user_note_migration, ensure_user_note, artifact_path
+from paperflow.obsidian.view_model import build_paper_view_model
 
 
 def _configure_console_stream(stream) -> None:
@@ -128,6 +131,7 @@ publish_app = typer.Typer(help="构建、验证和检查本地公共 Feed。", n
 source_app = typer.Typer(help="管理并同步只读公共 Feed 数据源。", no_args_is_help=True)
 update_app = typer.Typer(help="检查版本信息并迁移 Workspace；不修改程序安装。", no_args_is_help=True)
 paper_app = typer.Typer(help="导入、分析、渲染和验证论文。", no_args_is_help=True)
+templates_app = typer.Typer(help="管理 Paper Workspace 模板集。", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(migrate_app, name="migrate")
 app.add_typer(config_app, name="config")
@@ -139,6 +143,7 @@ app.add_typer(publish_app, name="publish")
 app.add_typer(source_app, name="source")
 app.add_typer(update_app, name="update")
 app.add_typer(paper_app, name="paper")
+app.add_typer(templates_app, name="templates")
 
 from paperflow.cli_features import attach_feature_apps
 
@@ -546,6 +551,90 @@ def migrate_rollback_command(
 @migrate_app.command("history")
 def migrate_history_command(vault: Path | None = typer.Option(None, "--vault")):
     typer.echo(json.dumps(migration_history(_root(vault)), ensure_ascii=False, indent=2))
+
+
+@migrate_app.command("user-notes")
+def migrate_user_notes_command(
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """迁移主论文中的 USER_NOTES 到独立 User Note（默认只预览）。"""
+    root, settings = load_workspace_settings(vault)
+    result = apply_user_note_migration(root, settings) if apply_changes else plan_user_note_migration(root, settings)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@templates_app.command("list")
+def templates_list(vault: Path | None = typer.Option(None, "--vault")):
+    root = _root(vault)
+    typer.echo(json.dumps(TemplateSetManager(root).list(), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("show")
+def templates_show(set_id: str, vault: Path | None = typer.Option(None, "--vault")):
+    root = _root(vault)
+    manager = TemplateSetManager(root)
+    items = [item for item in manager.list() if item.get("id") == set_id]
+    if not items:
+        raise typer.BadParameter(f"Unknown template set: {set_id}")
+    typer.echo(json.dumps(items[0], ensure_ascii=False, indent=2))
+
+
+@templates_app.command("use")
+def templates_use(set_id: str, vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).use(set_id), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("copy")
+def templates_copy(set_id: str, destination: str = typer.Option("", "--destination"), vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).copy(set_id, destination or None), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("validate")
+def templates_validate(set_id: str | None = typer.Argument(None), vault: Path | None = typer.Option(None, "--vault")):
+    result = TemplateSetManager(_root(vault)).validate(set_id)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@templates_app.command("export")
+def templates_export(set_id: str, output: Path, vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(str(TemplateSetManager(_root(vault)).export(set_id, output)))
+
+
+@templates_app.command("import")
+def templates_import(archive: Path, name: str = typer.Option("", "--name"), vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).import_zip(archive, name or None), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("doctor")
+def templates_doctor(vault: Path | None = typer.Option(None, "--vault")):
+    result = TemplateSetManager(_root(vault)).doctor()
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@templates_app.command("diff")
+def templates_diff(left: str, right: str, vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).diff(left, right), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("preview")
+def templates_preview(
+    set_id: str,
+    template_name: str = typer.Option("Paper Hub.md", "--template"),
+    paper_uid: str = typer.Option("", "--paper-uid"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    root, settings = load_workspace_settings(vault)
+    candidates = list((root / ".paperflow/data/papers").glob(f"{paper_uid.replace(':', '_')}.json")) if paper_uid else []
+    if not candidates:
+        raise typer.BadParameter("--paper-uid must reference a local paper")
+    record = json.loads(candidates[0].read_text(encoding="utf-8"))
+    record["_settings"] = settings
+    typer.echo(TemplateSetManager(root).preview(set_id, template_name, record))
 
 
 @migrate_app.command("workspace-v2")
@@ -1503,6 +1592,21 @@ def source_status(vault: Path | None = typer.Option(None, "--vault")):
             indent=2,
         )
     )
+
+
+@paper_app.command("view-model")
+def paper_view_model(paper_uid: str, vault: Path | None = typer.Option(None, "--vault")):
+    """输出稳定 Paper View Model，供模板调试和维护者验收。"""
+    root, settings = load_workspace_settings(vault)
+    safe_id = paper_uid.replace(":", "_")
+    candidates = list((root / ".paperflow/data/papers").glob(f"{safe_id}.json"))
+    if not candidates:
+        candidates = list((root / ".paperflow/data/papers").glob(f"*{safe_id}*.json"))
+    if not candidates:
+        raise typer.BadParameter(f"Unknown paper_uid: {paper_uid}")
+    record = json.loads(candidates[0].read_text(encoding="utf-8"))
+    record["paper_uid"] = record.get("paper_uid") or paper_uid
+    typer.echo(json.dumps(build_paper_view_model(root, settings, record), ensure_ascii=False, indent=2, default=str))
 
 
 @paper_app.command("add")

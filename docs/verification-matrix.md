@@ -1,10 +1,20 @@
 # PaperFlow 1.5.0 verification matrix
 
-Source, release-artifact, and real-Vault verification completed on 2026-07-21.
+Source, release-artifact, and real-Vault verification completed on 2026-07-22.
 The fixed wheel was installed into `ArxivLearn`, Workspace v3 verification
 reported zero missing files, hash mismatches, note-link mismatches, Derived
 path mismatches, or modified user-note sections, and the live Obsidian runtime
 loaded PaperFlow, PDF++, and Form Flow without plugin or console errors.
+
+The current source baseline collects 126 pytest tests. In addition to the
+existing annotation/community/image checks, the final run covers stable
+display/short titles and aliases, Paper View Model context version 1,
+independent `20 AI Analyses`/`60 User Notes` artifacts, idempotent USER_NOTES
+migration, Template Set list/use/validate/export paths, and sandboxed Jinja
+rendering. The real Vault dry-run reported no pending user-note migrations;
+π₀.₅ was rendered twice after migration without losing its User Note or visual
+assets, and health/audit reported no mojibake, broken assets, or missing visual
+embeds.
 
 | Capability | Verdict | Evidence |
 | --- | --- | --- |
@@ -66,3 +76,4 @@ optional when Mock or non-AI workflows are used.
 No Windows Task Scheduler registration or user `PATH` mutation is required for
 normal automation. Scheduled work runs only while Obsidian Desktop is open and
 catches up after the next launch when configured.
+# PaperFlow 验证矩阵
