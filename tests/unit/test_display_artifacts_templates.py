@@ -109,3 +109,33 @@ def test_user_display_title_is_projected_to_hub(tmp_path: Path):
     frontmatter, body = read_note(note)
     assert frontmatter["title"] == "My chosen title"
     assert "My chosen title" in body
+
+
+def test_successful_render_clears_stale_manual_review_state(tmp_path: Path):
+    init_workspace(tmp_path)
+    _, settings = load_workspace_settings(tmp_path)
+    install_workspace_resources(tmp_path, settings)
+    note = tmp_path / "10 Papers/2025/2504.16054.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "---\n"
+        "paper_uid: arxiv:2504.16054\n"
+        "system_requires_manual_review: true\n"
+        "system_error: stale merge review\n"
+        "---\n\n"
+        "# old hub\n\n"
+        "<!-- paperflow-user-note-migrated source=legacy sha256=abc -->\n",
+        encoding="utf-8",
+    )
+    render_paper(
+        tmp_path,
+        {
+            **_record(),
+            "system_requires_manual_review": True,
+            "system_error": "stale merge review",
+        },
+        note,
+    )
+    frontmatter, _ = read_note(note)
+    assert frontmatter["system_requires_manual_review"] is False
+    assert frontmatter["system_error"] == ""

@@ -163,8 +163,12 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
         values["system_imported_at"] = old_frontmatter["system_imported_at"]
     values["system_last_synced_at"] = iso_beijing()
     values.setdefault("system_pipeline_version", "0.1.0")
-    values.setdefault("system_requires_manual_review", False)
-    values.setdefault("system_error", "")
+    # Reaching this point means the note passed the merge and concurrent-write
+    # guards.  Clear stale failure state left by an earlier manual-review
+    # pause; otherwise a successfully migrated note would remain marked as
+    # blocked in the Hub frontmatter forever.
+    values["system_requires_manual_review"] = False
+    values["system_error"] = ""
     values = preserve_user_fields(values, old_frontmatter)
     save_user_record(root, record, values)
     try:
