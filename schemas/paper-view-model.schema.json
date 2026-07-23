@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.dev/schemas/paper-view-model.schema.json",
+  "title": "PaperFlow Paper View Model",
+  "type": "object",
+  "required": ["context_version", "paper", "analysis", "user", "links", "provenance"],
+  "properties": {
+    "context_version": {"const": 1},
+    "paper": {"type": "object", "required": ["uid", "id", "title", "display_title", "short_title"]},
+    "analysis": {"type": "object"},
+    "user": {"type": "object"},
+    "links": {"type": "object"},
+    "visuals": {"type": "array"},
+    "relations": {"type": "object"},
+    "provenance": {"type": "object"}
+  },
+  "additionalProperties": true
+}

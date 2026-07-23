@@ -36,7 +36,13 @@
           "width": {"type": "integer", "minimum": 1},
           "height": {"type": "integer", "minimum": 1},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "score": {"type": "number"}
+          "score": {"type": "number"},
+          "source_type": {"enum": ["arxiv-html", "pdf-crop"]},
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://arxiv\\.org/html/"
+          }
         }
       }
     }

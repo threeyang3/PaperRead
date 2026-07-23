@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paperflow"
-version = "1.3.2"
+dynamic = ["version"]
 description = "Local-first, installable AI paper learning workflow for Obsidian"
 readme = "README.md"
 license = "MIT"
@@ -24,10 +24,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=8.3", "respx>=0.21"]
+dev = ["build>=1.2", "hatchling>=1.27", "pytest>=8.3", "respx>=0.21"]
+browser = ["playwright>=1.52"]
 
 [project.scripts]
 paperflow = "paperflow.cli:app"
+
+[tool.hatch.version]
+path = "src/paperflow/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paperflow"]
@@ -37,6 +41,7 @@ exclude = ["**/__pycache__/**", "**/*.pyc"]
 "schemas" = "paperflow/resources/schemas"
 "templates" = "paperflow/resources/templates"
 "integrations" = "paperflow/resources/integrations"
+"prompts" = "paperflow/resources/prompts"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -44,6 +49,7 @@ include = [
   "/schemas",
   "/templates",
   "/integrations",
+  "/prompts",
   "/migrations",
   "/examples",
   "/scripts",
@@ -64,5 +70,5 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", ".paperflow/tests"]
+testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/user-paper-review.schema.json",
+  "type": "object",
+  "required": ["type", "schema_version", "review_id", "paper_uid", "created_at", "updated_at"],
+  "properties": {
+    "type": {"const": "paperflow-user-paper-review"},
+    "schema_version": {"const": 1},
+    "review_id": {"type": "string"},
+    "paper_uid": {"type": "string"},
+    "rating": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  },
+  "additionalProperties": true
+}

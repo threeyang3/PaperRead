@@ -77,6 +77,71 @@ def _source_records(root: Path) -> tuple[list[Path], list[Path]]:
     return raw, ai
 
 
+def _community_records(root: Path) -> list[Path]:
+    return sorted(
+        (root / ".paperflow/data/community/outbox").glob(
+            "papers/*/community/*/*/r*.json"
+        )
+    )
+
+
+def _publish_community(
+    root: Path,
+    destination: Path,
+    *,
+    enabled: bool,
+) -> tuple[int, int, int]:
+    """Publish only explicit, already-sanitized immutable outbox snapshots."""
+    if not enabled:
+        shutil.rmtree(destination / "manifests/community", ignore_errors=True)
+        for path in destination.glob("papers/*/community"):
+            shutil.rmtree(path, ignore_errors=True)
+        return 0, 0, 0
+    from paperflow.community.models import CommunityContribution
+    from paperflow.community.privacy import scan_community_contribution
+
+    records = _community_records(root)
+    by_paper: dict[str, list[dict[str, Any]]] = {}
+    contributors: set[str] = set()
+    reviews = 0
+    for source in records:
+        value = CommunityContribution.model_validate_json(
+            source.read_text(encoding="utf-8")
+        )
+        findings = scan_community_contribution(value.model_dump(mode="json"))
+        if findings:
+            raise RuntimeError(f"{source}: {', '.join(findings)}")
+        relative = source.relative_to(
+            root / ".paperflow/data/community/outbox"
+        )
+        target = destination / relative
+        _copy_if_changed(source, target)
+        entry = {
+            "paper_uid": value.paper_uid,
+            "contribution_id": value.contribution_id,
+            "creator": value.creator,
+            "revision": value.revision,
+            "path": relative.as_posix(),
+            "sha256": _sha256(target),
+        }
+        by_paper.setdefault(value.paper_uid, []).append(entry)
+        contributors.add(value.creator)
+        reviews += int(value.kind == "paper-review")
+    for paper_uid, entries in sorted(by_paper.items()):
+        path = (
+            destination
+            / "manifests/community"
+            / f"{paper_uid.replace(':', '_')}.jsonl"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(_json_line(item) + "\n" for item in entries),
+            encoding="utf-8",
+            newline="\n",
+        )
+    return len(records), reviews, len(contributors)
+
+
 def publish_plan(root: Path, settings: WorkspaceSettings) -> dict[str, Any]:
     raw, ai = _source_records(root)
     return {
@@ -88,6 +153,11 @@ def publish_plan(root: Path, settings: WorkspaceSettings) -> dict[str, Any]:
         "pdf_policy": settings.publishing.pdf_policy,
         "user_records": 0,
         "rendered_notes": 0,
+        "community_contributions": (
+            len(_community_records(root))
+            if settings.publishing.include_community_contributions
+            else 0
+        ),
         "requires_data_license": not bool(settings.publishing.data_license),
     }
 
@@ -117,6 +187,13 @@ def build_feed(
         newline="\n",
     )
     raw, ai = _source_records(root)
+    community_count, community_review_count, contributor_count = (
+        _publish_community(
+            root,
+            destination,
+            enabled=publishing.include_community_contributions,
+        )
+    )
     paper_manifest: list[dict[str, Any]] = []
     analysis_manifest: list[dict[str, Any]] = []
     changed = 0
@@ -135,6 +212,9 @@ def build_feed(
                     "source": record["source"],
                     "source_id": record["source_id"],
                     "version": version,
+                    "year": metadata.get("paper_year")
+                    or str(metadata.get("paper_submitted_date") or "")[:4]
+                    or "Unclassified",
                     "path": target.relative_to(destination).as_posix(),
                     "sha256": _sha256(target),
                     "pdf": {
@@ -224,6 +304,10 @@ def build_feed(
             )
         except (json.JSONDecodeError, OSError):
             previous_current = {}
+    content_changed = content_changed or (
+        int(previous_current.get("community_contribution_count", 0))
+        != community_count
+    )
     generated_at = (
         datetime.now(BEIJING).isoformat()
         if content_changed or not previous_current.get("generated_at")
@@ -234,7 +318,13 @@ def build_feed(
         "generated_at": generated_at,
         "paper_count": len(paper_manifest),
         "analysis_count": len(analysis_manifest),
+        "community_contribution_count": community_count,
+        "community_review_count": community_review_count,
+        "contributor_count": contributor_count,
         "application_version": APPLICATION_VERSION,
+        "community_contribution_count": community_count,
+        "community_review_count": community_review_count,
+        "contributor_count": contributor_count,
     }
     (manifests / "current.json").write_text(
         json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -250,11 +340,33 @@ def build_feed(
             "url": publishing.publisher_url,
         },
         "generated_at": generated_at,
-        "minimum_reader_version": APPLICATION_VERSION,
+        # Raw/AI paths remain readable by 1.4. Community-aware readers inspect
+        # capabilities and community_data_schema_version before opting in.
+        "minimum_reader_version": "1.4.0",
         "default_branch": publishing.branch,
         "data_license": publishing.data_license,
         "pdf_policy": "link-only",
         "arxiv_attribution": True,
+        "community_data_schema_version": VERSIONS.community_data_schema_version,
+        "capabilities": {
+            "raw": publishing.include_raw_metadata,
+            "ai": publishing.include_ai_analysis,
+            "community": publishing.include_community_contributions,
+        },
+        "schemas": {
+            "raw": "schemas/raw-paper.schema.json",
+            "ai": "schemas/ai-analysis.schema.json",
+            "community": "schemas/community-contribution.schema.json",
+        },
+        "licenses": {
+            "data": publishing.data_license,
+            "community": publishing.data_license,
+        },
+        "policy": {
+            "pdf": "link-only",
+            "community_opt_in": publishing.include_community_contributions,
+            "maximum_quote_characters": 500,
+        },
     }
     dump_yaml(destination / "feed.yaml", feed)
     feed_yaml = destination / "feed.yaml"
@@ -267,10 +379,26 @@ def build_feed(
         "raw-paper.schema.json",
         "ai-analysis.schema.json",
         "feed.schema.json",
+        "community-contribution.schema.json",
+        "community-profile.schema.json",
+        "community-retraction.schema.json",
+        "community-manifest.schema.json",
     ]:
-        schema_source = root / "schemas" / name
-        if schema_source.exists():
-            _copy_if_changed(schema_source, schema_dir / name)
+        candidates = [
+            root / "schemas" / name,
+            root / ".paperflow/schemas" / name,
+        ]
+        schema_source = next(
+            (candidate for candidate in candidates if candidate.is_file()),
+            None,
+        )
+        if schema_source is None:
+            from paperflow.workspace import _distribution_resource
+
+            schema_source = _distribution_resource("schemas") / name
+        if not schema_source.is_file():
+            raise FileNotFoundError(f"Required Feed schema is missing: {name}")
+        _copy_if_changed(schema_source, schema_dir / name)
     checksums = []
     for path in sorted(
         item
@@ -334,7 +462,8 @@ def validate_feed(feed_root: Path) -> dict[str, Any]:
             )
         )
     ).validate(feed)
-    if int(feed["feed_schema_version"]) != VERSIONS.public_feed_schema_version:
+    found_version = int(feed["feed_schema_version"])
+    if found_version not in (1, VERSIONS.public_feed_schema_version):
         raise ValueError("Unsupported Feed schema version")
     check_reader_version(str(feed["minimum_reader_version"]))
     if feed.get("pdf_policy") != "link-only":
@@ -381,10 +510,44 @@ def validate_feed(feed_root: Path) -> dict[str, Any]:
         ]:
             if key not in identity:
                 raise ValueError(f"Incomplete AI provenance: missing {key}")
+    community_count = 0
+    if found_version >= 2 and feed.get("capabilities", {}).get("community"):
+        from paperflow.community.privacy import scan_community_contribution
+
+        community_validator = Draft202012Validator(
+            json.loads(
+                (feed_root / "schemas/community-contribution.schema.json")
+                .read_text(encoding="utf-8")
+            )
+        )
+        manifest_validator = Draft202012Validator(
+            json.loads(
+                (feed_root / "schemas/community-manifest.schema.json")
+                .read_text(encoding="utf-8")
+            )
+        )
+        for manifest in sorted((feed_root / "manifests/community").glob("*.jsonl")):
+            for item in _manifest_lines(manifest):
+                manifest_validator.validate(item)
+                value = json.loads(
+                    resolve_feed_file(feed_root, item["path"]).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                community_validator.validate(value)
+                if _sha256(resolve_feed_file(feed_root, item["path"])) != item["sha256"]:
+                    raise ValueError(f"Community manifest hash mismatch: {item['path']}")
+                findings = scan_community_contribution(value)
+                if findings:
+                    raise ValueError(
+                        f"Unsafe Community contribution {item['path']}: {findings}"
+                    )
+                community_count += 1
     return {
         "ok": True,
         "papers": len(papers),
         "analyses": len(analyses),
+        "community_contributions": community_count,
         "checksums": "ok",
     }
 
@@ -441,7 +604,7 @@ def create_snapshot(
     date = datetime.now(BEIJING).strftime("%Y%m%d")
     destination = destination or feed_root.parent / "snapshots"
     destination.mkdir(parents=True, exist_ok=True)
-    archive = destination / f"paperflow-feed-v1-{date}.tar.zst"
+    archive = destination / f"paperflow-feed-v{VERSIONS.public_feed_schema_version}-{date}.tar.zst"
     with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as temporary:
         tar_path = Path(temporary.name)
     try:

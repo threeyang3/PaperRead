@@ -11,6 +11,10 @@ from typing import Any
 from paperflow.ai.claude_adapter import ClaudeAdapter
 from paperflow.ai.codex_adapter import CodexAdapter
 from paperflow.ai.mock_adapter import MockAdapter
+from paperflow.ai.chatgpt_web_adapter import (
+    ChatGPTWebAdapter,
+    default_edge_path,
+)
 from paperflow.workspace import AIProfile, ProviderConfig
 
 
@@ -216,10 +220,69 @@ class MockProvider(AIProvider):
         return MockAdapter().analyze(metadata, text_path)
 
 
+class ChatGPTWebProvider(AIProvider):
+    name = "chatgpt-web"
+
+    def check_available(self) -> CapabilityReport:
+        try:
+            import playwright.sync_api  # noqa: F401
+            playwright_ok = True
+        except ImportError:
+            playwright_ok = False
+        executable = (
+            Path(self.config.browser_executable)
+            if self.config.browser_executable
+            else default_edge_path()
+        )
+        available = bool(playwright_ok and executable and executable.exists())
+        state_path = self.root / ".paperflow/state/chatgpt-web.json"
+        state: dict[str, Any] = {}
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                state = {}
+        state_detail = (
+            f"; status={state.get('status', 'not-probed')}"
+            f"; model={state.get('actual_model') or 'not-probed'}"
+        )
+        return CapabilityReport(
+            provider=self.name,
+            available=available,
+            executable=str(executable or "not found"),
+            version="playwright" if playwright_ok else "",
+            analyze_help_available=playwright_ok,
+            detail=(
+                f"pdf_upload={'enabled' if self.config.allow_pdf_upload else 'disabled'}"
+                + state_detail
+                if available
+                else "Playwright or Microsoft Edge not found"
+            ),
+        )
+
+    def list_models(self) -> list[str]:
+        return list(self.config.model_preference or ["<strongest-visible>"])
+
+    def analyze(self, metadata: Any, text_path: Path, profile: AIProfile) -> Any:
+        adapter = ChatGPTWebAdapter(
+            self.root,
+            timeout=profile.timeout_seconds,
+            browser_executable=self.config.browser_executable,
+            browser_profile_dir=self.config.browser_profile_dir,
+            base_url=self.config.base_url,
+            allow_pdf_upload=self.config.allow_pdf_upload,
+            model_preference=self.config.model_preference,
+        )
+        result = adapter.analyze(metadata, text_path)
+        self.config.model = adapter.actual_model
+        return result
+
+
 def make_provider(name: str, root: Path, config: ProviderConfig) -> AIProvider:
     providers = {
         "codex": CodexProvider,
         "claude": ClaudeProvider,
+        "chatgpt-web": ChatGPTWebProvider,
         "mock": MockProvider,
     }
     try:

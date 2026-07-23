@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/community-contribution.schema.json",
+  "type": "object",
+  "required": [
+    "type", "community_data_schema_version", "contribution_id", "revision",
+    "paper_uid", "creator", "kind", "license", "created_at", "content_sha256"
+  ],
+  "properties": {
+    "type": {"const": "paperflow-community-contribution"},
+    "community_data_schema_version": {"const": 1},
+    "contribution_id": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 1},
+    "supersedes": {"type": "string"},
+    "paper_uid": {"type": "string"},
+    "creator": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,39}$"},
+    "kind": {"enum": ["highlight", "passage-comment", "question", "critique", "figure-comment", "section-comment", "paper-review", "rating", "reply"]},
+    "body": {"type": "string", "maxLength": 10000},
+    "tags": {"type": "array", "maxItems": 30, "items": {"type": "string"}},
+    "rating": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+    "anchor": {"type": ["object", "null"]},
+    "license": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string"},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": true
+}

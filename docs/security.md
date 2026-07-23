@@ -13,3 +13,7 @@
   notes must remain outside source and release artifacts.
 - PDF-derived PNGs and their local manifests remain Derived Workspace data;
   Public Feed builds do not include them.
+- Private Annotation/Review data never enters the public outbox implicitly.
+- Community snapshots reject local paths, email/credentials, active HTML,
+  unsafe URI schemes, images/PDFs, payloads over 64 KiB, and source quotations
+  over 500 characters.

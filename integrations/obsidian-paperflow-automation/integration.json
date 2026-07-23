@@ -1,8 +1,8 @@
 {
   "integration": "paperflow-automation",
-  "integration_version": 7,
+  "integration_version": 10,
   "plugin_id": "paperflow-automation",
-  "version": "1.3.2",
+  "version": "1.5.0",
   "requires_obsidian_open": true,
   "scheduler": "obsidian-plugin-lifecycle",
   "uses_windows_task_scheduler": false

@@ -11,6 +11,7 @@ from paperflow.config import Config, ensure_layout
 from paperflow.data.store import load_reusable_analysis, persist_layer_records
 from paperflow.data.records import AnalysisIdentity
 from paperflow.paths.templates import safe_component
+from paperflow.paths.service import preview_record_paths
 from paperflow.database import Database
 from paperflow.models import PaperMetadata
 from paperflow.logging_config import configure_logging
@@ -21,6 +22,7 @@ from paperflow.sources.url_parser import parse_input
 from paperflow.sources.web import fetch_generic
 from paperflow.utils import atomic_json, atomic_write, iso_beijing, now_beijing, safe_slug, sha256_bytes
 from paperflow.taxonomy import canonicalize_topics
+from paperflow.text_quality import short_title
 from .deduplicate import decide
 from .download import download_pdf
 from .extract import extract_pdf
@@ -53,9 +55,28 @@ def _metadata(cfg: Config, value: str) -> PaperMetadata:
 def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path, Path]:
     ident = metadata.paper_arxiv_id or safe_slug(metadata.paper_uid.replace(":", "_"))
     year = str(metadata.paper_year or now_beijing().year)
+    if cfg.workspace is not None:
+        # Keep the importer on the same path-template contract as the
+        # renderer/migration code.  The old importer bypassed the workspace
+        # template and always created ``{paper_id}.md`` files, which made
+        # papers added from Form Flow/subscriptions regress to ID-only names.
+        preview = preview_record_paths(
+            cfg.root,
+            cfg.workspace,
+            metadata.model_dump(mode="json"),
+        )
+        note_path = cfg.root / preview["note"]["new_path"]
+        pdf_path = cfg.root / preview["pdf"]["new_path"]
+    else:
+        # Legacy paperflow.yaml workspaces do not have a WorkspaceSettings
+        # object.  Still use a readable title fragment for newly imported
+        # papers while retaining the arXiv ID suffix for uniqueness.
+        title_fragment = safe_component(short_title(metadata.paper_title))
+        note_path = cfg.path("paper_folder") / year / f"{title_fragment}-{ident}.md"
+        pdf_path = cfg.path("pdf_folder") / year / ident / f"v{metadata.paper_arxiv_version}.pdf"
     return (
-        cfg.path("paper_folder") / year / f"{ident}.md",
-        cfg.path("pdf_folder") / year / f"{ident}.pdf",
+        note_path,
+        pdf_path,
         cfg.root / ".paperflow/data/papers" / f"{safe_slug(metadata.paper_uid)}.json",
         cfg.root / ".paperflow/cache" / f"{safe_slug(metadata.paper_uid)}.txt",
     )
@@ -75,6 +96,21 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         logger.info("Metadata ready", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "metadata"})
         decision = decide(db, metadata, force)
         note_path, pdf_path, json_path, text_path = _year_paths(cfg, metadata)
+        # An update must keep the currently selected note/PDF paths.  This is
+        # important for user-authored notes and for workspaces migrated from
+        # the former ID-only layout; only brand-new records use the readable
+        # template above.
+        if json_path.exists():
+            try:
+                existing_record = json.loads(json_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing_record = {}
+            existing_note = str(existing_record.get("note_path") or "").strip()
+            existing_pdf = str(existing_record.get("paper_pdf_path") or "").strip()
+            if existing_note:
+                note_path = cfg.root / existing_note
+            if existing_pdf:
+                pdf_path = cfg.root / existing_pdf
         if decision.action == "skip" and json_path.exists():
             db.set_import_job(job_id, paper_uid, "completed", "deduplicate")
             logger.info("Existing paper skipped", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "deduplicate"})
@@ -168,7 +204,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                                 provider=candidate_provider,
                                 model=selected_model,
                                 profile=profile_name,
-                                prompt_version="paper-analysis-v2",
+                                prompt_version=PROMPT_VERSION,
                                 source_content_hash=content_hash,
                             )
                             paper_id = safe_component(
@@ -192,7 +228,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                                     metadata.paper_uid,
                                     candidate_provider,
                                     model,
-                                    "paper-analysis-v2",
+                                    PROMPT_VERSION,
                                     "reused",
                                 )
                                 db.set_import_job(
@@ -207,6 +243,9 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                                 candidate_provider, cfg.root, provider_config
                             )
                             result = adapter.analyze(metadata, text_path, profile)
+                            selected_model = (
+                                adapter.config.model or selected_model
+                            )
                         else:
                             adapter = make_adapter(candidate_provider, cfg.root, analysis_cfg["timeout_seconds"], analysis_cfg.get("model"))
                             result = adapter.analyze(metadata, text_path)
@@ -215,13 +254,27 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                             analysis = result.model_dump()
                         model = selected_model
                         used_provider = candidate_provider
-                        db.record_analysis(analysis_run_id, metadata.paper_uid, candidate_provider, model, "paper-analysis-v2", analysis["ai_analysis_status"])
+                        db.record_analysis(
+                            analysis_run_id,
+                            metadata.paper_uid,
+                            candidate_provider,
+                            model,
+                            PROMPT_VERSION,
+                            analysis["ai_analysis_status"],
+                        )
                         db.set_import_job(job_id, paper_uid, "analysis_complete", "analysis")
                         completed = True
                         break
                     except Exception as exc:
                         last_error = exc
-                        db.record_analysis(analysis_run_id, metadata.paper_uid, candidate_provider, getattr(locals().get("adapter", None), "model", ""), "paper-analysis-v2", "failed")
+                        db.record_analysis(
+                            analysis_run_id,
+                            metadata.paper_uid,
+                            candidate_provider,
+                            getattr(locals().get("adapter", None), "model", ""),
+                            PROMPT_VERSION,
+                            "failed",
+                        )
                 if completed:
                     break
             if not completed:
@@ -240,7 +293,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         record.update({
             "paper_pdf_path": pdf_path.relative_to(cfg.root).as_posix() if pdf_path.exists() else "",
             "paper_has_code": bool(metadata.paper_code_url), "paper_has_project_page": bool(metadata.paper_project_url), "paper_has_dataset": bool(metadata.paper_dataset_url),
-            "ai_analysis_provider": used_provider if run_ai else "", "ai_analysis_model": model, "ai_analysis_profile": used_profile if run_ai else "", "ai_analysis_prompt_version": "paper-analysis-v2" if run_ai else "",
+            "ai_analysis_provider": used_provider if run_ai else "", "ai_analysis_model": model, "ai_analysis_profile": used_profile if run_ai else "", "ai_analysis_prompt_version": PROMPT_VERSION if run_ai else "",
             "ai_analyzed_at": iso_beijing() if run_ai else None, "user_priority": priority, "user_favorite": favorite,
             "user_reading_status": "queued" if queued else "inbox", "user_learning_status": "none", "user_rating": 0,
             "user_reproduction_status": "none", "user_added_tags": user_tags or [], "user_last_read_at": None, "user_next_review_at": None,
@@ -287,6 +340,25 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 preserve_existing_raw=reuse_local_assets,
             )
             atomic_json(json_path, record)
+            if pdf_path.exists():
+                from paperflow.annotations.pdf_versions import build_pdf_index
+
+                existing = sorted(
+                    pdf_path.parent.glob("v*.pdf"),
+                    key=lambda item: int(item.stem.removeprefix("v")),
+                )
+                build_pdf_index(
+                    cfg.root,
+                    metadata.paper_uid,
+                    [
+                        {
+                            "version": int(item.stem.removeprefix("v")),
+                            "path": item.relative_to(cfg.root).as_posix(),
+                        }
+                        for item in existing
+                    ],
+                    current_version=metadata.paper_arxiv_version,
+                )
         db.upsert_paper(record)
         if not cfg.section("retention").get("keep_extracted_text", True):
             text_path.unlink(missing_ok=True)
@@ -299,3 +371,4 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         raise
     finally:
         db.close()
+PROMPT_VERSION = "paper-analysis-v3"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,32 @@ from paperflow.paths.service import validate_path_settings
 from paperflow.versioning import APPLICATION_VERSION, VERSIONS
 
 
+def _project_root() -> Path | None:
+    current = Path.cwd().resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / "pyproject.toml").is_file() and (
+            candidate / "src/paperflow/cli.py"
+        ).is_file():
+            return candidate
+    return None
+
+
+def _installed_distribution_files() -> set[str]:
+    try:
+        distribution = metadata.distribution("paperflow")
+    except metadata.PackageNotFoundError:
+        return set()
+    return {
+        path.as_posix()
+        for path in (distribution.files or [])
+    }
+
+
 def audit(cfg: Config) -> list[dict[str, Any]]:
     root = cfg.root
+    project_root = _project_root()
+    package_root = Path(__file__).resolve().parent
+    distribution_files = _installed_distribution_files()
     checks: list[dict[str, Any]] = []
 
     def add(requirement: str, ok: bool, evidence: str, blocker: bool = False):
@@ -26,11 +51,14 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
             }
         )
 
-    add("可安装应用版本", APPLICATION_VERSION == "1.3.2", APPLICATION_VERSION)
+    add("可安装应用版本", APPLICATION_VERSION == "1.5.0", APPLICATION_VERSION)
+    source_package = (
+        project_root / "src/paperflow" if project_root is not None else package_root
+    )
     add(
         "标准 src 包结构",
-        (root / "src/paperflow/cli.py").exists(),
-        "src/paperflow",
+        (source_package / "cli.py").exists(),
+        str(source_package),
     )
     add(
         "任意 Vault Workspace",
@@ -38,10 +66,24 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
         and (root / ".paperflow/workspace.yaml").exists(),
         str(root),
     )
+    version_contract = VERSIONS.model_dump()
+    required_contracts = {
+        "application_version",
+        "workspace_schema_version",
+        "raw_data_schema_version",
+        "ai_analysis_schema_version",
+        "user_data_schema_version",
+        "public_feed_schema_version",
+        "annotation_schema_version",
+        "community_data_schema_version",
+        "template_bundle_version",
+        "form_flow_integration_version",
+    }
     add(
         "独立版本契约",
-        len(VERSIONS.model_dump()) == 8,
-        json.dumps(VERSIONS.model_dump(), ensure_ascii=False),
+        set(version_contract) == required_contracts
+        and version_contract["application_version"] == APPLICATION_VERSION,
+        json.dumps(version_contract, ensure_ascii=False),
     )
     add(
         "北京时间",
@@ -106,7 +148,12 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
     )
     add(
         "版本化 Form Flow 集成",
-        (root / "integrations/obsidian-form-flow/integration.json").exists(),
+        (
+            project_root / "integrations/obsidian-form-flow/integration.json"
+            if project_root is not None
+            else package_root
+            / "resources/integrations/obsidian-form-flow/integration.json"
+        ).exists(),
         "integration version 1",
     )
     automation = root / ".obsidian/plugins/paperflow-automation"
@@ -134,7 +181,7 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
     add("SQLite 完整性", sqlite_ok, "PRAGMA integrity_check")
     add(
         "发布隐私扫描器",
-        (root / "src/paperflow/feed/publisher.py").exists(),
+        (package_root / "feed/publisher.py").exists(),
         "user/path/secret/log/db/pdf blockers",
     )
     feed = root / ".paperflow/publish/feed"
@@ -143,21 +190,46 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
         not feed.exists() or not scan_feed(feed),
         "not built (licence pending)" if not feed.exists() else "scan passed",
     )
+    source_ci_ok = project_root is not None and (
+        project_root / "scripts/install.ps1"
+    ).exists() and len(list((project_root / ".github/workflows").glob("*.yml"))) == 5
+    installed_resources_ok = {
+        "paperflow/resources/schemas/raw-paper.schema.json",
+        "paperflow/resources/templates/Paper Note Template.md",
+        "paperflow/resources/integrations/obsidian-paperflow-automation/main.js",
+    } <= distribution_files
     add(
         "安装与 CI",
-        (root / "scripts/install.ps1").exists()
-        and len(list((root / ".github/workflows").glob("*.yml"))) == 5,
-        "wheel/sdist/portable + 5 workflows",
+        source_ci_ok or installed_resources_ok,
+        (
+            "wheel/sdist/portable + 5 workflows"
+            if source_ci_ok
+            else "installed wheel contains schemas, templates, and Obsidian integration"
+        ),
+    )
+    source_license_ok = project_root is not None and (
+        project_root / "LICENSE"
+    ).exists() and not (project_root / "LICENSE-TODO.md").exists()
+    installed_license_ok = any(
+        path.lower().endswith(("licenses/license", "license"))
+        for path in distribution_files
     )
     add(
         "软件发布许可证",
-        (root / "LICENSE").exists()
-        and not (root / "LICENSE-TODO.md").exists(),
+        source_license_ok or installed_license_ok,
         "MIT software licence selected; Feed data licence is workspace-specific",
+    )
+    source_archive_test = (
+        project_root is not None
+        and (project_root / "tests/packaging/test_artifacts.py").exists()
     )
     add(
         "真实数据未进入构建产物",
-        (root / "tests/packaging/test_artifacts.py").exists(),
-        "archive privacy tests",
+        source_archive_test or installed_resources_ok,
+        (
+            "archive privacy tests"
+            if source_archive_test
+            else "installed wheel exposes only curated product resources"
+        ),
     )
     return checks

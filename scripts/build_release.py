@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -9,7 +10,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.3.2"
+sys.path.insert(0, str(ROOT / "src"))
+from paperflow._version import __version__
+
+VERSION = __version__
 DIST = ROOT / "dist"
 
 
@@ -28,6 +32,49 @@ def zip_tree(output: Path, source: Path, prefix: str = "") -> None:
                 archive.write(path, Path(prefix) / path.relative_to(source))
 
 
+def copy_selected(stage: Path, names: list[str]) -> None:
+    for name in names:
+        source = ROOT / name
+        target = stage / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+
+
+def audit_archive(path: Path, *, template_vault: bool = False) -> None:
+    with zipfile.ZipFile(path) as archive:
+        names = [name.replace("\\", "/") for name in archive.namelist()]
+    banned = (
+        "/10 Papers/",
+        "/30 Reading Notes/",
+        "/40 Daily Briefs/",
+        "/50 Inbox/",
+        "/60 Annotations/",
+        "/60 Reviews/",
+        "/70 Community/",
+        "/80 Attachments/",
+        "/.paperflow/data/",
+        "/.paperflow/runtime/",
+        "/.paperflow/logs/",
+        "/.paperflow/cache/",
+        "/.paperflow/state/",
+        "/.git/",
+        "/node_modules/",
+    )
+    forbidden = [
+        name
+        for name in names
+        if any(fragment in f"/{name}" for fragment in banned)
+        or name.lower().endswith((".pdf", ".sqlite", ".db", ".log", ".wal"))
+    ]
+    if not template_vault:
+        forbidden.extend(name for name in names if "/.obsidian/" in f"/{name}")
+    if forbidden:
+        raise SystemExit(f"Release archive contains forbidden user data: {forbidden[:10]}")
+
+
 def main() -> None:
     licence_files = [
         path
@@ -41,46 +88,112 @@ def main() -> None:
         "paperflow-*.whl",
         "paperflow-*.tar.gz",
         "paperflow-windows-x64-*.zip",
+        "PaperFlow-portable-*.zip",
+        "PaperFlow-Template-Vault-*.zip",
         "schemas-*.zip",
         "templates-*.zip",
     ]:
         for stale in DIST.glob(pattern):
             stale.unlink()
     subprocess.run(
-        [sys.executable, "-m", "build", "--outdir", str(DIST)],
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--no-isolation",
+            "--outdir",
+            str(DIST),
+        ],
         cwd=ROOT,
         check=True,
     )
-    portable_stage = DIST / f"paperflow-windows-x64-{VERSION}"
+    portable_stage = DIST / f"PaperFlow-portable-{VERSION}"
     if portable_stage.exists():
         shutil.rmtree(portable_stage)
     portable_stage.mkdir()
-    for name in ["scripts/install.ps1", "scripts/uninstall.ps1"]:
-        source = ROOT / name
-        target = portable_stage / Path(name).name
-        shutil.copy2(source, target)
-    for source in licence_files:
-        shutil.copy2(source, portable_stage / source.name)
-    shutil.copytree(ROOT / "schemas", portable_stage / "schemas")
-    shutil.copytree(ROOT / "templates", portable_stage / "templates")
-    shutil.copytree(ROOT / "examples/minimal-config", portable_stage / "example-config")
+    copy_selected(
+        portable_stage,
+        [
+            "scripts/install.ps1",
+            "scripts/uninstall.ps1",
+            "src",
+            "schemas",
+            "templates",
+            "prompts",
+            "migrations",
+            "integrations",
+            "examples/minimal-config",
+            "docs",
+            "README.md",
+            "CHANGELOG.md",
+            "LICENSE",
+            "pyproject.toml",
+        ],
+    )
+    wheel = next(DIST.glob(f"paperflow-{VERSION}-*.whl"))
+    shutil.copy2(wheel, portable_stage / wheel.name)
     (portable_stage / "paperflow.cmd").write_text(
-        "@echo off\r\npython -m paperflow.cli %*\r\n", encoding="utf-8"
+        "@echo off\r\npython -m paperflow %*\r\n", encoding="utf-8"
     )
     (portable_stage / "VERSION").write_text(VERSION + "\n", encoding="utf-8")
-    portable = DIST / f"paperflow-windows-x64-{VERSION}.zip"
+    portable = DIST / f"PaperFlow-portable-{VERSION}.zip"
     zip_tree(portable, portable_stage, portable_stage.name)
+    audit_archive(portable)
     shutil.rmtree(portable_stage)
+
+    vault_stage = DIST / f"PaperFlow-Template-Vault-{VERSION}"
+    if vault_stage.exists():
+        shutil.rmtree(vault_stage)
+    (vault_stage / ".paperflow").mkdir(parents=True)
+    shutil.copy2(
+        ROOT / "examples/minimal-config/workspace.yaml",
+        vault_stage / ".paperflow/workspace.yaml",
+    )
+    shutil.copytree(ROOT / "templates", vault_stage / "90 System/Templates")
+    shutil.copytree(
+        ROOT / "integrations/obsidian-form-flow",
+        vault_stage / "90 System/Forms/PaperFlow-Form-Flow-Bundle",
+    )
+    shutil.copytree(
+        ROOT / "integrations/obsidian-pdf-plus",
+        vault_stage / "90 System/Integrations/PDF++",
+    )
+    form_plugin = vault_stage / ".obsidian/plugins/form-flow"
+    form_plugin.mkdir(parents=True)
+    shutil.copy2(
+        ROOT / "integrations/obsidian-form-flow/default-data.json",
+        form_plugin / "data.json",
+    )
+    shutil.copytree(
+        ROOT / "integrations/obsidian-paperflow-automation",
+        vault_stage / ".obsidian/plugins/paperflow-automation",
+        ignore=shutil.ignore_patterns("default-data.json", "integration.json"),
+    )
+    shutil.copy2(
+        ROOT / "integrations/obsidian-paperflow-automation/default-data.json",
+        vault_stage / ".obsidian/plugins/paperflow-automation/data.json",
+    )
+    (vault_stage / ".obsidian/community-plugins.json").write_text(
+        json.dumps(["form-flow", "paperflow-automation"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    template_vault = DIST / f"PaperFlow-Template-Vault-{VERSION}.zip"
+    zip_tree(template_vault, vault_stage, vault_stage.name)
+    audit_archive(template_vault, template_vault=True)
+    shutil.rmtree(vault_stage)
 
     zip_tree(DIST / f"schemas-{VERSION}.zip", ROOT / "schemas", "schemas")
     zip_tree(DIST / f"templates-{VERSION}.zip", ROOT / "templates", "templates")
     notes = DIST / "migration-notes.md"
     notes.write_text(
-        "# PaperFlow 1.3.2 migration notes\n\n"
-        "Run `paperflow migrate plan`, review the zero-network plan, then run "
-        "`paperflow migrate apply` and `paperflow migrate verify`.\n\n"
-        "For existing local PDFs, run `paperflow migrate visual-assets` to "
-        "back up the Workspace, install template v4, and build Derived figures.\n",
+        f"# PaperFlow {VERSION} migration notes\n\n"
+        "Run `paperflow migrate workspace-v3 --dry-run`, review the zero-network "
+        "plan, then run `paperflow migrate workspace-v3 --apply` and "
+        "`paperflow migrate verify-workspace-v3`.\n\n"
+        "The migration backs up `.obsidian`, private data and every PDF; copies "
+        "current PDFs to immutable version paths; creates PDF hash indexes; "
+        "installs private Annotation/Review and read-only Community roots; and "
+        "rebuilds all Bases without deleting legacy PDFs.\n",
         encoding="utf-8",
     )
     artifacts = sorted(

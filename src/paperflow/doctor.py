@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from paperflow.config import Config
 from paperflow.utils import iso_beijing
+from paperflow.ai.providers import make_provider
+from paperflow.sync_safety import find_sync_conflicts
 
 
 def _command(
@@ -64,6 +66,19 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             except Exception:
                 pass
         checks.append((display, ok, detail))
+    if cfg.workspace and "chatgpt-web" in cfg.workspace.ai.providers:
+        report = make_provider(
+            "chatgpt-web",
+            root,
+            cfg.workspace.ai.providers["chatgpt-web"],
+        ).check_available()
+        checks.append(
+            (
+                "ChatGPT Web",
+                report.available,
+                f"{report.executable}; {report.detail}",
+            )
+        )
     obsidian = shutil.which("obsidian") or ("D:/Obsidian/Obsidian.exe" if Path("D:/Obsidian/Obsidian.exe").exists() else None)
     checks.append(("Obsidian", bool(obsidian), str(obsidian or "not found")))
     cli_ok, cli_detail = _command("obsidian", ["version"], timeout=45)
@@ -73,7 +88,34 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         if cfg.workspace
         else "00 Dashboard/Bases"
     )
-    checks.append(("Bases", all((root / base_root / name).exists() for name in ["Paper Library.base", "Daily Intake.base", "Reading Queue.base", "Reproduction Queue.base", "Paper Requests.base"]), base_root))
+    required_bases = [
+        "Paper Library.base", "Daily Intake.base", "Reading Queue.base",
+        "Reproduction Queue.base", "Paper Requests.base", "Annotations.base",
+        "Reviews.base", "Community Contributions.base",
+        "Community Reviews.base", "Orphaned Annotations.base",
+        "Publication Outbox.base",
+    ]
+    checks.append(("Bases", all((root / base_root / name).exists() for name in required_bases), base_root))
+    if cfg.workspace:
+        from paperflow.obsidian.pdf_plus import status as pdf_plus_status
+
+        pdf_plus = pdf_plus_status(root)
+        checks.append((
+            "PDF++ integration",
+            (not pdf_plus["installed"]) or pdf_plus["compatible"],
+            (
+                f"version={pdf_plus.get('version')}; selection adapter="
+                f"{pdf_plus.get('selection_capture')}; direct PDF editing disabled"
+                if pdf_plus["installed"] else "not installed; native page-link fallback active"
+            ),
+        ))
+        for display, rule in [
+            ("Annotation root", cfg.workspace.paths.annotation_note),
+            ("Review root", cfg.workspace.paths.paper_review),
+            ("Community cache", cfg.workspace.paths.community_cache),
+            ("Community outbox", cfg.workspace.paths.community_outbox),
+        ]:
+            checks.append((display, (root / rule.root).exists(), rule.root))
     manifest = root / ".obsidian/plugins/form-flow/manifest.json"
     checks.append(("Form Flow installed", manifest.exists(), str(manifest)))
     enabled = False
@@ -109,7 +151,12 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             and automation.get("dailyLocalTime") == expected_daily
             and automation.get("inboxIntervalMinutes") == expected_interval
         )
-        runtime = automation.get("runtime", {})
+        runtime_path = root / ".paperflow/runtime/plugin-state.json"
+        runtime = (
+            json.loads(runtime_path.read_text(encoding="utf-8"))
+            if runtime_path.exists()
+            else {}
+        )
         inbox_ok = runtime.get("lastInboxExitCode") == 0
         automation_detail = f"daily={automation.get('dailyLocalTime')}; inbox={automation.get('inboxIntervalMinutes')}m"
         inbox_detail = f"{runtime.get('lastInboxAt')}; exit={runtime.get('lastInboxExitCode')}"
@@ -130,11 +177,27 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         except Exception: arxiv_ok = False
         checks.append(("arXiv network", arxiv_ok, "export.arxiv.org:443"))
     else: checks.append(("arXiv network", True, "skipped (use --network)"))
-    checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in ["raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json", "paper-analysis.schema.json", "visual-assets.schema.json"]), ".paperflow/schemas"))
+    checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in [
+        "raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json",
+        "paper-analysis.schema.json", "visual-assets.schema.json",
+        "paper-note.schema.json", "paper-relationships.schema.json",
+        "user-annotation.schema.json", "user-paper-review.schema.json",
+        "annotation-index.schema.json", "community-contribution.schema.json",
+        "community-profile.schema.json", "community-retraction.schema.json",
+        "community-manifest.schema.json",
+    ]), ".paperflow/schemas"))
     checks.append(("YAML template", (root / "90 System/Templates/Paper Note Template.md").exists(), "Paper Note Template.md"))
     briefs = sorted(cfg.path("daily_brief_folder").glob("*.md"), reverse=True)
     checks.append(("Latest daily status", True, briefs[0].name if briefs else "no daily run recorded"))
     inbox_logs = sorted((root / ".paperflow/logs").glob("inbox-*.log"), reverse=True)
     checks.append(("Latest inbox status", True, inbox_logs[0].name if inbox_logs else "no inbox run recorded"))
     checks.append(("Current Beijing time", iso_beijing().endswith("+08:00"), iso_beijing()))
+    conflicts = find_sync_conflicts(root)
+    checks.append(
+        (
+            "Sync conflict files",
+            not conflicts,
+            "none" if not conflicts else f"count={len(conflicts)}",
+        )
+    )
     return [{"name": n, "ok": ok, "detail": detail} for n, ok, detail in checks]

@@ -10,6 +10,7 @@ from paperflow.logging_config import configure_logging
 from paperflow.i18n import normalize_locale
 from paperflow.utils import atomic_json
 from .import_paper import import_paper
+from paperflow.sync_safety import assert_no_sync_conflicts
 
 
 def _resolve(cfg: Config, request: str | None) -> list[Path]:
@@ -24,6 +25,7 @@ def _resolve(cfg: Config, request: str | None) -> list[Path]:
 
 
 def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
+    assert_no_sync_conflicts(cfg.root)
     stats = {"processed": 0, "failed": 0, "skipped": 0}
     logger = configure_logging(cfg.root, "inbox")
     db = Database(cfg.root / ".paperflow/state/paperflow.db")

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/paper-relationships.schema.json",
+  "title": "PaperFlow derived relationship index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generator_version", "paper_uid", "generated_at", "edges"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "generator_version": {"const": "relationships-v1"},
+    "paper_uid": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string"},
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "type", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "target": {"type": "string", "minLength": 1},
+          "type": {"enum": ["citation", "semantic"]},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "source": {"type": "string"},
+          "evidence": {
+            "oneOf": [
+              {"type": "string"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "topics": {"type": "array", "items": {"type": "string"}},
+                  "methods": {"type": "array", "items": {"type": "string"}},
+                  "datasets": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

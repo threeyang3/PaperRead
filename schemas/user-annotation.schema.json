@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/user-annotation.schema.json",
+  "type": "object",
+  "required": [
+    "type", "schema_version", "annotation_id", "paper_uid", "kind",
+    "motivation", "created_at", "updated_at", "revisions"
+  ],
+  "properties": {
+    "type": {"const": "paperflow-user-annotation"},
+    "schema_version": {"const": 1},
+    "annotation_id": {"type": "string", "minLength": 1},
+    "paper_uid": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["highlight", "passage-comment", "question", "critique", "figure-comment", "section-comment", "paper-review", "rating"]},
+    "motivation": {"enum": ["highlighting", "commenting", "questioning", "assessing", "tagging", "replying"]},
+    "body": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "revisions": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "extensions": {"type": "object"}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,9 @@
+{
+  "enablePDFEdit": false,
+  "copyCommands": {
+    "paperflow": {
+      "name": "PaperFlow annotation link",
+      "template": "{{linkWithDisplay}}"
+    }
+  }
+}

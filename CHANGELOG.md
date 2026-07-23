@@ -1,6 +1,125 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 - 2026-07-21
+
+- Added template bundle v6: queryable metadata stays in YAML while generated
+  body duplication, empty boilerplate sections, and excessive blank lines are
+  removed without changing preserved user notes.
+- AI analysis snapshots now project recommendation, scores, and provenance into
+  properties and omit Hub-only recommendation/provenance blocks from the body.
+- Preferred version-pinned original arXiv HTML PNG figures, with strict host,
+  content-type, size, and image validation plus caption-backed PDF crop fallback.
+- Made private Annotation/Review selection project into the public Community
+  contract, excluding local PDF paths and coordinates; normalized before hashing.
+- Rendered verified Community subscriptions into visible read-only per-paper notes,
+  and added regression coverage proving Markdown edits cannot alter Feed AI data.
+- Unified AnnotationStore, the visible per-paper index, and the reading
+  workspace on the configured Annotation root without a hard-coded year.
+  Index rebuilds atomically refresh the visible note, preserve user content,
+  and import user-authored legacy year-scaffold content without deleting the
+  legacy file.
+- Normalized HTML-escaped PDF++ links (`&amp;`) before parsing selection and
+  color, and added the central `annotation ensure-index` command.
+- Bumped the Automation integration resource contract to 10 for the updated
+  reading-workspace/index handshake.
+- Added the formal `paths-0002-readable-redirect-labels` migration: legacy
+  ID-only paper paths now show the target title and an explicit open-note link;
+  user-authored redirect text is held for manual review.
+- Added entity navigation documentation clarifying the intentional separation
+  of Topic, Method, and Dataset projections (including the two Diffusion Policy
+  views) and their same-layer duplicate normalization.
+- Added a loopback-only, GET-only Zotero Local API adapter plus reproducible
+  migration plan/apply-result/verify/rollback commands. Plans include PDF
+  source hashes and Collection membership but never write Zotero objects.
+- Added standalone Core Data Root planning/initialization, while preserving the
+  existing Vault `.paperflow` layout, and added guarded Zotero Item Tree columns,
+  Item Pane status projection, and one-second Notifier debounce adapters.
+- Added a Core-side Zotero Connector event state machine that waits for a regular
+  item, stable PDF, configured Collection, and resolved identity before queuing
+  analysis; repeated PDF hash/profile pairs become complete without re-analysis.
+- Added an authenticated Zotero Core client with explicit loopback session pairing,
+  public-API event publishing, manual analysis enqueue, subscription preview, and
+  community publish preview menus; bearer tokens remain in Zotero local preferences.
+- Added a SYSTEM_MANAGED Zotero annotation mirror for highlights, underlines, image
+  annotations, comments, colors, tags, pages, positions, and deletion state; old
+  Obsidian private annotations remain untouched.
+- Added a guarded Core worker that consumes analysis/render jobs only for a configured
+  PaperFlow Workspace under the existing pipeline lock; standalone Data Roots remain
+  queue-only and Windows stop now removes stale session/token files after verified exit.
+- Added reader-focused Zotero AI Markdown projections with compact frontmatter,
+  explicit SYSTEM_MANAGED permission, content-hash conflict refusal, and a
+  plugin-required attachment plan; Obsidian user outputs remain separate.
+- Added reverse Topic/Method/Dataset indexes with explicit Chinese entity-type
+  labels; `paperflow migrate entity-index` refreshes only the generated paper
+  list section and preserves entity prose.
+- Fixed manual imports and Feed subscription rendering to use the configured
+  readable Paper Hub filename template instead of silently creating new
+  ID-only Markdown files; updates keep the persisted note path. Generated
+  Topic/Method pages now show same-label counterpart links when both views
+  exist.
+- Added a single `_version.py` application-version source and Workspace 3,
+  Feed 2, Annotation 1, and Community 1 contracts.
+- Made PDFs immutable and version-addressed, with SHA-256 indexes and explicit
+  revision-preserving reanchor workflows.
+- Added plugin-independent private Annotation and Review protocols with
+  Markdown truth, rebuildable JSON, conflict refusal, selectors, and anchors.
+- Added the official PDF++ integration with compatibility checks,
+  non-overwriting configuration, `.new` candidates, native-link fallback, and
+  direct-PDF-editing disabled by default.
+- Added opt-in Community Contributions, privacy/copyright scanning, local
+  outbox, dry-run GitHub PR planning, revisions/retractions, read-only
+  subscription cache, separate notes, preferences, and ratings.
+- Added Feed v2 capability negotiation and per-paper Community manifests while
+  retaining v1 Raw/AI paths.
+- Added the Obsidian reading workspace, five parallel feature entrances, and
+  six corresponding Bases.
+- Added Workspace v3 migration; old PDFs are copied to vN paths and never
+  deleted.
+- Made Workspace v3 re-render existing paper notes through the central
+  compose/render path, preserve user fields/tags/notes, and verify migrated
+  PDF links.
+- Added a formal-backup-only Workspace v3 rollback that defaults to dry-run and
+  never deletes paths absent from the backup.
+- Recomputed Community contribution `content_sha256` during subscription
+  ingestion and rejected tampered revisions before cache writes.
+- Fixed Workspace v3 rendering when the rebuildable Derived layer still held a
+  legacy `paper_pdf_path`; migration now atomically updates modeled Derived PDF
+  source paths before composing notes while preserving visual PNG paths.
+- Made `workspace-v3 --apply` safely repair an already-schema-3 partial
+  migration using its existing formal backup, and return a non-zero CLI result
+  with `status=verification-failed` whenever final verification is not clean.
+- Bundled the reading-workspace implementation into the Automation plugin's
+  `main.js`, removing its Electron-incompatible runtime dependency on
+  `require("./reading-workspace")`.
+- Fixed reading-workspace layout creation by anchoring the Review split to the
+  PDF leaf, awaiting PDF reveal, and explicitly focusing the visible PDF leaf.
+- Added a bilingual PDF annotation loop to the Automation plugin: command
+  palette, ribbon, file-menu, reading-workspace and Control Center entries;
+  optional feature-detected PDF++ selection capture; explicit manual fallback;
+  and central CLI writes with automatic private-index refresh.
+- Bumped the Automation integration resource contract to 9 so an existing
+  1.5.0 installation safely stages the updated single-file plugin resources.
+- Separated PDF++ four-integer selection coordinates from quoted text, retained
+  versioned page/selection/color links, and kept Annotation schema v1 backward
+  compatible without fabricating selectors from legacy free text.
+
+## 1.4.0 - 2026-07-19
+
+- Released the PaperFlow 1.4.0 implementation contract: Workspace schema 2,
+  template v5, and `paper-analysis-v3`.
+- Added strict UTF-8 quality gates, source/display title separation, immutable
+  Raw captures, and repair-oriented Workspace health reporting.
+- Added a consent-gated Playwright/Edge ChatGPT Web provider with dedicated
+  external browser state, strongest-visible-model selection, staged PDF
+  uploads, schema validation, and fail-closed user handoff.
+- Unified every render path through Raw/AI/User/Derived composition so
+  subscription refreshes retain existing figure embeds.
+- Added adaptive visual selection, citation/semantic relationship separation,
+  topic/method/dataset entity notes, and backlinks-friendly YAML projections.
+- Separated plugin static settings from runtime state and added concurrent
+  write/conflict refusal for Nutstore-compatible operation.
+- Added formal Workspace v2 migration plus curated portable and template-Vault
+  release artifacts.
 
 - Added a unified Chinese guide for users and maintainers, covering setup,
   Obsidian-native operation, repository ownership, testing, packaging,
@@ -11,11 +130,9 @@
   π0, FAST, and π0.5 paper series.
 - Made Claude structured output compatible with its JSON Schema parser while
   retaining full Draft 2020-12 validation after inference.
-- Expanded caption-backed paper visuals from three to six images by default.
-- Added balanced architecture, result, and task/hardware figure selection,
-  including Chinese and Extended Data figure captions.
-- Added template bundle v4 with grouped visuals, folded original captions, and
-  direct links to the source PDF page.
+- Added adaptive caption-backed paper visuals with semantic coverage,
+  deduplication, a configurable safety ceiling, grouped presentation, folded
+  original captions, and direct links to the source PDF page.
 - Tightened architecture classification and crop fallbacks after visual QA on
   Diffusion Policy, NIST IDB, TacForeSight, and RoboTTT PDFs.
 - Added architecture-first Obsidian Cards views for the full paper library,
@@ -109,3 +226,9 @@
 - added wheel, sdist, Windows portable, checksums, CI workflows, installation
   scripts, examples, and first-user documentation;
 - migrated the current Workspace without downloads, AI calls, or path moves.
+## Unreleased
+
+- 增加只读 Zotero 环境审计：识别真实安装、Profile、自定义 data directory 和 loopback Local API；不读取或修改 `zotero.sqlite`。
+- 增加 `paperflow zotero detect/status/doctor` 与 Zotero 7 插件安全骨架。
+- 增加 `entities-0002-display-labels` 迁移，统一生成实体的可读标题，同时保留 Topic/Method/Dataset 类型边界、别名和用户正文。
+- 增加 Zotero Workspace 配置、loopback Core 服务、精确身份映射 dry-run 和脱敏 Zotero JSON fixture；停止后台服务前会校验 PID 命令行，避免误终止无关进程。

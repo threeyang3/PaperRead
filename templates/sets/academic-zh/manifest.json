@@ -1,0 +1,10 @@
+{
+  "id": "academic-zh",
+  "name": "学术阅读（中文界面）",
+  "version": "1.0.0",
+  "source": "PaperFlow built-in",
+  "locale": "zh-CN",
+  "read_only": true,
+  "context_version": 1,
+  "files": ["manifest.json", "Paper Hub.md", "AI Analysis.md", "User Note.md"]
+}

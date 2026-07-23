@@ -1,0 +1,10 @@
+{
+  "id": "academic-en",
+  "name": "Academic reading (English UI)",
+  "version": "1.0.0",
+  "source": "PaperFlow built-in",
+  "locale": "en",
+  "read_only": true,
+  "context_version": 1,
+  "files": ["manifest.json", "Paper Hub.md", "AI Analysis.md", "User Note.md"]
+}

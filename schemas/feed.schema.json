@@ -1,31 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://paperflow.local/schemas/feed.schema.json",
-  "title": "PaperFlow Public Feed",
+  "title": "PaperFlow Public Feed v1/v2",
   "type": "object",
   "required": [
-    "feed_schema_version",
-    "feed_id",
-    "name",
-    "publisher",
-    "generated_at",
-    "minimum_reader_version",
-    "default_branch",
-    "data_license",
-    "pdf_policy",
+    "feed_schema_version", "feed_id", "name", "publisher", "generated_at",
+    "minimum_reader_version", "default_branch", "data_license", "pdf_policy",
     "arxiv_attribution"
   ],
   "properties": {
-    "feed_schema_version": {"const": 1},
+    "feed_schema_version": {"enum": [1, 2]},
+    "community_data_schema_version": {"type": "integer", "minimum": 1},
     "feed_id": {"type": "string", "minLength": 1},
     "name": {"type": "string", "minLength": 1},
     "publisher": {
       "type": "object",
       "required": ["name", "url"],
-      "properties": {
-        "name": {"type": "string"},
-        "url": {"type": "string"}
-      },
+      "properties": {"name": {"type": "string"}, "url": {"type": "string"}},
       "additionalProperties": false
     },
     "generated_at": {"type": "string", "minLength": 1},
@@ -33,7 +24,29 @@
     "default_branch": {"type": "string", "minLength": 1},
     "data_license": {"type": "string", "minLength": 1},
     "pdf_policy": {"const": "link-only"},
-    "arxiv_attribution": {"const": true}
+    "arxiv_attribution": {"const": true},
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "raw": {"type": "boolean"},
+        "ai": {"type": "boolean"},
+        "community": {"type": "boolean"}
+      },
+      "required": ["raw", "ai", "community"],
+      "additionalProperties": false
+    },
+    "schemas": {"type": "object", "additionalProperties": {"type": "string"}},
+    "licenses": {"type": "object", "additionalProperties": {"type": "string"}},
+    "policy": {"type": "object"}
   },
+  "allOf": [{
+    "if": {"properties": {"feed_schema_version": {"const": 2}}},
+    "then": {
+      "required": [
+        "community_data_schema_version", "capabilities", "schemas",
+        "licenses", "policy"
+      ]
+    }
+  }],
   "additionalProperties": false
 }

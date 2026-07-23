@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/annotation-index.schema.json",
+  "type": "object",
+  "required": ["type", "schema_version", "entries"],
+  "properties": {
+    "type": {"const": "paperflow-annotation-index"},
+    "schema_version": {"const": 1},
+    "entries": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

@@ -1,46 +1,40 @@
-# {{ paper_title }}
+# {{ paper_title_display }}
 
 > [!abstract] One-sentence overview
 > {{ ai_summary_short }}
 
-## Paper information
+## Workspace
 
-- Authors: {{ paper_authors | join(', ') }}
-- arXiv: [{{ paper_arxiv_id }}]({{ paper_abs_url }})
-- PDF: [[{{ paper_pdf_path }}]]
-- Project: {{ paper_project_url }}
-- Code: {{ paper_code_url }}
-- Dataset: {{ paper_dataset_url }}
-- Topics: {{ ai_topics | join(', ') }}
-- AI recommendation: {{ ai_recommendation }}
+{% if links.ai_analysis %}- AI analysis: [[{{ links.ai_analysis | replace('.md', '') }}]]{% endif %}
+{% if links.user_note %}- My notes: [[{{ links.user_note | replace('.md', '') }}]]{% endif %}
+{% if links.annotations %}- Annotations: [[{{ links.annotations | replace('.md', '') }}]]{% endif %}
+{% if links.review %}- Review: [[{{ links.review | replace('.md', '') }}]]{% endif %}
+{% if links.community %}- Community: [[{{ links.community | replace('.md', '') }}]]{% endif %}
 
-## Reading guide
-
-### Is it worth reading?
+{% if ai_recommendation %}
+## Reading recommendation
 
 {{ ai_recommendation }}
+{% if ai_relevance_reason is defined and ai_relevance_reason %}
 
-### Suggested audience
-
-Researchers in embodied intelligence, robot learning, and robot manipulation.
-
-### Sections to prioritize
-
-Methods, experiments, and limitations.
+**Relevance to the current research profile:** {{ ai_relevance_reason }}
+{% endif %}
+{% endif %}
 
 {% if extraction.get('visual_assets', []) %}
 ## Visual guide
 
 > [!info] Visual coverage
-> {{ extraction.get('visual_assets', []) | length }} traceable figures were extracted from the original PDF. Start with architecture and method figures, then use results to verify the paper's claims.
+> {{ extraction.get('visual_assets', []) | length }} traceable key figures are included. Original arXiv HTML images are preferred, with PDF crops used as fallback.
 
 {% set architecture_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'architecture') | list %}
 {% set result_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'result') | list %}
 {% set other_visuals = extraction.get('visual_assets', []) | selectattr('kind', 'equalto', 'figure') | list %}
-{% if architecture_visuals %}
-### Architecture, system, and method figures
+{% for heading, visuals in [('Architecture, systems, and methods', architecture_visuals), ('Experiments and key results', result_visuals), ('Tasks, hardware, and other figures', other_visuals)] %}
+{% if visuals %}
+### {{ heading }}
 
-{% for visual in architecture_visuals %}
+{% for visual in visuals %}
 #### Figure {{ visual.figure_number }} · PDF page {{ visual.page }}
 
 ![[{{ visual.path }}|950]]
@@ -48,91 +42,86 @@ Methods, experiments, and limitations.
 > [!quote]- Original caption
 > {{ visual.caption }}
 >
-> [[{{ paper_pdf_path }}#page={{ visual.page }}|Open this page in the original PDF]]
+> Source: {% if visual.get('source_type') == 'arxiv-html' %}[original arXiv HTML image]({{ visual.get('source_url') }}); {% else %}PDF crop; {% endif %}[[{{ paper_pdf_path }}#page={{ visual.page }}|open the original PDF page]]
 
 {% endfor %}
 {% endif %}
-{% if result_visuals %}
-### Experiments and key results
-
-{% for visual in result_visuals %}
-#### Figure {{ visual.figure_number }} · PDF page {{ visual.page }}
-
-![[{{ visual.path }}|950]]
-
-> [!quote]- Original caption
-> {{ visual.caption }}
->
-> [[{{ paper_pdf_path }}#page={{ visual.page }}|Open this page in the original PDF]]
-
 {% endfor %}
 {% endif %}
-{% if other_visuals %}
-### Tasks, hardware, and other key figures
 
-{% for visual in other_visuals %}
-#### Figure {{ visual.figure_number }} · PDF page {{ visual.page }}
-
-![[{{ visual.path }}|950]]
-
-> [!quote]- Original caption
-> {{ visual.caption }}
->
-> [[{{ paper_pdf_path }}#page={{ visual.page }}|Open this page in the original PDF]]
-
-{% endfor %}
-{% endif %}
-{% endif %}
+{% if sections.get('problem') %}
 ## Problem
 
-{{ sections.get('problem', '') }}
+{{ sections.get('problem') }}
+{% endif %}
 
+{% if sections.get('contributions') %}
 ## Contributions
 
 {% for item in sections.get('contributions', []) %}- {{ item }}
 {% endfor %}
+{% endif %}
+
+{% if sections.get('method') %}
 ## Method
 
-{{ sections.get('method', '') }}
+{{ sections.get('method') }}
+{% endif %}
 
+{% if sections.get('experiments') %}
 ## Experiments
 
-{{ sections.get('experiments', '') }}
+{{ sections.get('experiments') }}
+{% endif %}
 
+{% if sections.get('results') %}
 ## Key results
 
-{{ sections.get('results', '') }}
+{{ sections.get('results') }}
+{% endif %}
 
-## Novelty
+## Research quality assessment
 
-- Score: {{ ai_novelty_score }}/5
-- Evidence: {{ ai_novelty_reason }}
+- Novelty: **{{ ai_novelty_score }}/5** — {{ ai_novelty_reason }}
+- Completeness: **{{ ai_completeness_score }}/5** — {{ ai_completeness_reason }}
+- Reproducibility: **{{ ai_reproducibility_score }}/5** — {{ ai_reproducibility_reason }}
 
-## Completeness
-
-- Score: {{ ai_completeness_score }}/5
-- Evidence: {{ ai_completeness_reason }}
-
-## Reproducibility
-
-- Score: {{ ai_reproducibility_score }}/5
-- Evidence: {{ ai_reproducibility_reason }}
-- Open-source code: {{ paper_has_code }}
-- Dataset or environment: {{ paper_has_dataset }}
-
+{% if sections.get('limitations') %}
 ## Limitations
 
-{{ sections.get('limitations', '') }}
+{{ sections.get('limitations') }}
+{% endif %}
 
-## Related papers
+{% if paper_cites or ai_related_papers or ai_method_links or ai_dataset_links %}
+## Relations and backlinks
 
-## Version history
+{% if paper_cites %}
+### Verified citations
 
-- {{ version_change_note }}
+{% for item in paper_cites %}- {{ item }}
+{% endfor %}
+{% endif %}
+{% if ai_related_papers %}
+### Semantically related papers
 
-## AI analysis provenance
+{% for item in ai_related_papers %}- {{ item }} (semantic relation)
+{% endfor %}
+{% endif %}
+{% if ai_method_links %}
+### Method entities
 
-Provider: {{ ai_analysis_provider }}; model: {{ ai_analysis_model }}; prompt: {{ ai_analysis_prompt_version }}; time: {{ ai_analyzed_at }}.
+{{ ai_method_links | join(', ') }}
+{% endif %}
+{% if ai_dataset_links %}
+### Dataset entities
+
+{{ ai_dataset_links | join(', ') }}
+{% endif %}
+{% endif %}
+
+> [!info]- Version and AI provenance
+> {{ version_change_note }}
+> Provider: {{ ai_analysis_provider }}; model: {{ ai_analysis_model }}; prompt: {{ ai_analysis_prompt_version }}; time: {{ ai_analyzed_at }}.
 
 <!-- USER_NOTES_START -->
 

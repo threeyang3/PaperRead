@@ -1,0 +1,9 @@
+{
+  "plugin_id": "pdf-plus",
+  "plugin_name": "PDF++",
+  "official_repository": "https://github.com/RyotaUshio/obsidian-pdf-plus",
+  "tested_versions": [">=0.40.7,<1.0.0"],
+  "minimum_obsidian_version": "1.5.8",
+  "recommended_version": "0.40.31",
+  "uses_private_plugin_api": false
+}

@@ -5,12 +5,19 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from ruamel.yaml import YAML
 from paperflow.obsidian.bases import validate_bases
+from paperflow.obsidian.artifacts import has_external_user_note
 from paperflow.obsidian.frontmatter import read_note
 
 READING = {"inbox", "queued", "skimming", "reading", "read", "archived", "rejected"}
 LEARNING = {"none", "understanding", "reviewing", "reproducing", "mastered"}
 REPRODUCTION = {"none", "candidate", "planned", "in_progress", "blocked", "completed", "abandoned"}
-LIST_FIELDS = {"paper_authors", "paper_categories", "ai_topics", "ai_method_family", "ai_task_types", "ai_robot_platforms", "ai_datasets", "ai_baselines", "user_added_tags"}
+LIST_FIELDS = {
+    "paper_authors", "paper_categories", "ai_topics", "ai_method_family",
+    "ai_task_types", "ai_robot_platforms", "ai_datasets", "ai_baselines",
+    "ai_topic_links", "ai_method_links", "ai_dataset_links",
+    "paper_cites", "paper_citation_ids", "ai_related_papers",
+    "user_added_tags",
+}
 BOOL_FIELDS = {"paper_has_code", "paper_has_project_page", "paper_has_dataset", "user_favorite", "system_requires_manual_review"}
 NUMBER_FIELDS = {"paper_arxiv_version", "ai_relevance_score", "ai_novelty_score", "ai_completeness_score", "ai_reproducibility_score", "ai_overall_score", "user_priority", "user_rating"}
 
@@ -77,11 +84,50 @@ def validate_all(root: Path) -> list[str]:
     except Exception as exc: errors.append(f"analysis schema: {exc}")
     errors.extend(validate_visual_assets(root))
     errors.extend(validate_bases(root))
+    relationship_schema_path = (
+        root / ".paperflow/schemas/paper-relationships.schema.json"
+    )
+    if relationship_schema_path.exists():
+        relationship_validator = Draft202012Validator(
+            json.loads(relationship_schema_path.read_text(encoding="utf-8"))
+        )
+        for path in (root / ".paperflow/data/relationships").glob("*.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                for error in relationship_validator.iter_errors(value):
+                    errors.append(f"{path}: {error.message}")
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
     for path in (root / "10 Papers").rglob("*.md"):
         try:
             frontmatter, body = read_note(path)
+            # Path migrations leave a small redirect note at the old stable
+            # ID-only path so existing inbound links continue to resolve. It
+            # is intentionally not a Paper Hub and must not be checked against
+            # the paper frontmatter schema.
+            if frontmatter.get("type") == "paper-redirect" and frontmatter.get(
+                "paperflow_redirect"
+            ):
+                continue
+            # A generated navigation README may live under the Paper Hub root
+            # for discoverability, but it is not a paper record and must not
+            # be checked against the paper frontmatter contract.
+            if (
+                frontmatter.get("type") == "system-guide"
+                and frontmatter.get("paperflow_generated")
+            ):
+                continue
             if frontmatter.get("type") != "paper": errors.append(f"{path}: type is not paper")
-            if "<!-- USER_NOTES_START -->" not in body or "<!-- USER_NOTES_END -->" not in body: errors.append(f"{path}: user note markers missing")
+            # Migrated Hubs intentionally replace the inline user section with
+            # a link to 60 User Notes.  The migration marker is the durable
+            # proof that the old prose was extracted and should be accepted by
+            # validation in place of the legacy inline markers.
+            has_inline_user_notes = (
+                "<!-- USER_NOTES_START -->" in body
+                and "<!-- USER_NOTES_END -->" in body
+            )
+            if not has_inline_user_notes and not has_external_user_note(root, frontmatter, body):
+                errors.append(f"{path}: user note markers missing")
             if frontmatter.get("user_reading_status") not in READING: errors.append(f"{path}: invalid user_reading_status")
             if frontmatter.get("user_learning_status") not in LEARNING: errors.append(f"{path}: invalid user_learning_status")
             if frontmatter.get("user_reproduction_status") not in REPRODUCTION: errors.append(f"{path}: invalid user_reproduction_status")
