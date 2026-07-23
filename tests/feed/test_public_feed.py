@@ -477,7 +477,7 @@ def test_feed_sync_renders_note_with_selected_analysis(tmp_path: Path) -> None:
     )
 
     assert result["rendered_notes"] == 1
-    note = subscriber / "10 Papers/Unclassified/2607.00001.md"
+    note = subscriber / "10 Papers/Unclassified/Safe-public-paper-2607.00001.md"
     assert note.exists()
     text = note.read_text(encoding="utf-8")
     assert "system_selected_analysis_id" in text

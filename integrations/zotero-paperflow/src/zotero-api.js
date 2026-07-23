@@ -58,6 +58,21 @@ class PaperFlowZoteroApi {
     return this.findItemByKey(key, libraryID);
   }
 
+  async getItemById(id) {
+    if (!id) return null;
+    if (typeof this.Zotero.Items?.getAsync === "function") {
+      try {
+        const value = await this.Zotero.Items.getAsync(id);
+        if (Array.isArray(value)) return value[0] || null;
+        if (value) return value;
+      } catch (_error) {}
+    }
+    if (typeof this.Zotero.Items?.get === "function") {
+      try { return this.Zotero.Items.get(id) || null; } catch (_error) {}
+    }
+    return null;
+  }
+
   _field(item, name) {
     if (!item || typeof item.getField !== "function") return "";
     try { return String(item.getField(name) || "").trim(); } catch (_error) { return ""; }
@@ -79,6 +94,51 @@ class PaperFlowZoteroApi {
     try {
       return (item.getAttachments() || []).map((value) => String(value)).filter(Boolean);
     } catch (_error) { return []; }
+  }
+
+  _tags(item) {
+    if (!item || typeof item.getTags !== "function") return [];
+    try {
+      return (item.getTags() || []).map((tag) => String(tag && (tag.tag || tag) || "").trim()).filter(Boolean);
+    } catch (_error) { return []; }
+  }
+
+  _annotationField(item, name) {
+    return this._field(item, name);
+  }
+
+  async annotationPayload(annotationKey, event = "modify") {
+    const annotation = await this.getItemByKey(annotationKey);
+    if (!annotation) {
+      return event === "delete" ? { event, annotation_id: String(annotationKey), item_key: String(annotationKey), deleted: true } : null;
+    }
+    if (typeof annotation.isAnnotation === "function" && !annotation.isAnnotation()) return null;
+    const parentID = annotation.parentID || this._annotationField(annotation, "parentItem");
+    const parent = await this.getItemById(parentID);
+    const paperUid = this.paperUid(parent);
+    if (event !== "delete" && !paperUid) return null;
+    const position = this._annotationField(annotation, "annotationPosition");
+    let parsedPosition = position;
+    if (position) {
+      try { parsedPosition = JSON.parse(position); } catch (_error) {}
+    }
+    return {
+      event,
+      paper_uid: paperUid,
+      annotation_id: String(annotation.key || annotationKey),
+      item_key: String(annotation.key || annotationKey),
+      parent_item_key: String(parent && parent.key || ""),
+      annotation_type: this._annotationField(annotation, "annotationType"),
+      text: this._annotationField(annotation, "annotationText"),
+      comment: this._annotationField(annotation, "annotationComment"),
+      color: this._annotationField(annotation, "annotationColor"),
+      page: this._annotationField(annotation, "annotationPageLabel") || this._annotationField(annotation, "page"),
+      position: parsedPosition || {},
+      tags: this._tags(annotation),
+      created_at: String(annotation.dateAdded || this._annotationField(annotation, "dateAdded") || ""),
+      updated_at: String(annotation.dateModified || this._annotationField(annotation, "dateModified") || ""),
+      deleted: event === "delete" || Boolean(annotation.deleted),
+    };
   }
 
   _inCollection(item, collectionName) {

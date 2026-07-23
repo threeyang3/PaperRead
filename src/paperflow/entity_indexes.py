@@ -99,6 +99,40 @@ def _generated_block(items: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _counterpart(
+    root: Path,
+    kind: str,
+    label: str,
+    planned: dict[tuple[str, str], str] | None = None,
+) -> tuple[str, str] | None:
+    """Find the same normalized label in another entity namespace.
+
+    Topic and Method are intentionally separate graph facets.  Showing the
+    counterpart link on generated pages makes that distinction visible in
+    Obsidian instead of making a reader infer it from the folder name.
+    """
+    wanted = entity_key(label)
+    for other, folder in ENTITY_FOLDERS.items():
+        if other == kind:
+            continue
+        planned_path = (planned or {}).get((other, wanted))
+        if planned_path:
+            return planned_path, other
+        directory = root / folder
+        for path in sorted(directory.glob("*.md")) if directory.exists() else []:
+            try:
+                frontmatter, _ = read_note(path)
+            except Exception:
+                continue
+            detected = str(frontmatter.get("type") or "").casefold()
+            if detected != other:
+                continue
+            current = str(frontmatter.get("title") or path.stem)
+            if entity_key(current) == wanted:
+                return path.relative_to(root).with_suffix("").as_posix(), other
+    return None
+
+
 def _replace_index(body: str, items: list[tuple[str, str]]) -> str:
     block = _generated_block(items)
     if INDEX_START in body and INDEX_END in body:
@@ -121,6 +155,7 @@ def _render_entity(
     *,
     apply: bool,
     backup_root: Path | None,
+    planned: dict[tuple[str, str], str] | None = None,
 ) -> dict[str, Any]:
     path = _candidate_path(root, kind, label)
     display = str(label).strip()
@@ -162,6 +197,10 @@ def _render_entity(
         f"> 实体类型：{kind_label} · {scope}\n"
         f"> 规范键：`{entity_key(display)}` · 已关联论文：{len(items)}\n"
     )
+    counterpart = _counterpart(root, kind, display, planned)
+    if counterpart and counterpart[0] not in body:
+        other_label = ENTITY_LABELS[counterpart[1]][0]
+        intro += f"> 同名的{other_label}视图：[[{counterpart[0]}|{display}（{other_label}）]]\n"
     lines = body.splitlines()
     metadata_lines = [line for line in lines if line.startswith("> 实体类型：") or line.startswith("> 规范键：")]
     if metadata_lines:
@@ -226,9 +265,25 @@ def rebuild_entity_indexes(
     if apply and backup:
         backup_root = root / ".paperflow/backups" / f"entity-index-{now_beijing().strftime('%Y%m%d-%H%M%S')}"
     changes: list[dict[str, Any]] = []
+    planned_paths = {
+        (entry["kind"], entity_key(entry["label"])): _candidate_path(
+            root, entry["kind"], entry["label"]
+        ).relative_to(root).with_suffix("").as_posix()
+        for entry in grouped.values()
+    }
     for entry in sorted(grouped.values(), key=lambda item: (item["kind"], entity_key(item["label"]))):
         items = sorted(entry["items"].items(), key=lambda item: item[1].casefold())
-        changes.append(_render_entity(root, entry["kind"], entry["label"], items, apply=apply, backup_root=backup_root))
+        changes.append(
+            _render_entity(
+                root,
+                entry["kind"],
+                entry["label"],
+                items,
+                apply=apply,
+                backup_root=backup_root,
+                planned=planned_paths,
+            )
+        )
     result = {
         "migration_id": "entities-0003-reverse-index",
         "dry_run": not apply,

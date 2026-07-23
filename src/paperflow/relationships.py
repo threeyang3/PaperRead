@@ -235,17 +235,11 @@ def derive_relationships(root: Path, record: dict[str, Any]) -> dict[str, Any]:
         root / ".paperflow/data/relationships" / f"{paper_id}.json",
         relationships,
     )
-    # Keep the reverse Topic/Method/Dataset views useful after every paper
-    # render.  The index writer only touches its machine-managed section and
-    # never replaces user-authored entity prose.
-    try:
-        from paperflow.entity_indexes import rebuild_entity_indexes
-
-        rebuild_entity_indexes(root, apply=True, backup=False, record_history=False)
-    except (OSError, ValueError, KeyError):
-        # Relationship generation remains usable even if an entity projection
-        # needs manual review or the Vault is mid-migration.
-        pass
+    # Entity pages are a separately rebuildable projection.  Do not rebuild
+    # every Topic/Method/Dataset file during a paper render: that made a
+    # single manual import scan and rewrite hundreds of pages and could look
+    # like a hung import.  The explicit ``rebuild-relationships`` and
+    # ``migrate entity-index`` commands own this maintenance step.
     return {
         "ai_topic_links": topic_links,
         "ai_method_links": method_links,

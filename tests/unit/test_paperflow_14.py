@@ -145,6 +145,11 @@ def test_relationship_index_separates_citations_and_semantic_links(
     )
     Draft202012Validator(schema).validate(index)
     assert {edge["type"] for edge in index["edges"]} == {"citation", "semantic"}
+    # Entity projections are maintained by an explicit command, not as a
+    # side effect of every paper render/import.
+    entity_files = list((tmp_path / "20 Topics").rglob("*.md"))
+    assert entity_files
+    assert all("PAPERFLOW_ENTITY_INDEX_START" not in path.read_text(encoding="utf-8") for path in entity_files)
 
 
 def test_chatgpt_json_extractor_accepts_fenced_json_and_rejects_text() -> None:

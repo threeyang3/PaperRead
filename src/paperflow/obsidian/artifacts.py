@@ -21,6 +21,13 @@ from paperflow.obsidian.frontmatter import dump_frontmatter, read_note, write_no
 USER_RE = re.compile(
     r"<!-- USER_NOTES_START -->(.*?)<!-- USER_NOTES_END -->", re.S
 )
+H2_SECTION_RE = re.compile(
+    r"(?ms)^##[ \t]+(?P<title>[^\n]+)\n(?P<body>.*?)(?=^##[ \t]+|\Z)"
+)
+PROVENANCE_CALLOUT_RE = re.compile(
+    r"(?ms)^>[ \t]*\[!info\]-[ \t]*(?:版本与 AI 来源|version and AI provenance)[^\n]*\n"
+    r"(?:^>[ \t].*(?:\n|$))*"
+)
 MIGRATION_MARKER = "paperflow-user-note-migrated"
 MIGRATED_LINK_RE = re.compile(
     r"(?:已迁移到|migrated\s+to|我的笔记|my\s+notes)\s*[:：-]?\s*\[\[([^\]]+)\]\]",
@@ -77,6 +84,40 @@ def artifact_path(root: Path, settings: Any, record: dict[str, Any], name: str) 
 
 def _uid(record: dict[str, Any]) -> str:
     return str(record.get("paper_uid") or record.get("paper_arxiv_id") or "")
+
+
+def _compact_generated_markdown(body: str) -> str:
+    """Normalize generated snapshots without touching user-authored prose."""
+    body = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", body)
+    return body.strip() + "\n" if body.strip() else ""
+
+
+def _without_hub_only_sections(body: str) -> str:
+    """Keep AI snapshots focused on analysis, not the Paper Hub navigation.
+
+    Reading recommendation and provenance are indexed in the artifact
+    frontmatter and rendered once by the Paper Hub.  Keeping them in every
+    generated snapshot made the same conclusion appear twice to readers.
+    """
+    body = PROVENANCE_CALLOUT_RE.sub("", body)
+    removable = {
+        "阅读建议",
+        "reading recommendation",
+        "版本与 AI 来源",
+        "version and AI provenance",
+    }
+    kept: list[str] = []
+    for match in H2_SECTION_RE.finditer(body):
+        title = match.group("title").strip().casefold()
+        if title in {value.casefold() for value in removable}:
+            continue
+        kept.append(match.group(0).rstrip())
+    if not kept:
+        return body
+    # Preserve any title/abstract content before the first H2; only H2
+    # sections are intentionally projected out.
+    prefix = body[: H2_SECTION_RE.search(body).start()] if H2_SECTION_RE.search(body) else body
+    return prefix.rstrip() + "\n\n" + "\n\n".join(kept)
 
 
 def ensure_user_note(
@@ -136,7 +177,9 @@ def ensure_ai_analysis_note(
     locale: str = "zh-CN",
 ) -> dict[str, Any]:
     path = artifact_path(root, settings, record, "ai_analysis_note")
-    generated = USER_RE.sub("", body).strip() + "\n"
+    generated = _compact_generated_markdown(
+        _without_hub_only_sections(USER_RE.sub("", body))
+    )
     title = str(record.get("paper_display_title") or record.get("paper_title_display") or record.get("paper_title") or _uid(record))
     values = {
         "type": "paper-ai-analysis",
@@ -146,7 +189,20 @@ def ensure_ai_analysis_note(
         "title": f"AI 分析 · {title}" if locale != "en" else f"AI analysis · {title}",
         "aliases": [f"AI analysis {record.get('paper_arxiv_id', '')}"],
         "paper_hub": record.get("note_path", ""),
+        # Queryable AI scalars live in properties; the generated body keeps
+        # only the explanations and evidence that a reader needs to inspect.
+        "ai_summary_short": record.get("ai_summary_short", ""),
+        "ai_recommendation": record.get("ai_recommendation", ""),
+        "ai_relevance_score": record.get("ai_relevance_score", 0),
+        "ai_overall_score": record.get("ai_overall_score", 0),
+        "ai_novelty_score": record.get("ai_novelty_score", 0),
+        "ai_completeness_score": record.get("ai_completeness_score", 0),
+        "ai_reproducibility_score": record.get("ai_reproducibility_score", 0),
+        "ai_analysis_provider": record.get("ai_analysis_provider", ""),
+        "ai_analysis_model": record.get("ai_analysis_model", ""),
+        "ai_analysis_profile": record.get("ai_analysis_profile", ""),
         "analysis_prompt_version": record.get("ai_analysis_prompt_version", ""),
+        "analyzed_at": record.get("ai_analyzed_at", ""),
         "analysis_content_hash": hashlib.sha256(generated.encode("utf-8")).hexdigest(),
         "updated_at": iso_beijing(),
         "system_generated": True,

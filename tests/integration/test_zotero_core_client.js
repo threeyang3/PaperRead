@@ -30,12 +30,14 @@ async function main() {
   const client = new sandbox.PaperFlowCoreClient("http://127.0.0.1:23140/", token);
   await client.health();
   await client.itemStatus("ABCD1234");
+  await client.annotations("arxiv:2504.16054");
   await client.sendEvent({ item_key: "ABCD1234", event: "modify" });
   await client.enqueueAnalysis({ paper_uid: "arxiv:2504.16054" });
   assert.equal(requests[0].options.headers.Authorization, undefined);
   assert.equal(requests[1].options.headers.Authorization, `Bearer ${token}`);
-  assert.equal(requests[2].options.method, "POST");
-  assert.match(requests[3].url, /analysis\/jobs$/);
+  assert.match(requests[2].url, /zotero\/annotations/);
+  assert.equal(requests[3].options.method, "POST");
+  assert.match(requests[4].url, /analysis\/jobs$/);
   assert.throws(() => new sandbox.PaperFlowCoreClient("https://example.com", token), /loopback/);
   assert.throws(() => client.setToken("short"), /invalid/);
   const noToken = new sandbox.PaperFlowCoreClient();

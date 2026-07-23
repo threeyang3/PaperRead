@@ -11,6 +11,7 @@ from paperflow.config import Config, ensure_layout
 from paperflow.data.store import load_reusable_analysis, persist_layer_records
 from paperflow.data.records import AnalysisIdentity
 from paperflow.paths.templates import safe_component
+from paperflow.paths.service import preview_record_paths
 from paperflow.database import Database
 from paperflow.models import PaperMetadata
 from paperflow.logging_config import configure_logging
@@ -21,6 +22,7 @@ from paperflow.sources.url_parser import parse_input
 from paperflow.sources.web import fetch_generic
 from paperflow.utils import atomic_json, atomic_write, iso_beijing, now_beijing, safe_slug, sha256_bytes
 from paperflow.taxonomy import canonicalize_topics
+from paperflow.text_quality import short_title
 from .deduplicate import decide
 from .download import download_pdf
 from .extract import extract_pdf
@@ -53,12 +55,28 @@ def _metadata(cfg: Config, value: str) -> PaperMetadata:
 def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path, Path]:
     ident = metadata.paper_arxiv_id or safe_slug(metadata.paper_uid.replace(":", "_"))
     year = str(metadata.paper_year or now_beijing().year)
+    if cfg.workspace is not None:
+        # Keep the importer on the same path-template contract as the
+        # renderer/migration code.  The old importer bypassed the workspace
+        # template and always created ``{paper_id}.md`` files, which made
+        # papers added from Form Flow/subscriptions regress to ID-only names.
+        preview = preview_record_paths(
+            cfg.root,
+            cfg.workspace,
+            metadata.model_dump(mode="json"),
+        )
+        note_path = cfg.root / preview["note"]["new_path"]
+        pdf_path = cfg.root / preview["pdf"]["new_path"]
+    else:
+        # Legacy paperflow.yaml workspaces do not have a WorkspaceSettings
+        # object.  Still use a readable title fragment for newly imported
+        # papers while retaining the arXiv ID suffix for uniqueness.
+        title_fragment = safe_component(short_title(metadata.paper_title))
+        note_path = cfg.path("paper_folder") / year / f"{title_fragment}-{ident}.md"
+        pdf_path = cfg.path("pdf_folder") / year / ident / f"v{metadata.paper_arxiv_version}.pdf"
     return (
-        cfg.path("paper_folder") / year / f"{ident}.md",
-        cfg.path("pdf_folder")
-        / year
-        / ident
-        / f"v{metadata.paper_arxiv_version}.pdf",
+        note_path,
+        pdf_path,
         cfg.root / ".paperflow/data/papers" / f"{safe_slug(metadata.paper_uid)}.json",
         cfg.root / ".paperflow/cache" / f"{safe_slug(metadata.paper_uid)}.txt",
     )
@@ -78,6 +96,21 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         logger.info("Metadata ready", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "metadata"})
         decision = decide(db, metadata, force)
         note_path, pdf_path, json_path, text_path = _year_paths(cfg, metadata)
+        # An update must keep the currently selected note/PDF paths.  This is
+        # important for user-authored notes and for workspaces migrated from
+        # the former ID-only layout; only brand-new records use the readable
+        # template above.
+        if json_path.exists():
+            try:
+                existing_record = json.loads(json_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing_record = {}
+            existing_note = str(existing_record.get("note_path") or "").strip()
+            existing_pdf = str(existing_record.get("paper_pdf_path") or "").strip()
+            if existing_note:
+                note_path = cfg.root / existing_note
+            if existing_pdf:
+                pdf_path = cfg.root / existing_pdf
         if decision.action == "skip" and json_path.exists():
             db.set_import_job(job_id, paper_uid, "completed", "deduplicate")
             logger.info("Existing paper skipped", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "deduplicate"})

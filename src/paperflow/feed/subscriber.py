@@ -281,7 +281,9 @@ def _render_local_note(
     from paperflow.config import load_config
     from paperflow.data.compose import compose_record
     from paperflow.obsidian.note_renderer import render_paper
+    from paperflow.paths.service import preview_record_paths
     from paperflow.pipeline.import_paper import pending_analysis
+    from paperflow.workspace import load_workspace_settings
 
     raw = json.loads(
         resolve_feed_file(feed_root, item["path"]).read_text(encoding="utf-8")
@@ -322,21 +324,11 @@ def _render_local_note(
         overlay=record,
     )
     paper_id = str(raw.get("source_id") or raw["paper_uid"]).replace(":", "_")
-    year = record.get("paper_year") or str(
-        record.get("paper_submitted_date") or ""
-    )[:4]
-    relative = Path(str(year or "Unclassified")) / f"{paper_id}.md"
-    note = cfg.path("paper_folder") / relative
-    if not record.get("paper_pdf_path"):
-        matches = list((workspace / "80 Attachments/Papers").rglob(f"{paper_id}.pdf"))
-        record["paper_pdf_path"] = (
-            matches[0].relative_to(workspace).as_posix() if matches else ""
-        )
+    record.setdefault("paper_arxiv_id", paper_id.removeprefix("arxiv_"))
     record.setdefault("paper_title", paper_id)
     record.setdefault("paper_authors", [])
     record.setdefault("paper_first_author", "")
     for key in [
-        "paper_arxiv_id",
         "paper_abs_url",
         "paper_project_url",
         "paper_code_url",
@@ -347,6 +339,16 @@ def _render_local_note(
         "ai_analyzed_at",
     ]:
         record.setdefault(key, "")
+    # Keep subscriptions on the same readable filename contract as manual
+    # imports and the formal path migration.  Hard-coding ``{paper_id}.md``
+    # here used to reintroduce ID-only notes after a migration.
+    _, settings = load_workspace_settings(workspace)
+    note = workspace / preview_record_paths(workspace, settings, record)["note"]["new_path"]
+    if not record.get("paper_pdf_path"):
+        matches = list((workspace / "80 Attachments/Papers").rglob(f"{paper_id}.pdf"))
+        record["paper_pdf_path"] = (
+            matches[0].relative_to(workspace).as_posix() if matches else ""
+        )
     record.setdefault("paper_has_code", bool(record["paper_code_url"]))
     record.setdefault("paper_has_dataset", bool(record["paper_dataset_url"]))
     record.setdefault(

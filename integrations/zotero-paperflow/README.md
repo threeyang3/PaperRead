@@ -23,6 +23,11 @@ paperflow zotero service status --vault <vault>
 
 首次连接：复制 service token 输出的令牌，在 Zotero 条目菜单选择“PaperFlow：连接 Core”，输入 http://127.0.0.1:23140 和令牌。令牌文件位于被忽略的 .paperflow/runtime，停止 Core 后自动删除；不要把令牌提交到 Git 或同步到其他设备。之后可在 Zotero 中选择“PaperFlow：分析选中论文”手动排队分析。自动事件仅携带条目键、附件键、Collection/PDF 存在性和 arXiv/DOI 身份提示，Core 仍会在真正分析前重新校验。
 
+Zotero Reader 的高亮、下划线、图片标注和评论以只读镜像形式保存到
+`.paperflow/data/annotations/zotero/<paper_uid>/`，镜像由 Core 统一写入并带有
+`SYSTEM_MANAGED` 权限；不要手动编辑这些 JSON。删除的 Zotero 标注只标记 deleted，不会
+删除旧 Obsidian 私有标注。
+
 可以先用脱敏 fixture 生成映射计划（不会访问 Zotero 数据库）：
 
 ```text

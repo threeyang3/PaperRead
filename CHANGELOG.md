@@ -5,6 +5,8 @@
 - Added template bundle v6: queryable metadata stays in YAML while generated
   body duplication, empty boilerplate sections, and excessive blank lines are
   removed without changing preserved user notes.
+- AI analysis snapshots now project recommendation, scores, and provenance into
+  properties and omit Hub-only recommendation/provenance blocks from the body.
 - Preferred version-pinned original arXiv HTML PNG figures, with strict host,
   content-type, size, and image validation plus caption-backed PDF crop fallback.
 - Made private Annotation/Review selection project into the public Community
@@ -38,6 +40,9 @@
 - Added an authenticated Zotero Core client with explicit loopback session pairing,
   public-API event publishing, manual analysis enqueue, subscription preview, and
   community publish preview menus; bearer tokens remain in Zotero local preferences.
+- Added a SYSTEM_MANAGED Zotero annotation mirror for highlights, underlines, image
+  annotations, comments, colors, tags, pages, positions, and deletion state; old
+  Obsidian private annotations remain untouched.
 - Added a guarded Core worker that consumes analysis/render jobs only for a configured
   PaperFlow Workspace under the existing pipeline lock; standalone Data Roots remain
   queue-only and Windows stop now removes stale session/token files after verified exit.
@@ -47,6 +52,11 @@
 - Added reverse Topic/Method/Dataset indexes with explicit Chinese entity-type
   labels; `paperflow migrate entity-index` refreshes only the generated paper
   list section and preserves entity prose.
+- Fixed manual imports and Feed subscription rendering to use the configured
+  readable Paper Hub filename template instead of silently creating new
+  ID-only Markdown files; updates keep the persisted note path. Generated
+  Topic/Method pages now show same-label counterpart links when both views
+  exist.
 - Added a single `_version.py` application-version source and Workspace 3,
   Feed 2, Annotation 1, and Community 1 contracts.
 - Made PDFs immutable and version-addressed, with SHA-256 indexes and explicit

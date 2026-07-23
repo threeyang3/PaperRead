@@ -62,6 +62,50 @@ async function main() {
   assert.equal(payload.paper_uid, "arxiv:2504.16054v2");
   assert.equal(payload.has_pdf, true);
   assert.equal(payload.identity_resolved, true);
+  const annotation = {
+    key: "ANN00001",
+    parentID: 11,
+    isAnnotation: () => true,
+    getField: (field) => ({
+      annotationType: "highlight",
+      annotationText: "A quoted result",
+      annotationComment: "Important",
+      annotationColor: "#ffff00",
+      annotationPageLabel: "4",
+      annotationPosition: '{"rects":[[1,2,3,4]]}',
+    }[field] || ""),
+    getTags: () => [{ tag: "evidence" }],
+  };
+  const annotationApi = new Api({
+    Libraries: { userLibraryID: 1 },
+    Items: {
+      getByLibraryAndKey: (_library, key) => key === "ANN00001" ? annotation : null,
+      getAsync: async (id) => id === 11 ? item : annotation,
+    },
+    Collections: { get: () => null },
+  });
+  const annotationPayload = await annotationApi.annotationPayload("ANN00001");
+  assert.equal(annotationPayload.paper_uid, "arxiv:2504.16054v2");
+  assert.equal(annotationPayload.text, "A quoted result");
+  assert.equal(JSON.stringify(annotationPayload.position), JSON.stringify({ rects: [[1, 2, 3, 4]] }));
+  const deletedPayload = await annotationApi.annotationPayload("ANN00001", "delete");
+  assert.equal(JSON.stringify(deletedPayload), JSON.stringify({
+    event: "delete",
+    paper_uid: "arxiv:2504.16054v2",
+    annotation_id: "ANN00001",
+    item_key: "ANN00001",
+    parent_item_key: "ABCD1234",
+    annotation_type: "highlight",
+    text: "A quoted result",
+    comment: "Important",
+    color: "#ffff00",
+    page: "4",
+    position: { rects: [[1, 2, 3, 4]] },
+    tags: ["evidence"],
+    created_at: "",
+    updated_at: "",
+    deleted: true,
+  }));
   console.log("PaperFlow Zotero public API adapter tests passed");
 }
 
