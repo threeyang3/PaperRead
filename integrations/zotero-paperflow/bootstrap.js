@@ -3,6 +3,7 @@
 "use strict";
 
 const observers = [];
+const annotationTimers = new Map();
 let menuItem = null;
 let collectionMenuItem = null;
 let migrateMenuItem = null;
@@ -171,6 +172,29 @@ async function publishZoteroEvent(itemKey, options = {}) {
   return coreClient.sendEvent(payload);
 }
 
+async function publishAnnotation(itemKey, event = "modify") {
+  if (!coreClient) coreClient = configuredCore();
+  const Api = loadZoteroApi();
+  if (!coreClient || !Api) return { ok: false, reason: "core-not-configured" };
+  const payload = await new Api(Zotero).annotationPayload(itemKey, event);
+  if (!payload) return { ok: false, reason: "not-an-annotation" };
+  return coreClient.mirrorAnnotation(payload);
+}
+
+function scheduleAnnotationMirror(ids, event = "modify") {
+  for (const rawKey of ids || []) {
+    const key = String(rawKey || "");
+    if (!key) continue;
+    const previous = annotationTimers.get(key);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(async () => {
+      annotationTimers.delete(key);
+      try { await publishAnnotation(key, event); } catch (error) { Zotero.debug?.(`PaperFlow annotation mirror failed: ${error}`); }
+    }, 500);
+    annotationTimers.set(key, timer);
+  }
+}
+
 async function analyzeSelectedItems() {
   if (!coreClient) coreClient = configuredCore();
   const Api = loadZoteroApi();
@@ -328,6 +352,10 @@ function startup() {
         if (!coreClient) coreClient = configuredCore();
         return coreClient ? coreClient.itemStatus(itemKey) : Promise.resolve({ linked: false, sync: "未连接 Core" });
       },
+      annotationProvider: (paperUid) => {
+        if (!coreClient) coreClient = configuredCore();
+        return coreClient ? coreClient.annotations(paperUid) : Promise.resolve({ count: 0 });
+      },
       eventPublisher: (itemKey, options) => publishZoteroEvent(itemKey, options),
     });
     zoteroUi.start();
@@ -338,6 +366,11 @@ function startup() {
       // the authenticated loopback Core. It never opens zotero.sqlite.
       if (event === "add" || event === "modify") {
         Zotero.debug(`PaperFlow observed ${type}:${ids.length}`);
+        if (type === "item") scheduleAnnotationMirror(ids, event);
+      } else if (event === "delete" && type === "item") {
+        // The annotation object may already be unavailable. Core locates the
+        // existing mirror by annotation key and marks it deleted.
+        scheduleAnnotationMirror(ids, "delete");
       }
     },
   };
@@ -347,6 +380,8 @@ function startup() {
 }
 
 function shutdown() {
+  for (const timer of annotationTimers.values()) clearTimeout(timer);
+  annotationTimers.clear();
   if (zoteroUi) zoteroUi.stop();
   zoteroUi = null;
   if (typeof Zotero !== "undefined" && Zotero.Notifier) {

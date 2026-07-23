@@ -52,6 +52,25 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
         body={"trigger": "test"},
     )
     assert status == 202 and subscription["status"] == "queued"
+    mirrored = service.mirror_annotation({
+        "paper_uid": "arxiv:2504.16054",
+        "annotation_id": "ANN00001",
+        "item_key": "ANN00001",
+        "parent_item_key": "ABCD1234",
+        "annotation_type": "highlight",
+        "text": "A quoted result",
+        "comment": "Important",
+        "color": "#ffff00",
+        "page": "4",
+        "position": {"rects": [[1, 2, 3, 4]]},
+        "tags": ["evidence"],
+    })
+    assert mirrored["status"] == "mirrored"
+    listed = service.annotation_list("arxiv:2504.16054")
+    assert listed["active_count"] == 1
+    deleted = service.mirror_annotation({"event": "delete", "annotation_id": "ANN00001"})
+    assert deleted["updated"] == 1
+    assert service.annotation_list("arxiv:2504.16054")["active_count"] == 0
     service.stop()
     assert not (tmp_path / ".paperflow/state/zotero-core-session.json").exists()
     assert read_pairing_token(tmp_path) is None

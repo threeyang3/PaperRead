@@ -46,6 +46,8 @@ def test_reverse_indexes_keep_topic_and_method_layers_distinct(tmp_path: Path) -
     method_text = method.read_text(encoding="utf-8")
     assert "> 实体类型：主题" in topic_text
     assert "> 实体类型：方法" in method_text
+    assert "同名的方法视图" in topic_text
+    assert "同名的主题视图" in method_text
     assert INDEX_START in topic_text and INDEX_END in topic_text
     assert "[[10 Papers/2025/arxiv_2501.00001|Diffusion Policy in Robotics]]" in method_text
 
@@ -62,4 +64,3 @@ def test_reverse_indexes_preserve_user_prose(tmp_path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert "我的长期观察。" in text
     assert "PAPERFLOW_ENTITY_INDEX_START" in text
-

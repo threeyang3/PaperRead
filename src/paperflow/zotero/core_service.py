@@ -47,6 +47,17 @@ def _paper_path(root: Path, paper_uid: str) -> Path:
     return legacy if legacy.is_file() and not canonical.is_file() else canonical
 
 
+def _annotation_root(root: Path) -> Path:
+    return data_root(root) / "annotations" / "zotero"
+
+
+def _annotation_component(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > 200 or any(char in text for char in "\\/\x00"):
+        raise ValueError(f"invalid Zotero {label}")
+    return safe_component(text)
+
+
 def _append_event(root: Path, name: str, payload: dict[str, Any]) -> None:
     target = runtime_root(root) / f"zotero-{name}.jsonl"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +123,10 @@ class _Handler(BaseHTTPRequestHandler):
                 item_key = unquote(path.removeprefix("/zotero/items/").removesuffix("/status"))
                 self._send(200, self.core.item_status(item_key))
                 return
+            if path.startswith("/zotero/annotations/"):
+                paper_uid = unquote(path.removeprefix("/zotero/annotations/"))
+                self._send(200, self.core.annotation_list(paper_uid))
+                return
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._send(400, {"ok": False, "error": str(exc)})
             return
@@ -126,6 +141,9 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._body()
             if path == "/zotero/events":
                 self._send(202, self.core.accept_event(body))
+                return
+            if path == "/zotero/annotations":
+                self._send(202, self.core.mirror_annotation(body))
                 return
             if path == "/analysis/jobs":
                 self._send(202, self.core.enqueue_job("analysis", body))
@@ -247,6 +265,31 @@ class PaperFlowCoreService:
             workspace = self.root / ".paperflow/workspace.yaml"
             if not workspace.is_file():
                 result.update({"status": "skipped", "reason": "workspace-not-configured"})
+            elif kind == "subscription-sync":
+                from paperflow.config import load_config
+                from paperflow.feed.subscriber import sync_feed
+                from paperflow.locking import FileLock
+                from paperflow.workspace import load_workspace_settings
+
+                config = load_config(self.root)
+                _, settings = load_workspace_settings(self.root)
+                requested = {str(value).strip() for value in (job.get("source_names") or []) if str(value).strip()}
+                sources = [source for source in settings.subscriptions.sources if source.enabled and (not requested or source.name in requested)]
+                results = []
+                with FileLock(self.root / ".paperflow/runtime/pipeline.lock"):
+                    for source in sources:
+                        results.append(sync_feed(
+                            self.root,
+                            url=source.url,
+                            name=source.name,
+                            branch=source.branch,
+                            trust=source.trust,
+                            dry_run=False,
+                            auto_download_pdf=source.auto_download_pdf,
+                            auto_render_notes=source.auto_render_notes,
+                            capabilities=list(source.capabilities),
+                        ))
+                result.update({"status": "completed", "sources": results, "source_count": len(sources)})
             elif kind in {"analysis", "render"}:
                 from paperflow.config import ensure_layout, load_config
                 from paperflow.locking import FileLock
@@ -336,7 +379,7 @@ class PaperFlowCoreService:
     def item_status(self, item_key: str) -> dict[str, Any]:
         if not item_key or len(item_key) > 80 or not item_key.replace("-", "").isalnum():
             raise ValueError("invalid Zotero item key")
-        directory = self.root / ".paperflow/data/connectors/zotero/mappings"
+        directory = data_root(self.root) / "connectors/zotero/mappings"
         for path in sorted(directory.glob("*.json")) if directory.exists() else []:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
@@ -345,6 +388,90 @@ class PaperFlowCoreService:
             if value.get("zotero", {}).get("item_key") == item_key:
                 return {"ok": True, "item_key": item_key, "linked": True, "mapping": value}
         return {"ok": True, "item_key": item_key, "linked": False, "status": "unlinked"}
+
+    def annotation_list(self, paper_uid: str) -> dict[str, Any]:
+        _annotation_component(paper_uid, "paper UID")
+        directory = _annotation_root(self.root) / safe_component(paper_uid)
+        annotations: list[dict[str, Any]] = []
+        if directory.is_dir():
+            for path in sorted(directory.glob("*.json")):
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict):
+                    annotations.append(value)
+        return {
+            "ok": True,
+            "paper_uid": paper_uid,
+            "count": len(annotations),
+            "active_count": sum(1 for item in annotations if not item.get("deleted")),
+            "annotations": annotations,
+            "permission": "SYSTEM_MANAGED",
+        }
+
+    def mirror_annotation(self, body: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "event", "paper_uid", "annotation_id", "item_key", "parent_item_key",
+            "annotation_type", "text", "comment", "color", "page", "position",
+            "tags", "created_at", "updated_at", "deleted",
+        }
+        unknown = sorted(set(body) - allowed)
+        if unknown:
+            raise ValueError(f"unsupported annotation fields: {', '.join(unknown)}")
+        annotation_id = _annotation_component(body.get("annotation_id") or body.get("item_key"), "annotation id")
+        event = str(body.get("event") or "modify").strip().casefold()
+        if event == "delete" or body.get("deleted") is True:
+            target_paths = []
+            if body.get("paper_uid"):
+                target_paths = [_annotation_root(self.root) / _annotation_component(body["paper_uid"], "paper UID") / f"{annotation_id}.json"]
+            else:
+                target_paths = list(_annotation_root(self.root).glob(f"*/{annotation_id}.json"))
+            updated = 0
+            for target in target_paths:
+                if not target.is_file():
+                    continue
+                try:
+                    value = json.loads(target.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                value.update({"deleted": True, "updated_at": body.get("updated_at") or iso_beijing(), "artifact_permission": "SYSTEM_MANAGED"})
+                atomic_json(target, value)
+                updated += 1
+            return {"ok": True, "status": "deleted", "annotation_id": annotation_id, "updated": updated, "permission": "SYSTEM_MANAGED"}
+        paper_uid = str(body.get("paper_uid") or "").strip()
+        _annotation_component(paper_uid, "paper UID")
+        target = _annotation_root(self.root) / _annotation_component(paper_uid, "paper UID") / f"{annotation_id}.json"
+        text = str(body.get("text") or "")
+        comment = str(body.get("comment") or "")
+        if len(text) > 100_000 or len(comment) > 100_000:
+            raise ValueError("annotation text is too large")
+        tags = body.get("tags") or []
+        if not isinstance(tags, list) or any(len(str(tag)) > 200 for tag in tags):
+            raise ValueError("annotation tags must be a list of short strings")
+        value = {
+            "schema_version": 1,
+            "artifact_permission": "SYSTEM_MANAGED",
+            "source": "zotero",
+            "paper_uid": paper_uid,
+            "annotation_id": annotation_id,
+            "item_key": str(body.get("item_key") or annotation_id),
+            "parent_item_key": str(body.get("parent_item_key") or ""),
+            "annotation_type": str(body.get("annotation_type") or ""),
+            "text": text,
+            "comment": comment,
+            "color": str(body.get("color") or ""),
+            "page": body.get("page"),
+            "position": body.get("position") if isinstance(body.get("position"), (dict, str, list)) else {},
+            "tags": [str(tag) for tag in tags],
+            "created_at": str(body.get("created_at") or iso_beijing()),
+            "updated_at": str(body.get("updated_at") or iso_beijing()),
+            "deleted": False,
+        }
+        atomic_json(target, value)
+        return {"ok": True, "status": "mirrored", "annotation_id": annotation_id, "paper_uid": paper_uid, "path": target.relative_to(self.root).as_posix(), "permission": "SYSTEM_MANAGED"}
 
     def accept_event(self, body: dict[str, Any]) -> dict[str, Any]:
         allowed = {
@@ -419,14 +546,29 @@ class PaperFlowCoreService:
         if unknown:
             raise ValueError(f"unsupported subscription fields: {', '.join(unknown)}")
         job_id = f"zotero-subscription-sync-{secrets.token_hex(8)}"
+        requested_names = body.get("source_names") or []
+        if isinstance(requested_names, str):
+            requested_names = [requested_names]
+        if not isinstance(requested_names, list):
+            raise ValueError("source_names must be a list of source names")
+        source_names = [str(value).strip() for value in requested_names if str(value).strip()]
+        source = str(body.get("source") or "").strip()
+        if source and source not in source_names:
+            source_names.append(source)
+        job = {
+            "job_id": job_id,
+            "kind": "subscription-sync",
+            "source_names": source_names,
+        }
         _append_event(self.root, "jobs", {
             "job_id": job_id,
             "kind": "subscription-sync",
             "status": "queued",
             "source": body.get("source", ""),
-            "source_names": body.get("source_names", []),
+            "source_names": source_names,
             "trigger": body.get("trigger", ""),
         })
+        self.jobs.put(job)
         return {
             "ok": True,
             "job_id": job_id,

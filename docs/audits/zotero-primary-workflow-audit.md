@@ -16,7 +16,7 @@
 
 - 尚未通过 Zotero 插件 API 创建或复用 `PaperFlow` Collection；Core 只生成计划，不直接写数据库。
 - 尚未实现 Zotero item/attachment 映射、PDF hash 校验、migration plan/apply/rollback。
-- 尚未实现 Zotero Reader annotation mirror 和真实 AI worker；当前事件已进入 Core 的状态机与 JSONL 运行记录，分析 job 仍需由后续 worker 消费。
+- Zotero annotation mirror 已接入：插件仅通过公开 Item API 提取高亮、下划线、图片标注、评论、颜色、标签、页码、位置和删除状态，Core 写入 `.paperflow/data/annotations/zotero/<paper_uid>` 的 SYSTEM_MANAGED JSON；Obsidian 私有 Annotation Note 不被覆盖。
 - Core 会话需要用户显式复制一次令牌到 Zotero 本机偏好；没有令牌时插件只显示“未连接”，不会降级为公网请求。
 - Zotero-only 模式、订阅渲染和社区发布仍以 PaperFlow/Obsidian 通道为主。
 

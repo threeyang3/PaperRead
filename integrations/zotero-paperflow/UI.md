@@ -10,6 +10,8 @@
   Zotero 本机偏好设置；令牌来自被忽略的 `.paperflow/runtime` 配对命令。
 - “同步订阅预览”和“社区发布预览”菜单。前者只创建本机 Core 队列项，后者只生成
   需要用户确认的发布计划；两者都不会在 Zotero 回调中直接访问网络或写数据库。
+- Zotero 标注事件会镜像到 Core 的 SYSTEM_MANAGED 数据层，并在 Item Pane 显示当前论文
+  的有效镜像数量；镜像删除不会删除 Zotero 或旧 Obsidian 标注。
 
 状态列只读取本地缓存或认证 Core 返回的状态；Core 不可用时显示占位符，不会在每一行实时
 启动 Python、AI 或公网请求。事件只提交公开条目键、附件键和身份提示，分析由 Core worker

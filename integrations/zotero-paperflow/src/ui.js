@@ -9,6 +9,7 @@ class PaperFlowZoteroUi {
     this.notify = options.notify || (() => {});
     this.statusProvider = options.statusProvider || null;
     this.eventPublisher = options.eventPublisher || null;
+    this.annotationProvider = options.annotationProvider || null;
     this.collectionName = options.collectionName || "PaperFlow";
     this.analysisProfile = options.analysisProfile || "";
     this.status = new Map();
@@ -88,6 +89,10 @@ class PaperFlowZoteroUi {
       row.textContent = `${label}：${value[field] || "—"}`;
       body.appendChild(row);
     }
+    const annotationRow = doc.createElement("div");
+    annotationRow.className = "paperflow-pane-row";
+    annotationRow.textContent = `Zotero 标注镜像：${value.annotation_count ?? "—"}`;
+    body.appendChild(annotationRow);
     const hint = doc.createElement("small");
     hint.textContent = value.updated_at ? `更新：${value.updated_at}` : "Core 未返回状态时显示缓存占位";
     body.appendChild(hint);
@@ -114,6 +119,16 @@ class PaperFlowZoteroUi {
           sync: value.sync || mapping.sync || (value.linked ? "已关联" : "未关联"),
           updated_at: value.updated_at || mapping.updated_at || new Date().toISOString(),
         });
+        const paperUid = value.paper_uid || mapping.paper_uid || mapping.paper?.paper_uid || "";
+        if (paperUid && this.annotationProvider) {
+          try {
+            const annotations = await this.annotationProvider(paperUid);
+            const current = this.status.get(key) || {};
+            this.status.set(key, { ...current, annotation_count: annotations?.active_count ?? annotations?.count ?? 0 });
+          } catch (error) {
+            this.Zotero.debug?.(`PaperFlow annotation status failed: ${error}`);
+          }
+        }
       }
       this.Zotero.ItemTreeManager?.refresh?.();
     } catch (error) {

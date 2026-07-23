@@ -73,6 +73,12 @@ class PaperFlowCoreClient {
     return this._request("GET", `/zotero/items/${encodeURIComponent(String(itemKey || ""))}/status`);
   }
 
+  annotations(paperUid) {
+    return this._request("GET", `/zotero/annotations/${encodeURIComponent(String(paperUid || ""))}`);
+  }
+
+  mirrorAnnotation(payload) { return this._request("POST", "/zotero/annotations", payload); }
+
   sendEvent(payload) { return this._request("POST", "/zotero/events", payload); }
 
   enqueueAnalysis(payload) { return this._request("POST", "/analysis/jobs", payload); }

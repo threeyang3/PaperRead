@@ -109,6 +109,14 @@ def validate_all(root: Path) -> list[str]:
                 "paperflow_redirect"
             ):
                 continue
+            # A generated navigation README may live under the Paper Hub root
+            # for discoverability, but it is not a paper record and must not
+            # be checked against the paper frontmatter contract.
+            if (
+                frontmatter.get("type") == "system-guide"
+                and frontmatter.get("paperflow_generated")
+            ):
+                continue
             if frontmatter.get("type") != "paper": errors.append(f"{path}: type is not paper")
             # Migrated Hubs intentionally replace the inline user section with
             # a link to 60 User Notes.  The migration marker is the durable

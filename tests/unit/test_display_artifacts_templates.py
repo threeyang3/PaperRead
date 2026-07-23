@@ -7,7 +7,11 @@ import pytest
 from jinja2 import FileSystemLoader, StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
 
-from paperflow.obsidian.artifacts import apply_user_note_migration, plan_user_note_migration
+from paperflow.obsidian.artifacts import (
+    apply_user_note_migration,
+    ensure_ai_analysis_note,
+    plan_user_note_migration,
+)
 from paperflow.obsidian.view_model import PAPER_VIEW_MODEL_CONTEXT_VERSION, build_paper_view_model
 from paperflow.template_sets import TemplateSetManager
 from paperflow.text_quality import short_title, title_aliases
@@ -110,6 +114,49 @@ def test_user_display_title_is_projected_to_hub(tmp_path: Path):
     frontmatter, body = read_note(note)
     assert frontmatter["title"] == "My chosen title"
     assert "My chosen title" in body
+
+
+def test_ai_snapshot_projects_recommendation_and_provenance_to_properties(
+    tmp_path: Path,
+):
+    init_workspace(tmp_path)
+    _, settings = load_workspace_settings(tmp_path)
+    install_workspace_resources(tmp_path, settings)
+    record = {
+        **_record(),
+        "note_path": "10 Papers/2025/π0.5-2504.16054.md",
+        "ai_relevance_score": 5,
+        "ai_analysis_profile": "full_analysis",
+    }
+    result = ensure_ai_analysis_note(
+        tmp_path,
+        settings,
+        record,
+        """# π₀.₅: a Vision-Language-Action Model
+
+> [!abstract] 一句话概述
+> 摘要
+
+## 阅读建议
+
+建议
+
+## 论文解决的问题
+
+问题说明
+
+> [!info]- 版本与 AI 来源
+> 当前版本 v1。
+> 提供方：mock；模型：mock；Prompt：paper-analysis-v3；时间：2026-07-22T00:00:00+08:00。
+""",
+    )
+    frontmatter, body = read_note(tmp_path / result["path"])
+    assert frontmatter["ai_recommendation"] == "建议"
+    assert frontmatter["ai_analysis_provider"] == "mock"
+    assert "## 阅读建议" not in body
+    assert "版本与 AI 来源" not in body
+    assert "## 论文解决的问题" in body
+    assert "\n\n\n" not in body
 
 
 def test_successful_render_clears_stale_manual_review_state(tmp_path: Path):
@@ -313,3 +360,17 @@ def test_validation_ignores_paper_redirects(tmp_path: Path):
         encoding="utf-8",
     )
     assert not [error for error in validate_all(tmp_path) if str(redirect) in error]
+
+
+def test_validation_ignores_generated_paper_hub_readme(tmp_path: Path):
+    init_workspace(tmp_path)
+    readme = tmp_path / "10 Papers/README.md"
+    readme.parent.mkdir(parents=True, exist_ok=True)
+    readme.write_text(
+        "---\n"
+        "type: system-guide\n"
+        "paperflow_generated: true\n"
+        "---\n\n# 论文库导航\n",
+        encoding="utf-8",
+    )
+    assert not [error for error in validate_all(tmp_path) if str(readme) in error]
