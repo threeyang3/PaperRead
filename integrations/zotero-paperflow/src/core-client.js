@@ -79,6 +79,8 @@ class PaperFlowCoreClient {
 
   mirrorAnnotation(payload) { return this._request("POST", "/zotero/annotations", payload); }
 
+  migrationResults(payload) { return this._request("POST", "/zotero/migration/results", payload); }
+
   sendEvent(payload) { return this._request("POST", "/zotero/events", payload); }
 
   enqueueAnalysis(payload) { return this._request("POST", "/analysis/jobs", payload); }

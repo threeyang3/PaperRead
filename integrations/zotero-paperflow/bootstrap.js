@@ -7,6 +7,7 @@ const annotationTimers = new Map();
 let menuItem = null;
 let collectionMenuItem = null;
 let migrateMenuItem = null;
+let migrationSnapshotMenuItem = null;
 let connectMenuItem = null;
 let analyzeMenuItem = null;
 let subscriptionMenuItem = null;
@@ -218,6 +219,7 @@ async function analyzeSelectedItems() {
         paper_uid: paperUid,
         zotero_item_key: String(item.key || ""),
         trigger: "zotero-manual",
+        target: prefGet("extensions.paperflow-zotero.analysisTarget", "zotero"),
       });
       queued += 1;
     } catch (error) {
@@ -265,6 +267,29 @@ async function previewCommunitySelected() {
   }
 }
 
+async function syncMigrationSnapshot() {
+  if (!coreClient) coreClient = configuredCore();
+  const Api = loadZoteroApi();
+  if (!coreClient || !Api) {
+    notify("PaperFlow：请先连接 Core，再同步 Zotero 身份/附件校验结果。");
+    return;
+  }
+  try {
+    const api = new Api(Zotero);
+    const snapshot = await api.migrationSnapshot();
+    const eligible = (snapshot.items || []).filter((item) => item.paper_uid && item.item_key);
+    if (!eligible.length) {
+      notify("PaperFlow：当前没有可同步的论文身份。");
+      return;
+    }
+    snapshot.items = eligible;
+    const result = await coreClient.migrationResults(snapshot);
+    notify(`PaperFlow 映射：已接收 ${result.mappings?.length || 0} 项${result.rejected?.length ? `，拒绝 ${result.rejected.length} 项` : ""}`);
+  } catch (error) {
+    notify(`PaperFlow 映射同步失败：${error.message || error}`);
+  }
+}
+
 function addMenuItem() {
   if (typeof Zotero === "undefined" || !Zotero.getMainWindow) return;
   const win = Zotero.getMainWindow();
@@ -292,6 +317,13 @@ function addMenuItem() {
   migrateMenuItem.setAttribute("label", "PaperFlow：将选中论文加入 Collection");
   migrateMenuItem.addEventListener("command", addSelectedItemsToPaperFlow);
   menu.appendChild(migrateMenuItem);
+  migrationSnapshotMenuItem = win.document.createXULElement
+    ? win.document.createXULElement("menuitem")
+    : win.document.createElement("menuitem");
+  migrationSnapshotMenuItem.id = "paperflow-zotero-sync-migration-snapshot";
+  migrationSnapshotMenuItem.setAttribute("label", "PaperFlow：同步身份与附件校验");
+  migrationSnapshotMenuItem.addEventListener("command", syncMigrationSnapshot);
+  menu.appendChild(migrationSnapshotMenuItem);
   connectMenuItem = win.document.createXULElement
     ? win.document.createXULElement("menuitem")
     : win.document.createElement("menuitem");
@@ -326,6 +358,7 @@ function removeMenuItem() {
   if (menuItem && menuItem.parentNode) menuItem.parentNode.removeChild(menuItem);
   if (collectionMenuItem && collectionMenuItem.parentNode) collectionMenuItem.parentNode.removeChild(collectionMenuItem);
   if (migrateMenuItem && migrateMenuItem.parentNode) migrateMenuItem.parentNode.removeChild(migrateMenuItem);
+  if (migrationSnapshotMenuItem && migrationSnapshotMenuItem.parentNode) migrationSnapshotMenuItem.parentNode.removeChild(migrationSnapshotMenuItem);
   if (connectMenuItem && connectMenuItem.parentNode) connectMenuItem.parentNode.removeChild(connectMenuItem);
   if (analyzeMenuItem && analyzeMenuItem.parentNode) analyzeMenuItem.parentNode.removeChild(analyzeMenuItem);
   if (subscriptionMenuItem && subscriptionMenuItem.parentNode) subscriptionMenuItem.parentNode.removeChild(subscriptionMenuItem);
@@ -333,6 +366,7 @@ function removeMenuItem() {
   menuItem = null;
   collectionMenuItem = null;
   migrateMenuItem = null;
+  migrationSnapshotMenuItem = null;
   connectMenuItem = null;
   analyzeMenuItem = null;
   subscriptionMenuItem = null;

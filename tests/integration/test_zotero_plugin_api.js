@@ -55,7 +55,10 @@ async function main() {
   };
   const eventApi = new Api({
     Libraries: { userLibraryID: 1 },
-    Items: { getByLibraryAndKey: () => item },
+    Items: {
+      getByLibraryAndKey: () => item,
+      getAsync: async (id) => id === "ABCD1234" ? item : annotation,
+    },
     Collections: { get: () => null },
   });
   const payload = await eventApi.eventPayload("ABCD1234");
@@ -76,6 +79,10 @@ async function main() {
     }[field] || ""),
     getTags: () => [{ tag: "evidence" }],
   };
+  const migrationSnapshot = await eventApi.migrationSnapshot([item]);
+  assert.equal(migrationSnapshot.items.length, 1);
+  assert.equal(migrationSnapshot.items[0].paper_uid, "arxiv:2504.16054v2");
+  assert.equal(migrationSnapshot.items[0].attachments.length, 1);
   const annotationApi = new Api({
     Libraries: { userLibraryID: 1 },
     Items: {

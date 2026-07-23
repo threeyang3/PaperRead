@@ -1,4 +1,9 @@
-"""Path helpers for a Vault-backed or standalone PaperFlow data root."""
+"""Path helpers for a Vault-backed or standalone PaperFlow data root.
+
+The standalone form is the canonical Core store used by the Zotero-first
+workflow.  It intentionally contains no Obsidian workspace state; callers
+must opt in to the Vault-backed layout explicitly.
+"""
 
 from __future__ import annotations
 

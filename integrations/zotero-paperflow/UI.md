@@ -6,6 +6,7 @@
 - Item Pane 的 PaperFlow 区域，显示同一组高频状态。
 - `Notifier` 的 item add/modify/delete 防抖队列，默认 1 秒合并事件。
 - 条目上下文菜单中的“将选中论文加入 Collection”。
+- 条目上下文菜单中的“同步身份与附件校验”：通过公开对象 API 生成 mapping 快照，Core 只写本地 mapping，不写 Zotero 数据库。
 - 条目上下文菜单中的“连接 Core”和“分析选中论文”。Core 地址与会话令牌只保存于
   Zotero 本机偏好设置；令牌来自被忽略的 `.paperflow/runtime` 配对命令。
 - “同步订阅预览”和“社区发布预览”菜单。前者只创建本机 Core 队列项，后者只生成

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from paperflow.zotero.migration import ingest_plugin_results, plan_migration, verify_migration
 
 
@@ -46,3 +48,16 @@ def test_ingest_results_and_verify(tmp_path: Path) -> None:
     assert result["status"] == "applied"
     verified = verify_migration(tmp_path)
     assert verified == {"ok": True, "checked": 1, "valid": 1, "issues": []}
+
+
+def test_ingest_rejects_invalid_attachment_hash(tmp_path: Path) -> None:
+    result = ingest_plugin_results(
+        tmp_path,
+        {"items": [{
+            "paper_uid": "arxiv:2504.16054",
+            "item_key": "ABCD1234",
+            "attachments": [{"key": "ATT00001", "mode": "stored", "sha256": "not-a-hash"}],
+        }]},
+    )
+    assert result["status"] == "partial"
+    assert result["rejected"][0]["reason"] == "invalid-attachment-fact"

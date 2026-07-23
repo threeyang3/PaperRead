@@ -25,6 +25,7 @@ from paperflow.utils import atomic_json, iso_beijing
 from paperflow.utils import atomic_write
 from paperflow.zotero.store import data_root, runtime_root, state_root
 from paperflow.zotero.events import ZoteroEventProcessor
+from paperflow.security.artifacts import PermissionGuard
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -144,6 +145,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/zotero/annotations":
                 self._send(202, self.core.mirror_annotation(body))
+                return
+            if path == "/zotero/migration/results":
+                self._send(200, self.core.migration_results(body))
                 return
             if path == "/analysis/jobs":
                 self._send(202, self.core.enqueue_job("analysis", body))
@@ -299,11 +303,19 @@ class PaperFlowCoreService:
                 config = load_config(self.root)
                 ensure_layout(config)
                 with FileLock(self.root / ".paperflow/runtime/pipeline.lock"):
-                    value = (
-                        analyze_uid(config, paper_uid, provider=job.get("provider"))
-                        if kind == "analysis"
-                        else render_uid(config, paper_uid)
-                    )
+                    value = analyze_uid(config, paper_uid, provider=job.get("provider")) if kind == "analysis" else render_uid(config, paper_uid)
+                    if job.get("target") in {"zotero", "obsidian", "both"}:
+                        from paperflow.zotero.markdown import render_ai_projection
+                        value = {
+                            "pipeline": str(value),
+                            "ai_projection": render_ai_projection(
+                                self.root,
+                                paper_uid,
+                                zotero_item_key=str(job.get("zotero_item_key") or ""),
+                                target=str(job["target"]),
+                                apply_changes=True,
+                            ),
+                        }
                 result.update({"status": "completed", "result": str(value)})
             else:
                 result.update({"status": "skipped", "reason": "worker-not-implemented"})
@@ -410,6 +422,18 @@ class PaperFlowCoreService:
             "permission": "SYSTEM_MANAGED",
         }
 
+    def migration_results(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Persist only plugin-returned identity/attachment facts.
+
+        The Core accepts object-API output, never opens Zotero's database and
+        never performs an attachment copy.  The plugin remains the only
+        Zotero writer.
+        """
+        from paperflow.zotero.migration import ingest_plugin_results
+
+        result = ingest_plugin_results(self.root, body)
+        return {"ok": True, **result}
+
     def mirror_annotation(self, body: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "event", "paper_uid", "annotation_id", "item_key", "parent_item_key",
@@ -438,12 +462,14 @@ class PaperFlowCoreService:
                 if not isinstance(value, dict):
                     continue
                 value.update({"deleted": True, "updated_at": body.get("updated_at") or iso_beijing(), "artifact_permission": "SYSTEM_MANAGED"})
+                PermissionGuard(self.root).authorize(target, "SYSTEM_MANAGED")
                 atomic_json(target, value)
                 updated += 1
             return {"ok": True, "status": "deleted", "annotation_id": annotation_id, "updated": updated, "permission": "SYSTEM_MANAGED"}
         paper_uid = str(body.get("paper_uid") or "").strip()
         _annotation_component(paper_uid, "paper UID")
         target = _annotation_root(self.root) / _annotation_component(paper_uid, "paper UID") / f"{annotation_id}.json"
+        PermissionGuard(self.root).authorize(target, "SYSTEM_MANAGED")
         text = str(body.get("text") or "")
         comment = str(body.get("comment") or "")
         if len(text) > 100_000 or len(comment) > 100_000:
@@ -520,11 +546,21 @@ class PaperFlowCoreService:
             raise ValueError("paper_uid is required")
         _paper_path(self.root, paper_uid)
         job_id = f"zotero-{kind}-{secrets.token_hex(8)}"
-        allowed = {"paper_uid", "provider", "zotero_item_key", "trigger"}
+        allowed = {"paper_uid", "provider", "zotero_item_key", "trigger", "target"}
         unknown = sorted(set(body) - allowed)
         if unknown:
             raise ValueError(f"unsupported job fields: {', '.join(unknown)}")
-        job = {"job_id": job_id, "kind": kind, "paper_uid": paper_uid, "provider": body.get("provider")}
+        target = str(body.get("target") or "").strip().lower()
+        if target and target not in {"zotero", "obsidian", "both"}:
+            raise ValueError("target must be zotero, obsidian, or both")
+        job = {
+            "job_id": job_id,
+            "kind": kind,
+            "paper_uid": paper_uid,
+            "provider": body.get("provider"),
+            "zotero_item_key": body.get("zotero_item_key"),
+            "target": target,
+        }
         _append_event(self.root, "jobs", {**job, "status": "queued", "trigger": body.get("trigger", "")})
         self.jobs.put(job)
         return {"ok": True, "job_id": job_id, "status": "queued"}

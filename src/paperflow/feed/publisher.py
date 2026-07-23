@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator
 
 from paperflow.versioning import APPLICATION_VERSION, VERSIONS, check_reader_version
 from paperflow.workspace import WorkspaceSettings, dump_yaml
+from paperflow.security.artifacts import PublishScanner
 import zstandard
 
 
@@ -187,6 +188,7 @@ def build_feed(
         newline="\n",
     )
     raw, ai = _source_records(root)
+    PublishScanner(root).assert_clean([*raw, *ai, *_community_records(root)])
     community_count, community_review_count, contributor_count = (
         _publish_community(
             root,

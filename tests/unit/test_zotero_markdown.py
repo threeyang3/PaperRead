@@ -46,3 +46,13 @@ def test_projection_is_non_overwriting_and_hashable(tmp_path: Path) -> None:
     target.write_text(target.read_text(encoding="utf-8") + "\n我的 Zotero 个人修改\n", encoding="utf-8")
     third = render_ai_projection(tmp_path, "arxiv:2504.16054", apply_changes=True)
     assert third["status"] == "manual-review-required"
+
+
+def test_projection_supports_both_targets_with_render_state(tmp_path: Path) -> None:
+    _record(tmp_path)
+    result = render_ai_projection(tmp_path, "arxiv:2504.16054", target="both", apply_changes=True)
+    assert result["status"] == "written"
+    assert len(result["paths"]) == 2
+    assert Path(result["render_state"]).is_file()
+    assert Path(result["paths"][0]).is_file()
+    assert Path(result["paths"][1]).is_file()

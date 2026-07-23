@@ -1,4 +1,4 @@
-# PaperFlow for Zotero（开发中）
+# PaperFlow for Zotero
 
 这是 PaperFlow 的 Zotero 7/9 集成。它把 Zotero 条目、Collection 和 Reader 作为主要阅读
 入口，同时把分析任务交给本机 loopback Core，而不是替代 Zotero Reader：
@@ -23,6 +23,16 @@ paperflow zotero service status --vault <vault>
 
 首次连接：复制 service token 输出的令牌，在 Zotero 条目菜单选择“PaperFlow：连接 Core”，输入 http://127.0.0.1:23140 和令牌。令牌文件位于被忽略的 .paperflow/runtime，停止 Core 后自动删除；不要把令牌提交到 Git 或同步到其他设备。之后可在 Zotero 中选择“PaperFlow：分析选中论文”手动排队分析。自动事件仅携带条目键、附件键、Collection/PDF 存在性和 arXiv/DOI 身份提示，Core 仍会在真正分析前重新校验。
 
+如果只使用 Zotero、不启用 Obsidian，可先建立独立 Core 数据根并启动服务：
+
+```text
+paperflow zotero data-root --data-root <core-data-root> --apply
+paperflow zotero service start --data-root <core-data-root>
+paperflow zotero service token --data-root <core-data-root>
+```
+
+standalone Core 使用 `data/`、`state/`、`runtime/` 等目录，不会创建或扫描 Obsidian Vault；没有 Workspace 配置时只提供安全队列和本地镜像。
+
 Zotero Reader 的高亮、下划线、图片标注和评论以只读镜像形式保存到
 `.paperflow/data/annotations/zotero/<paper_uid>/`，镜像由 Core 统一写入并带有
 `SYSTEM_MANAGED` 权限；不要手动编辑这些 JSON。删除的 Zotero 标注只标记 deleted，不会
@@ -36,3 +46,7 @@ paperflow zotero link --items-json examples/zotero/items.example.json --vault <v
 ```
 
 真实 Zotero Library 写入必须经过测试 Profile、migration plan、dry-run 和用户确认。
+
+“同步身份与附件校验”菜单会把选中条目的公开 API 快照发送到已认证的 loopback Core，包含附件键、存储模式和可用 SHA-256，不包含本机路径。Core 校验通过后才写入 mapping；文件复制/链接仍由 Zotero 插件公开附件 API 执行。
+
+发布构建会生成 `PaperFlow-Zotero-1.5.0.xpi`。本轮没有自动安装到真实主 Profile；请先在独立测试 Profile 安装并完成 Collection、Reader 和附件回归，再由用户确认安装到主 Profile。

@@ -29,10 +29,13 @@ integration = json.loads(
         encoding="utf-8"
     )
 )
-if manifest["version"] != version or integration["version"] != version:
+zotero = json.loads(
+    (ROOT / "integrations/zotero-paperflow/manifest.json").read_text(encoding="utf-8")
+)
+if manifest["version"] != version or integration["version"] != version or zotero["version"] != version:
     raise SystemExit(
         f"version mismatch: app={version}, plugin={manifest['version']}, "
-        f"integration={integration['version']}"
+        f"integration={integration['version']}, zotero={zotero['version']}"
     )
 
 tag = os.environ.get("GITHUB_REF_NAME", "")
@@ -43,6 +46,7 @@ print(json.dumps({
     "application": version,
     "plugin": manifest["version"],
     "integration": integration["version"],
+    "zotero": zotero["version"],
     "pyproject": "dynamic",
     "tag": tag or None,
 }))

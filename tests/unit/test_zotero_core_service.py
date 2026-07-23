@@ -45,6 +45,8 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
         body={"paper_uid": "arxiv:2504.16054"},
     )
     assert status == 202 and queued["status"] == "queued"
+    with pytest.raises(ValueError):
+        service.enqueue_job("render", {"paper_uid": "arxiv:2504.16054", "target": "unknown"})
     status, subscription = _request(
         service.url + "/subscriptions/sync",
         token=service.token,
@@ -71,9 +73,41 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
     deleted = service.mirror_annotation({"event": "delete", "annotation_id": "ANN00001"})
     assert deleted["updated"] == 1
     assert service.annotation_list("arxiv:2504.16054")["active_count"] == 0
+    status, migration = _request(
+        service.url + "/zotero/migration/results",
+        token=service.token,
+        method="POST",
+        body={"items": [{
+            "paper_uid": "arxiv:2504.16054",
+            "item_key": "ABCD1234",
+            "library_id": 1,
+            "attachments": [{"key": "ATT00001", "mode": "stored", "sha256": ""}],
+        }]},
+    )
+    assert status == 200 and migration["mappings"]
     service.stop()
     assert not (tmp_path / ".paperflow/state/zotero-core-session.json").exists()
     assert read_pairing_token(tmp_path) is None
+
+
+def test_standalone_core_service_does_not_require_vault(tmp_path: Path) -> None:
+    (tmp_path / "data/papers").mkdir(parents=True)
+    (tmp_path / "data/papers/arxiv_1.json").write_text(
+        json.dumps({"paper_uid": "arxiv:1", "paper_title": "Standalone"}),
+        encoding="utf-8",
+    )
+    service = PaperFlowCoreService(tmp_path, port=0)
+    service.start()
+    mirrored = service.mirror_annotation({
+        "paper_uid": "arxiv:1",
+        "annotation_id": "ANN00002",
+        "item_key": "ANN00002",
+        "text": "Core-only annotation",
+    })
+    assert mirrored["path"].startswith("data/annotations/zotero/")
+    assert (tmp_path / "state/zotero-core-session.json").is_file()
+    assert not (tmp_path / ".paperflow").exists()
+    service.stop()
 
 
 def test_mapping_prefers_exact_arxiv_and_applies_only_exact(tmp_path: Path) -> None:

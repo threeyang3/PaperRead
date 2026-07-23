@@ -232,3 +232,9 @@
 - 增加 `paperflow zotero detect/status/doctor` 与 Zotero 7 插件安全骨架。
 - 增加 `entities-0002-display-labels` 迁移，统一生成实体的可读标题，同时保留 Topic/Method/Dataset 类型边界、别名和用户正文。
 - 增加 Zotero Workspace 配置、loopback Core 服务、精确身份映射 dry-run 和脱敏 Zotero JSON fixture；停止后台服务前会校验 PID 命令行，避免误终止无关进程。
+## Unreleased
+
+- 将 Zotero 主工作流继续前移：Core 可使用显式 standalone `data-root`，不依赖 Obsidian Vault。
+- 增加 `ArtifactPolicy`/`PermissionGuard`/`PublishScanner`，阻止系统写入覆盖用户笔记并在发布前扫描私有文件。
+- Zotero 插件新增身份与附件校验快照回传；Core 校验后保存 mapping 和附件 SHA-256 状态，不直接触碰 `zotero.sqlite`。
+- AI Markdown 支持 Zotero、Obsidian 或双目标投影，并保存 render state；费曼问题与用户答案分离。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tarfile
 import zipfile
 from pathlib import Path
@@ -109,3 +110,15 @@ def test_template_vault_is_curated_and_contains_no_papers() -> None:
         for name in names
         for fragment in ["10 Papers", "80 Attachments", ".paperflow/data", ".pdf"]
     )
+
+
+def test_zotero_xpi_is_installable_source_only() -> None:
+    plugin = DIST / f"PaperFlow-Zotero-{VERSION}.xpi"
+    assert plugin.is_file()
+    with zipfile.ZipFile(plugin) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["version"] == VERSION
+    assert manifest["applications"]["zotero"]["id"] == "paperflow-zotero@threeyang"
+    assert "bootstrap.js" in names and "src/zotero-api.js" in names
+    assert not any("zotero.sqlite" in name or name.lower().endswith((".pdf", ".db")) for name in names)

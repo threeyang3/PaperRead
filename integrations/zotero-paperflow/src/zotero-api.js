@@ -103,6 +103,72 @@ class PaperFlowZoteroApi {
     } catch (_error) { return []; }
   }
 
+  async _sha256File(path) {
+    // Zotero/Firefox exposes IOUtils and WebCrypto in modern builds.  If a
+    // build does not expose them, return an empty digest and let Core mark the
+    // attachment as pending verification instead of guessing.
+    try {
+      if (!path || typeof IOUtils === "undefined" || typeof IOUtils.read !== "function" ||
+          typeof crypto === "undefined" || !crypto.subtle) return "";
+      const bytes = await IOUtils.read(path);
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    } catch (_error) { return ""; }
+  }
+
+  async attachmentSnapshot(item) {
+    const parent = item && typeof item === "object" ? item : await this.getItemByKey(item);
+    if (!parent) return [];
+    const result = [];
+    for (const rawKey of this._attachmentKeys(parent)) {
+      const attachment = await this.getItemById(rawKey);
+      if (!attachment) continue;
+      let filePath = "";
+      try {
+        if (typeof this.Zotero.Attachments?.getFilePath === "function") {
+          filePath = String(await this.Zotero.Attachments.getFilePath(attachment.id) || "");
+        } else if (typeof attachment.getFilePath === "function") {
+          filePath = String(await attachment.getFilePath() || "");
+        }
+      } catch (_error) {}
+      let size = null;
+      try {
+        if (filePath && typeof IOUtils !== "undefined" && typeof IOUtils.stat === "function") {
+          size = (await IOUtils.stat(filePath)).size || null;
+        }
+      } catch (_error) {}
+      const linkMode = attachment.attachmentLinkMode ?? this._field(attachment, "attachmentLinkMode");
+      result.push({
+        key: String(attachment.key || rawKey),
+        item_key: String(attachment.key || rawKey),
+        content_type: this._field(attachment, "contentType"),
+        filename: this._field(attachment, "title") || this._field(attachment, "filename"),
+        mode: String(linkMode) === "1" ? "linked" : "stored",
+        sha256: await this._sha256File(filePath),
+        size,
+      });
+    }
+    return result;
+  }
+
+  async migrationSnapshot(items = this.selectedItems(), collectionName = "PaperFlow") {
+    const libraryID = this._libraryID();
+    const output = [];
+    for (const item of items || []) {
+      if (!item || item.isAttachment?.() || item.isNote?.()) continue;
+      const collections = typeof item.getCollections === "function" ? item.getCollections() || [] : [];
+      output.push({
+        paper_uid: this.paperUid(item),
+        item_key: String(item.key || ""),
+        library_id: libraryID,
+        collection_keys: collections.map((value) => String(value)),
+        in_collection: this._inCollection(item, collectionName),
+        attachments: await this.attachmentSnapshot(item),
+      });
+    }
+    return { schema_version: 1, library_id: libraryID, collection_name: collectionName, items: output };
+  }
+
   _annotationField(item, name) {
     return this._field(item, name);
   }

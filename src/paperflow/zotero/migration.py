@@ -116,6 +116,25 @@ def ingest_plugin_results(root: Path, results: dict[str, Any]) -> dict[str, Any]
         if not paper_uid or not zotero_key or any(char in paper_uid + zotero_key for char in "\\/\x00"):
             rejected.append({"paper_uid": paper_uid, "reason": "missing-or-invalid-identity"})
             continue
+        attachments = []
+        invalid_attachment = False
+        for attachment in item.get("attachments") or []:
+            if not isinstance(attachment, dict):
+                invalid_attachment = True
+                break
+            key = str(attachment.get("key") or attachment.get("item_key") or "").strip()
+            digest = str(attachment.get("sha256") or "").strip().lower()
+            mode = str(attachment.get("mode") or "stored").strip().lower()
+            if not key or any(char in key for char in "\\/\x00") or mode not in {"stored", "linked"}:
+                invalid_attachment = True
+                break
+            if digest and (len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest)):
+                invalid_attachment = True
+                break
+            attachments.append({**attachment, "key": key, "sha256": digest, "mode": mode})
+        if invalid_attachment:
+            rejected.append({"paper_uid": paper_uid, "reason": "invalid-attachment-fact"})
+            continue
         mapping = {
             "schema_version": 2,
             "paper_uid": paper_uid,
@@ -123,7 +142,8 @@ def ingest_plugin_results(root: Path, results: dict[str, Any]) -> dict[str, Any]
                 "item_key": zotero_key,
                 "library_id": item.get("library_id"),
                 "collection_keys": list(item.get("collection_keys") or []),
-                "attachments": list(item.get("attachments") or []),
+                "attachments": attachments,
+                "attachment_verification": "sha256-verified" if attachments and all(value.get("sha256") for value in attachments) else "pending-file-check",
                 "source": "paperflow-zotero-plugin",
                 "updated_at": iso_beijing(),
             },

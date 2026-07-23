@@ -12,12 +12,26 @@ from paperflow.workspace import load_workspace_settings, resolve_vault_root
 from paperflow.zotero.local_api import ZoteroLocalApi
 from paperflow.zotero.mapping import load_items
 from paperflow.zotero.migration import ingest_plugin_results, plan_migration, verify_migration
-from paperflow.zotero.store import ensure_layout, layout
+from paperflow.zotero.store import data_root as store_data_root, ensure_layout, layout
 from paperflow.zotero.markdown import render_ai_projection
+from paperflow.zotero.feynman import ensure_questions, load_answers, save_answer
 
 
 def _root(vault: Path | None) -> Path:
     return resolve_vault_root(vault)
+
+
+def _command_root(vault: Path | None, core_root: Path | None) -> Path:
+    if vault is not None and core_root is not None:
+        raise typer.BadParameter("--vault and --data-root are mutually exclusive")
+    if core_root is not None:
+        resolved = core_root.expanduser().resolve()
+        if (resolved / ".paperflow").exists():
+            raise typer.BadParameter("--data-root must be standalone, not a Vault")
+        if not (resolved / "data").is_dir():
+            raise typer.BadParameter("--data-root is not initialized; run `zotero data-root --apply` first")
+        return resolved
+    return _root(vault)
 
 
 def _items_from_input(
@@ -90,11 +104,13 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         paper_uid: str = typer.Option(..., "--paper"),
         zotero_item_key: str = typer.Option("", "--zotero-item-key"),
         output: Path | None = typer.Option(None, "--output"),
+        target: str = typer.Option("zotero", "--target", help="zotero、obsidian 或 both"),
         apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
         vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
     ) -> None:
         """渲染系统管理的 Zotero AI Markdown 投影，不覆盖用户编辑的现有文件。"""
-        result = render_ai_projection(_root(vault), paper_uid, zotero_item_key=zotero_item_key, output=output, apply_changes=apply_changes)
+        result = render_ai_projection(_command_root(vault, core_root), paper_uid, zotero_item_key=zotero_item_key, output=output, apply_changes=apply_changes, target=target)
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
         if result.get("status") == "manual-review-required":
             raise typer.Exit(2)
@@ -104,11 +120,52 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         paper_uid: str = typer.Option(..., "--paper"),
         zotero_item_key: str = typer.Option("", "--zotero-item-key"),
         vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
     ) -> None:
         """生成由 Zotero 插件执行附件导入的计划；Core 不直接写 Zotero。"""
-        result = render_ai_projection(_root(vault), paper_uid, zotero_item_key=zotero_item_key, apply_changes=False)
+        result = render_ai_projection(_command_root(vault, core_root), paper_uid, zotero_item_key=zotero_item_key, apply_changes=False)
         result.update({"status": "plugin-required", "write_target": "Zotero Attachments API", "requires_user_confirmation": True})
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+    feynman_app = typer.Typer(help="管理 AI 生成的问题与用户独立答案。", no_args_is_help=True)
+    zotero_app.add_typer(feynman_app, name="feynman")
+
+    @feynman_app.command("init")
+    def zotero_feynman_init(
+        paper_uid: str = typer.Option(..., "--paper"),
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """把 AI Raw 中的问题投影到用户答案文件；不覆盖已有答案。"""
+        root = _command_root(vault, core_root)
+        record_path = store_data_root(root) / "papers" / f"{paper_uid.replace(':', '_')}.json"
+        if not record_path.is_file():
+            raise typer.BadParameter(f"paper record not found: {paper_uid}")
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        questions = record.get("ai_feynman_questions") or record.get("feynman_questions") or []
+        result = ensure_questions(root, paper_uid, questions, apply_changes=apply_changes)
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+    @feynman_app.command("answer")
+    def zotero_feynman_answer(
+        paper_uid: str = typer.Option(..., "--paper"),
+        question_id: str = typer.Option(..., "--question-id"),
+        answer: str = typer.Option(..., "--answer"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """写入用户答案；AI Raw 和系统 Markdown 永远不被改写。"""
+        result = save_answer(_command_root(vault, core_root), paper_uid, question_id, answer)
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+    @feynman_app.command("show")
+    def zotero_feynman_show(
+        paper_uid: str = typer.Option(..., "--paper"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        typer.echo(json.dumps(load_answers(_command_root(vault, core_root), paper_uid), ensure_ascii=False, indent=2))
 
     migrate_app = typer.Typer(help="规划和验证 Zotero 迁移；真实写入必须由 Zotero 插件完成。", no_args_is_help=True)
     zotero_app.add_typer(migrate_app, name="migrate")

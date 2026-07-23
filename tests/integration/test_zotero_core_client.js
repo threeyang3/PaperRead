@@ -33,11 +33,13 @@ async function main() {
   await client.annotations("arxiv:2504.16054");
   await client.sendEvent({ item_key: "ABCD1234", event: "modify" });
   await client.enqueueAnalysis({ paper_uid: "arxiv:2504.16054" });
+  await client.migrationResults({ items: [] });
   assert.equal(requests[0].options.headers.Authorization, undefined);
   assert.equal(requests[1].options.headers.Authorization, `Bearer ${token}`);
   assert.match(requests[2].url, /zotero\/annotations/);
   assert.equal(requests[3].options.method, "POST");
   assert.match(requests[4].url, /analysis\/jobs$/);
+  assert.match(requests[5].url, /zotero\/migration\/results$/);
   assert.throws(() => new sandbox.PaperFlowCoreClient("https://example.com", token), /loopback/);
   assert.throws(() => client.setToken("short"), /invalid/);
   const noToken = new sandbox.PaperFlowCoreClient();

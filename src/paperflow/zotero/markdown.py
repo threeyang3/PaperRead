@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from paperflow.obsidian.frontmatter import dump_frontmatter
-from paperflow.utils import atomic_write, iso_beijing
+from paperflow.utils import atomic_json, atomic_write, iso_beijing
 from paperflow.zotero.store import data_root, standalone
+from paperflow.security.artifacts import PermissionGuard
 
 
 def _text(value: object) -> str:
@@ -60,11 +61,17 @@ def _paper_record(root: Path, paper_uid: str) -> dict[str, Any]:
     raise FileNotFoundError(f"paper record not found: {paper_uid}")
 
 
-def _projection_path(root: Path, paper_uid: str) -> Path:
+def _projection_path(root: Path, paper_uid: str, target: str = "zotero") -> Path:
     safe = paper_uid.replace(":", "_")
+    if target == "obsidian":
+        return root / "20 AI Analyses" / f"{safe}.analysis.md"
     if standalone(root):
         return root / "documents/zotero" / f"{safe}.analysis.md"
     return root / ".paperflow/data/zotero/markdown" / f"{safe}.analysis.md"
+
+
+def _render_state_path(root: Path, paper_uid: str) -> Path:
+    return data_root(root) / "derived/ai-render-state" / f"{paper_uid.replace(':', '_')}.json"
 
 
 def build_ai_markdown(record: dict[str, Any], *, zotero_item_key: str = "") -> str:
@@ -92,7 +99,9 @@ def build_ai_markdown(record: dict[str, Any], *, zotero_item_key: str = "") -> s
         "reading_status": _field(record, "user_reading_status") or "inbox",
         "review_status": _field(record, "user_review_status") or "pending",
         "reproduction_status": _field(record, "user_reproduction_status") or "not_started",
-        "updated_at": iso_beijing(),
+        # Keep the projection content-stable between renders.  A wall-clock
+        # timestamp here would make an unchanged AI Raw look user-modified.
+        "updated_at": _field(record, "ai_analyzed_at", "system_last_synced_at"),
     }
     sections = [f"# {title}", "", "## 一句话概述", "", summary]
     if contributions:
@@ -109,29 +118,68 @@ def build_ai_markdown(record: dict[str, Any], *, zotero_item_key: str = "") -> s
     return dump_frontmatter(frontmatter) + "\n" + "\n".join(sections)
 
 
-def render_ai_projection(root: Path, paper_uid: str, *, zotero_item_key: str = "", output: Path | None = None, apply_changes: bool = False) -> dict[str, Any]:
+def render_ai_projection(
+    root: Path,
+    paper_uid: str,
+    *,
+    zotero_item_key: str = "",
+    output: Path | None = None,
+    apply_changes: bool = False,
+    target: str = "zotero",
+) -> dict[str, Any]:
+    if target not in {"zotero", "obsidian", "both"}:
+        raise ValueError("target must be zotero, obsidian, or both")
     record = _paper_record(root, paper_uid)
     body = build_ai_markdown(record, zotero_item_key=zotero_item_key)
-    target = output.expanduser().resolve() if output else _projection_path(root, paper_uid)
     content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-    changed = existing != body
+    targets = [output.expanduser().resolve()] if output else [
+        _projection_path(root, paper_uid, "zotero" if target == "both" else target)
+    ]
+    if target == "both" and output is None:
+        targets = [_projection_path(root, paper_uid, "zotero"), _projection_path(root, paper_uid, "obsidian")]
+    existing_by_path = {
+        path: path.read_text(encoding="utf-8") if path.is_file() else ""
+        for path in targets
+    }
+    changed_paths = [path for path, existing in existing_by_path.items() if existing != body]
     result: dict[str, Any] = {
         "paper_uid": paper_uid,
-        "path": target.as_posix(),
+        "paths": [path.as_posix() for path in targets],
+        "path": targets[0].as_posix(),
+        "target": target,
         "dry_run": not apply_changes,
-        "changed": changed,
+        "changed": bool(changed_paths),
         "content_sha256": content_hash,
         "permission": "SYSTEM_MANAGED",
     }
     if apply_changes:
-        if existing and existing != body:
-            result.update({"status": "manual-review-required", "reason": "existing projection differs"})
+        guard = PermissionGuard(root)
+        modified = [path for path, existing in existing_by_path.items() if existing and existing != body]
+        if modified:
+            result.update({
+                "status": "manual-review-required",
+                "reason": "existing projection differs",
+                "conflicts": [path.as_posix() for path in modified],
+            })
             return result
-        atomic_write(target, body)
+        for path in targets:
+            guard.authorize(path, "SYSTEM_MANAGED")
+            atomic_write(path, body)
+        state_path = _render_state_path(root, paper_uid)
+        guard.authorize(state_path, "SYSTEM_MANAGED")
+        atomic_json(state_path, {
+            "schema_version": 1,
+            "paper_uid": paper_uid,
+            "primary_target": target,
+            "content_sha256": content_hash,
+            "targets": {path.as_posix(): content_hash for path in targets},
+            "artifact_permission": "SYSTEM_MANAGED",
+            "updated_at": iso_beijing(),
+        })
+        result["render_state"] = state_path.as_posix()
         result["status"] = "written"
     else:
-        result["status"] = "would-write" if changed else "up-to-date"
+        result["status"] = "would-write" if changed_paths else "up-to-date"
     return result
 
 

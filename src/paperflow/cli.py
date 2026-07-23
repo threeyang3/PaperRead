@@ -71,6 +71,7 @@ from paperflow.zotero import environment as zotero_environment
 from paperflow.zotero.environment import redact_environment
 from paperflow.zotero.core_service import PaperFlowCoreService, read_pairing_token, read_session
 from paperflow.zotero.mapping import apply_links, load_items, plan_links
+from paperflow.zotero.store import runtime_root, state_root
 from paperflow.zotero.cli_commands import attach_zotero_commands
 
 
@@ -187,6 +188,27 @@ def cfg():
 
 def _root(vault: Path | None) -> Path:
     return resolve_vault_root(vault)
+
+
+def _service_root(vault: Path | None, core_root: Path | None) -> Path:
+    """Resolve a Vault or a standalone Core data root without guessing.
+
+    A standalone root is deliberately explicit: it must not look like an
+    Obsidian Vault and PaperFlow never creates or migrates Zotero files from
+    this option.  This keeps Zotero-only mode usable when Obsidian is absent.
+    """
+    if vault is not None and core_root is not None:
+        raise typer.BadParameter("--vault and --data-root are mutually exclusive")
+    if core_root is not None:
+        resolved = core_root.expanduser().resolve()
+        if (resolved / ".paperflow").exists():
+            raise typer.BadParameter("--data-root must be a standalone Core directory, not a Vault")
+        if not (resolved / "data").is_dir():
+            raise typer.BadParameter("--data-root is not initialized; run `zotero data-root --apply` first")
+        return resolved
+    if vault is not None:
+        return _root(vault)
+    raise typer.BadParameter("provide either --vault or --data-root")
 
 
 def _persist_zotero_environment(root: Path, report: dict[str, object]) -> str:
@@ -307,14 +329,16 @@ def _is_core_service_pid(pid: object, root: Path) -> bool:
 
 @zotero_service_app.command("serve")
 def zotero_service_serve(
-    vault: Path = typer.Option(..., "--vault"),
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
     port: int | None = typer.Option(None, "--port", min=1024, max=65535),
 ):
     """在前台运行 loopback-only Core 服务；供 `service start` 使用。"""
-    root = _root(vault)
-    if port is None:
+    root = _service_root(vault, core_root)
+    if port is None and (root / ".paperflow/workspace.yaml").is_file():
         _, settings = load_workspace_settings(root)
         port = settings.zotero.environment.core_service_port
+    port = port or 23140
     service = PaperFlowCoreService(root, port=port)
     service.start(background=False)
     try:
@@ -325,20 +349,24 @@ def zotero_service_serve(
 
 @zotero_service_app.command("start")
 def zotero_service_start(
-    vault: Path = typer.Option(..., "--vault"),
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
     port: int | None = typer.Option(None, "--port", min=1024, max=65535),
 ):
     """启动后台 Core 服务；只创建随机会话令牌，不接受命令执行。"""
-    root = _root(vault)
-    if port is None:
+    root = _service_root(vault, core_root)
+    if port is None and (root / ".paperflow/workspace.yaml").is_file():
         _, settings = load_workspace_settings(root)
         port = settings.zotero.environment.core_service_port
+    port = port or 23140
+    session_path = state_root(root) / "zotero-core-session.json"
     existing = read_session(root)
     if existing and _pid_alive(existing.get("pid")):
-        _echo_json({"status": "already-running", "session_state": ".paperflow/state/zotero-core-session.json"})
+        _echo_json({"status": "already-running", "session_state": session_path.relative_to(root).as_posix()})
         return
     if existing:
-        (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+        session_path.unlink(missing_ok=True)
+    flag = "--data-root" if core_root is not None else "--vault"
     command = [
         sys.executable,
         "-m",
@@ -346,7 +374,7 @@ def zotero_service_start(
         "zotero",
         "service",
         "serve",
-        "--vault",
+        flag,
         str(root),
         "--port",
         str(port),
@@ -358,14 +386,14 @@ def zotero_service_start(
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
             | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         )
-    runtime = root / ".paperflow/runtime"
+    runtime = runtime_root(root)
     runtime.mkdir(parents=True, exist_ok=True)
     process = subprocess.Popen(
         command,
         cwd=str(root),
         stdin=subprocess.DEVNULL,
-        stdout=(root / ".paperflow/runtime/zotero-core-service.out.log").open("ab"),
-        stderr=(root / ".paperflow/runtime/zotero-core-service.err.log").open("ab"),
+        stdout=(runtime / "zotero-core-service.out.log").open("ab"),
+        stderr=(runtime / "zotero-core-service.err.log").open("ab"),
         creationflags=creationflags,
         close_fds=os.name != "nt",
     )
@@ -384,17 +412,20 @@ def zotero_service_start(
         if process.poll() is None:
             process.terminate()
         raise typer.BadParameter(
-            "Core service did not publish a live session; inspect .paperflow/runtime/zotero-core-service.err.log"
+            f"Core service did not publish a live session; inspect {runtime.relative_to(root).as_posix()}/zotero-core-service.err.log"
         )
-    _echo_json({"status": "started", "pid": session.get("pid"), "base_url": session.get("base_url"), "session_state": ".paperflow/state/zotero-core-session.json"})
+    _echo_json({"status": "started", "pid": session.get("pid"), "base_url": session.get("base_url"), "session_state": session_path.relative_to(root).as_posix(), "root_mode": "standalone" if core_root is not None else "vault"})
 
 
 @zotero_service_app.command("status")
-def zotero_service_status(vault: Path = typer.Option(..., "--vault")):
-    root = _root(vault)
+def zotero_service_status(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+):
+    root = _service_root(vault, core_root)
     session = read_session(root)
     if not session:
-        _echo_json({"status": "stopped", "session_state": ".paperflow/state/zotero-core-session.json"})
+        _echo_json({"status": "stopped", "session_state": (state_root(root) / "zotero-core-session.json").relative_to(root).as_posix()})
         return
     verified = _is_core_service_pid(session.get("pid"), root)
     running = _pid_alive(session.get("pid"))
@@ -403,12 +434,15 @@ def zotero_service_status(vault: Path = typer.Option(..., "--vault")):
 
 
 @zotero_service_app.command("token")
-def zotero_service_token(vault: Path = typer.Option(..., "--vault")):
+def zotero_service_token(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+):
     """显示当前 Core 会话令牌，供用户手动粘贴到 Zotero 插件。
 
     令牌仅存在于被忽略的 runtime 文件；本命令不会写入日志或 Vault 文档。
     """
-    root = _root(vault)
+    root = _service_root(vault, core_root)
     session = read_session(root)
     token = read_pairing_token(root)
     if not session or not token or not _is_core_service_pid(session.get("pid"), root):
@@ -423,15 +457,18 @@ def zotero_service_token(vault: Path = typer.Option(..., "--vault")):
 
 
 @zotero_service_app.command("stop")
-def zotero_service_stop(vault: Path = typer.Option(..., "--vault")):
-    root = _root(vault)
+def zotero_service_stop(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+):
+    root = _service_root(vault, core_root)
     session = read_session(root)
     if not session:
         _echo_json({"status": "already-stopped"})
         return
     if not _is_core_service_pid(session.get("pid"), root):
         if not _pid_alive(session.get("pid")):
-            (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+            (state_root(root) / "zotero-core-session.json").unlink(missing_ok=True)
             _echo_json({"status": "stale-session-removed"})
             return
         _echo_json({"status": "manual-review-required", "reason": "session PID command line was not verified as PaperFlow Core; no process was stopped"})
@@ -439,7 +476,7 @@ def zotero_service_stop(vault: Path = typer.Option(..., "--vault")):
     try:
         os.kill(int(session["pid"]), signal.SIGTERM)
     except (OSError, ProcessLookupError):
-        (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+        (state_root(root) / "zotero-core-session.json").unlink(missing_ok=True)
         _echo_json({"status": "stale-session-removed"})
         return
     stopped = False
@@ -449,8 +486,8 @@ def zotero_service_stop(vault: Path = typer.Option(..., "--vault")):
             stopped = True
             break
     if stopped:
-        (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
-        (root / ".paperflow/runtime/zotero-core-session.token").unlink(missing_ok=True)
+        (state_root(root) / "zotero-core-session.json").unlink(missing_ok=True)
+        (runtime_root(root) / "zotero-core-session.token").unlink(missing_ok=True)
         _echo_json({"status": "stopped", "pid": session["pid"]})
         return
     _echo_json({"status": "stop-requested", "pid": session["pid"]})

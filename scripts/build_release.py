@@ -92,6 +92,7 @@ def main() -> None:
         "PaperFlow-Template-Vault-*.zip",
         "schemas-*.zip",
         "templates-*.zip",
+        "PaperFlow-Zotero-*.xpi",
     ]:
         for stale in DIST.glob(pattern):
             stale.unlink()
@@ -184,6 +185,14 @@ def main() -> None:
 
     zip_tree(DIST / f"schemas-{VERSION}.zip", ROOT / "schemas", "schemas")
     zip_tree(DIST / f"templates-{VERSION}.zip", ROOT / "templates", "templates")
+    zotero_stage = DIST / f"PaperFlow-Zotero-{VERSION}"
+    if zotero_stage.exists():
+        shutil.rmtree(zotero_stage)
+    shutil.copytree(ROOT / "integrations/zotero-paperflow", zotero_stage)
+    zotero_plugin = DIST / f"PaperFlow-Zotero-{VERSION}.xpi"
+    zip_tree(zotero_plugin, zotero_stage)
+    audit_archive(zotero_plugin)
+    shutil.rmtree(zotero_stage)
     notes = DIST / "migration-notes.md"
     notes.write_text(
         f"# PaperFlow {VERSION} migration notes\n\n"
