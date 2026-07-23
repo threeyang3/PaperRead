@@ -4,7 +4,11 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
+import signal
+import urllib.error
+import urllib.request
 from pathlib import Path
 import typer
 from ruamel.yaml import YAML
@@ -44,6 +48,7 @@ from paperflow.paths.service import (
     variables_documentation,
 )
 from paperflow.paths.migrate import migrate_paths
+from paperflow.paths.redirects import plan_redirect_labels, apply_redirect_labels
 from paperflow.workspace import (
     backup_workspace_config,
     init_workspace,
@@ -62,6 +67,10 @@ from paperflow.health import scan_workspace_health
 from paperflow.template_sets import TemplateSetManager
 from paperflow.obsidian.artifacts import apply_user_note_migration, plan_user_note_migration, ensure_user_note, artifact_path
 from paperflow.obsidian.view_model import build_paper_view_model
+from paperflow.zotero.environment import detect_environment, redact_environment
+from paperflow.zotero.core_service import PaperFlowCoreService, read_pairing_token, read_session
+from paperflow.zotero.mapping import apply_links, load_items, plan_links
+from paperflow.zotero.cli_commands import attach_zotero_commands
 
 
 def _configure_console_stream(stream) -> None:
@@ -132,6 +141,11 @@ source_app = typer.Typer(help="管理并同步只读公共 Feed 数据源。", n
 update_app = typer.Typer(help="检查版本信息并迁移 Workspace；不修改程序安装。", no_args_is_help=True)
 paper_app = typer.Typer(help="导入、分析、渲染和验证论文。", no_args_is_help=True)
 templates_app = typer.Typer(help="管理 Paper Workspace 模板集。", no_args_is_help=True)
+zotero_app = typer.Typer(
+    help="检测并维护 PaperFlow 与 Zotero 的安全集成。真实 Zotero 写入必须经插件 API。",
+    no_args_is_help=True,
+)
+zotero_service_app = typer.Typer(help="管理 loopback-only PaperFlow Core 服务。", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(migrate_app, name="migrate")
 app.add_typer(config_app, name="config")
@@ -144,6 +158,9 @@ app.add_typer(source_app, name="source")
 app.add_typer(update_app, name="update")
 app.add_typer(paper_app, name="paper")
 app.add_typer(templates_app, name="templates")
+app.add_typer(zotero_app, name="zotero")
+zotero_app.add_typer(zotero_service_app, name="service")
+attach_zotero_commands(zotero_app)
 
 from paperflow.cli_features import attach_feature_apps
 
@@ -169,6 +186,337 @@ def cfg():
 
 def _root(vault: Path | None) -> Path:
     return resolve_vault_root(vault)
+
+
+def _persist_zotero_environment(root: Path, report: dict[str, object]) -> str:
+    target = root / ".paperflow/state/zotero-environment.json"
+    atomic_json(target, report)
+    return target.relative_to(root).as_posix()
+
+
+def _echo_json(value: object) -> None:
+    typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+@zotero_app.command("detect")
+def zotero_detect(
+    vault: Path | None = typer.Option(None, "--vault", help="可选的 PaperFlow Vault。"),
+    persist: bool = typer.Option(True, "--persist/--no-persist", help="将本地检测结果写入被 Git 忽略的状态目录。"),
+    redacted: bool = typer.Option(False, "--redacted", help="隐藏本机路径，适合复制到公共审计报告。"),
+):
+    """只读检测 Zotero 安装、活动 Profile、自定义数据目录和 Local API。"""
+    report = detect_environment()
+    persisted = ""
+    if persist and vault is not None:
+        persisted = _persist_zotero_environment(_root(vault), report)
+    output = redact_environment(report) if redacted else report
+    if persisted:
+        output["persisted_state"] = persisted
+    _echo_json(output)
+
+
+@zotero_app.command("status")
+def zotero_status(
+    vault: Path | None = typer.Option(None, "--vault"),
+    redacted: bool = typer.Option(False, "--redacted"),
+):
+    """显示当前 Zotero 连接状态；Zotero 未启动不被误报为数据库故障。"""
+    report = detect_environment()
+    output = redact_environment(report) if redacted else report
+    output["ready_for_read_only_integration"] = bool(
+        report["zotero"]["installed"]
+        and any(item["data_dir"]["sqlite"] for item in report["profiles"])
+    )
+    output["note"] = (
+        "Local API will become reachable after Zotero is started; PaperFlow does not start or stop Zotero."
+    )
+    _echo_json(output)
+
+
+@zotero_app.command("doctor")
+def zotero_doctor(
+    vault: Path | None = typer.Option(None, "--vault"),
+    redacted: bool = typer.Option(False, "--redacted"),
+):
+    """对 Zotero 集成前置条件做只读诊断，不写入 Zotero。"""
+    report = detect_environment()
+    checks = {
+        "installed": bool(report["zotero"]["installed"]),
+        "profile_detected": bool(report["profiles"]),
+        "data_directory_resolved": any(
+            item["data_dir"]["exists"] and item["data_dir"]["sqlite"] and item["data_dir"]["storage"]
+            for item in report["profiles"]
+        ),
+        "single_active_profile": report["active_profile_count"] == 1,
+        "api_loopback_only": report["safety"]["network_scope"] == "loopback-only",
+        "database_untouched": not report["safety"]["database_modified"] and not report["safety"]["database_read"],
+    }
+    output = redact_environment(report) if redacted else report
+    output["checks"] = checks
+    output["ok"] = all(checks.values())
+    _echo_json(output)
+    if not output["ok"]:
+        raise typer.Exit(1)
+
+
+def _pid_alive(pid: object) -> bool:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    try:
+        os.kill(value, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
+def _is_core_service_pid(pid: object, root: Path) -> bool:
+    """Verify a session PID command line before sending it a stop signal."""
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    if os.name != "nt":
+        return _pid_alive(value)
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"(Get-CimInstance Win32_Process -Filter \"ProcessId={value}\").CommandLine",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    command_line = completed.stdout.decode("utf-8", errors="replace")
+    return (
+        "paperflow.cli zotero service serve" in command_line
+        and str(root) in command_line
+    )
+
+
+@zotero_service_app.command("serve")
+def zotero_service_serve(
+    vault: Path = typer.Option(..., "--vault"),
+    port: int | None = typer.Option(None, "--port", min=1024, max=65535),
+):
+    """在前台运行 loopback-only Core 服务；供 `service start` 使用。"""
+    root = _root(vault)
+    if port is None:
+        _, settings = load_workspace_settings(root)
+        port = settings.zotero.environment.core_service_port
+    service = PaperFlowCoreService(root, port=port)
+    service.start(background=False)
+    try:
+        service.serve_forever()
+    except KeyboardInterrupt:
+        service.stop()
+
+
+@zotero_service_app.command("start")
+def zotero_service_start(
+    vault: Path = typer.Option(..., "--vault"),
+    port: int | None = typer.Option(None, "--port", min=1024, max=65535),
+):
+    """启动后台 Core 服务；只创建随机会话令牌，不接受命令执行。"""
+    root = _root(vault)
+    if port is None:
+        _, settings = load_workspace_settings(root)
+        port = settings.zotero.environment.core_service_port
+    existing = read_session(root)
+    if existing and _pid_alive(existing.get("pid")):
+        _echo_json({"status": "already-running", "session_state": ".paperflow/state/zotero-core-session.json"})
+        return
+    if existing:
+        (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+    command = [
+        sys.executable,
+        "-m",
+        "paperflow.cli",
+        "zotero",
+        "service",
+        "serve",
+        "--vault",
+        str(root),
+        "--port",
+        str(port),
+    ]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+    runtime = root / ".paperflow/runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    process = subprocess.Popen(
+        command,
+        cwd=str(root),
+        stdin=subprocess.DEVNULL,
+        stdout=(root / ".paperflow/runtime/zotero-core-service.out.log").open("ab"),
+        stderr=(root / ".paperflow/runtime/zotero-core-service.err.log").open("ab"),
+        creationflags=creationflags,
+        close_fds=os.name != "nt",
+    )
+    session = None
+    for _ in range(50):
+        time.sleep(0.1)
+        session = read_session(root)
+        if not session or not session.get("base_url"):
+            continue
+        try:
+            with urllib.request.urlopen(session["base_url"] + "/health", timeout=0.25):
+                break
+        except (OSError, urllib.error.URLError):
+            continue
+    if not session:
+        if process.poll() is None:
+            process.terminate()
+        raise typer.BadParameter(
+            "Core service did not publish a live session; inspect .paperflow/runtime/zotero-core-service.err.log"
+        )
+    _echo_json({"status": "started", "pid": session.get("pid"), "base_url": session.get("base_url"), "session_state": ".paperflow/state/zotero-core-session.json"})
+
+
+@zotero_service_app.command("status")
+def zotero_service_status(vault: Path = typer.Option(..., "--vault")):
+    root = _root(vault)
+    session = read_session(root)
+    if not session:
+        _echo_json({"status": "stopped", "session_state": ".paperflow/state/zotero-core-session.json"})
+        return
+    verified = _is_core_service_pid(session.get("pid"), root)
+    running = _pid_alive(session.get("pid"))
+    state = "running" if verified else ("manual-review" if running else "stale")
+    _echo_json({"status": state, "pid": session.get("pid"), "base_url": session.get("base_url"), "network_scope": "loopback-only"})
+
+
+@zotero_service_app.command("token")
+def zotero_service_token(vault: Path = typer.Option(..., "--vault")):
+    """显示当前 Core 会话令牌，供用户手动粘贴到 Zotero 插件。
+
+    令牌仅存在于被忽略的 runtime 文件；本命令不会写入日志或 Vault 文档。
+    """
+    root = _root(vault)
+    session = read_session(root)
+    token = read_pairing_token(root)
+    if not session or not token or not _is_core_service_pid(session.get("pid"), root):
+        _echo_json({"status": "unavailable", "reason": "Core is not running"})
+        raise typer.Exit(1)
+    _echo_json({
+        "status": "available",
+        "base_url": session.get("base_url"),
+        "token": token,
+        "warning": "只粘贴到 Zotero 本机偏好设置，不要提交或同步此令牌。",
+    })
+
+
+@zotero_service_app.command("stop")
+def zotero_service_stop(vault: Path = typer.Option(..., "--vault")):
+    root = _root(vault)
+    session = read_session(root)
+    if not session:
+        _echo_json({"status": "already-stopped"})
+        return
+    if not _is_core_service_pid(session.get("pid"), root):
+        if not _pid_alive(session.get("pid")):
+            (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+            _echo_json({"status": "stale-session-removed"})
+            return
+        _echo_json({"status": "manual-review-required", "reason": "session PID command line was not verified as PaperFlow Core; no process was stopped"})
+        raise typer.Exit(2)
+    try:
+        os.kill(int(session["pid"]), signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+        _echo_json({"status": "stale-session-removed"})
+        return
+    stopped = False
+    for _ in range(30):
+        time.sleep(0.1)
+        if not _is_core_service_pid(session.get("pid"), root):
+            stopped = True
+            break
+    if stopped:
+        (root / ".paperflow/state/zotero-core-session.json").unlink(missing_ok=True)
+        (root / ".paperflow/runtime/zotero-core-session.token").unlink(missing_ok=True)
+        _echo_json({"status": "stopped", "pid": session["pid"]})
+        return
+    _echo_json({"status": "stop-requested", "pid": session["pid"]})
+
+
+@zotero_app.command("collections")
+def zotero_collections(vault: Path = typer.Option(..., "--vault")):
+    """显示配置的 PaperFlow Collection；不访问 Zotero 数据库。"""
+    _, settings = load_workspace_settings(vault)
+    primary = settings.zotero.collections.primary
+    _echo_json({
+        "enabled": settings.zotero.enabled and settings.integrations.zotero.enabled,
+        "primary": primary.model_dump(mode="json"),
+        "source": "workspace configuration",
+        "zotero_write": "plugin-api-only",
+    })
+
+
+@zotero_app.command("ensure-collection")
+def zotero_ensure_collection(
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+):
+    """生成 Collection 计划；实际创建必须由 Zotero 插件公开 API 执行。"""
+    _, settings = load_workspace_settings(vault)
+    primary = settings.zotero.collections.primary
+    result = {
+        "dry_run": not apply_changes,
+        "status": "plugin-required",
+        "collection": primary.model_dump(mode="json"),
+        "database_access": False,
+        "reason": "PaperFlow Core never writes zotero.sqlite; the Zotero plugin must create/reuse the Collection.",
+    }
+    _echo_json(result)
+    if apply_changes:
+        raise typer.Exit(2)
+
+
+@zotero_app.command("link")
+def zotero_link(
+    items_json: Path = typer.Option(..., "--items-json", exists=True, readable=True),
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+):
+    """用 Zotero 插件/API 导出的 JSON 规划论文身份映射，不直接读数据库。"""
+    items = load_items(items_json)
+    plan = plan_links(_root(vault), items)
+    _echo_json(apply_links(_root(vault), plan) if apply_changes else plan)
+
+
+@zotero_app.command("unlink")
+def zotero_unlink(
+    paper_uid: str,
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+):
+    root = _root(vault)
+    from paperflow.paths.templates import safe_component
+
+    path = root / ".paperflow/data/connectors/zotero/mappings" / f"{safe_component(paper_uid.replace(':', '_'))}.json"
+    result = {"paper_uid": paper_uid, "path": path.relative_to(root).as_posix(), "dry_run": not apply_changes, "exists": path.exists()}
+    if apply_changes and path.exists():
+        path.unlink()
+        result["status"] = "unlinked"
+    else:
+        result["status"] = "would-unlink" if path.exists() else "already-unlinked"
+    _echo_json(result)
 
 
 @app.command("init")
@@ -561,6 +909,17 @@ def migrate_user_notes_command(
     """迁移主论文中的 USER_NOTES 到独立 User Note（默认只预览）。"""
     root, settings = load_workspace_settings(vault)
     result = apply_user_note_migration(root, settings) if apply_changes else plan_user_note_migration(root, settings)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@migrate_app.command("redirect-labels")
+def migrate_redirect_labels_command(
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """为旧论文路径兼容桩补充可读标题；不会覆盖用户改写的桩。"""
+    root = _root(vault)
+    result = apply_redirect_labels(root) if apply_changes else plan_redirect_labels(root)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 

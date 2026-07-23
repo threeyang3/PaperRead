@@ -25,6 +25,11 @@ def test_init_and_load_arbitrary_vault(tmp_path: Path) -> None:
         "https://github.com/threeyang3/PaperRead"
     )
     assert settings.updates.require_confirm_apply is True
+    assert settings.zotero.enabled is True
+    assert settings.zotero.collections.primary.name == "PaperFlow"
+    assert settings.zotero.analysis_trigger.mode == "collection_only"
+    assert settings.zotero.environment.core_service_port == 23140
+    assert settings.integrations.zotero.enabled is True
 
 
 def test_layering_local_environment_and_cli(

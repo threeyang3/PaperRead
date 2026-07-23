@@ -37,6 +37,19 @@ from paperflow.workspace_v3 import (
     rollback_workspace_v3,
     verify_workspace_v3,
 )
+from paperflow.entity_migration import (
+    apply_entity_normalization,
+    plan_entity_normalization,
+)
+from paperflow.entity_labels import (
+    apply_entity_display_labels,
+    plan_entity_display_labels,
+)
+from paperflow.entity_indexes import rebuild_entity_indexes
+from paperflow.paths.readable import (
+    apply_readable_paper_paths,
+    plan_readable_paper_paths,
+)
 
 
 annotation_app = typer.Typer(help="管理本地私有 PDF 标注。", no_args_is_help=True)
@@ -419,6 +432,54 @@ def attach_feature_apps(
             if apply_changes
             else plan_workspace_v3_rollback(root, backup)
         )
+
+    @migrate_app.command("readable-paper-paths")
+    def migrate_readable_paper_paths(
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+    ):
+        """将论文 Hub 从纯 ID 文件名迁移为短标题-编号文件名。"""
+        root = resolve_vault_root(vault)
+        _echo(
+            apply_readable_paper_paths(root)
+            if apply_changes
+            else plan_readable_paper_paths(root)
+        )
+
+    @migrate_app.command("entities")
+    def migrate_entities(
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+    ):
+        """合并重复 Topic/Method/Dataset 实体并更新 wikilink。"""
+        root = resolve_vault_root(vault)
+        _echo(
+            apply_entity_normalization(root)
+            if apply_changes
+            else plan_entity_normalization(root)
+        )
+
+    @migrate_app.command("entity-labels")
+    def migrate_entity_labels(
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+    ):
+        """统一实体显示名称，保留 Topic/Method/Dataset 类型边界和用户正文。"""
+        root = resolve_vault_root(vault)
+        _echo(
+            apply_entity_display_labels(root)
+            if apply_changes
+            else plan_entity_display_labels(root)
+        )
+
+    @migrate_app.command("entity-index")
+    def migrate_entity_index(
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+    ):
+        """重建 Topic/Method/Dataset 的反向论文索引，保留用户正文。"""
+        root = resolve_vault_root(vault)
+        _echo(rebuild_entity_indexes(root, apply=apply_changes))
 
     @workspace_app.command("rebuild-annotation-index")
     def rebuild_annotation_index(

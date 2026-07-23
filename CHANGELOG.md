@@ -20,6 +20,33 @@
   color, and added the central `annotation ensure-index` command.
 - Bumped the Automation integration resource contract to 10 for the updated
   reading-workspace/index handshake.
+- Added the formal `paths-0002-readable-redirect-labels` migration: legacy
+  ID-only paper paths now show the target title and an explicit open-note link;
+  user-authored redirect text is held for manual review.
+- Added entity navigation documentation clarifying the intentional separation
+  of Topic, Method, and Dataset projections (including the two Diffusion Policy
+  views) and their same-layer duplicate normalization.
+- Added a loopback-only, GET-only Zotero Local API adapter plus reproducible
+  migration plan/apply-result/verify/rollback commands. Plans include PDF
+  source hashes and Collection membership but never write Zotero objects.
+- Added standalone Core Data Root planning/initialization, while preserving the
+  existing Vault `.paperflow` layout, and added guarded Zotero Item Tree columns,
+  Item Pane status projection, and one-second Notifier debounce adapters.
+- Added a Core-side Zotero Connector event state machine that waits for a regular
+  item, stable PDF, configured Collection, and resolved identity before queuing
+  analysis; repeated PDF hash/profile pairs become complete without re-analysis.
+- Added an authenticated Zotero Core client with explicit loopback session pairing,
+  public-API event publishing, manual analysis enqueue, subscription preview, and
+  community publish preview menus; bearer tokens remain in Zotero local preferences.
+- Added a guarded Core worker that consumes analysis/render jobs only for a configured
+  PaperFlow Workspace under the existing pipeline lock; standalone Data Roots remain
+  queue-only and Windows stop now removes stale session/token files after verified exit.
+- Added reader-focused Zotero AI Markdown projections with compact frontmatter,
+  explicit SYSTEM_MANAGED permission, content-hash conflict refusal, and a
+  plugin-required attachment plan; Obsidian user outputs remain separate.
+- Added reverse Topic/Method/Dataset indexes with explicit Chinese entity-type
+  labels; `paperflow migrate entity-index` refreshes only the generated paper
+  list section and preserves entity prose.
 - Added a single `_version.py` application-version source and Workspace 3,
   Feed 2, Annotation 1, and Community 1 contracts.
 - Made PDFs immutable and version-addressed, with SHA-256 indexes and explicit
@@ -189,3 +216,9 @@
 - added wheel, sdist, Windows portable, checksums, CI workflows, installation
   scripts, examples, and first-user documentation;
 - migrated the current Workspace without downloads, AI calls, or path moves.
+## Unreleased
+
+- 增加只读 Zotero 环境审计：识别真实安装、Profile、自定义 data directory 和 loopback Local API；不读取或修改 `zotero.sqlite`。
+- 增加 `paperflow zotero detect/status/doctor` 与 Zotero 7 插件安全骨架。
+- 增加 `entities-0002-display-labels` 迁移，统一生成实体的可读标题，同时保留 Topic/Method/Dataset 类型边界、别名和用户正文。
+- 增加 Zotero Workspace 配置、loopback Core 服务、精确身份映射 dry-run 和脱敏 Zotero JSON fixture；停止后台服务前会校验 PID 命令行，避免误终止无关进程。

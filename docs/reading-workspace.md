@@ -35,3 +35,33 @@ CLI 中央写入 User 层，并立即刷新 `60 Annotations` 索引；不会直�
 
 标注链接固化 selector、PDF 版本和 SHA-256。历史 PDF 仍可打开；切换版本不会
 静默改写标注，需通过 revision/reanchor 流程定位新版本。
+
+## 论文文件名与实体目录
+
+Paper Hub 的物理文件名采用“短标题-论文编号”形式，例如
+`10 Papers/2025/π₀.₅-2504.16054.md`。编号仍是唯一身份，并继续写入
+`paper_uid`、`paper_arxiv_id` 和 aliases；因此文件改名不会改变 Raw、AI、User、
+Derived 或 PDF 的身份。旧 Vault 必须先执行
+`paperflow migrate readable-paper-paths` 预览，再使用 `--apply` 执行迁移。
+迁移会备份 Workspace、保留旧路径重定向、重写 Vault 内 wikilink，并重新渲染
+论文关系；不会覆盖用户属性或 `USER_NOTES_START/END`。
+
+`20 Topics` 根目录表示宽泛研究主题；`20 Topics/Methods` 表示方法实体，
+`20 Topics/Datasets` 表示数据集实体。相同词出现在 Topic 和 Method 两层是
+类型投影，不等于同一文件；同一层内仅保留一个规范 slug。旧版因空格/连字符或
+旧 YAML 格式产生的重复实体，可先用 `paperflow migrate entities` 检查，确认后
+使用 `paperflow migrate entities --apply` 合并。旧文件会先备份，链接会改指向
+规范实体；含有非生成正文的文件不会自动删除，而会列入人工复核。
+
+因此 `Diffusion Policy` 在 Topic 和 Method 两层各有一个文件是有意保留的：前者
+表示研究主题，后者表示方法关系。它们的 `type`/`entity/*` 标签不同，图谱不会把
+两种边混成一类；实体页会在正文顶部明确显示“主题/方法”类型，并列出反向论文；
+但同一层的 `Diffusion Policy`、`Diffusion-Policy` 或大小写变体
+不应并存。当前库已完成 `entities-0001` 合并，并通过
+`paperflow migrate entity-labels --apply` 将方法笔记标题统一为读者友好的
+`Diffusion Policy`（旧 slug 仍作为路径兼容，正文和别名不会丢失）。
+
+论文迁移后留下的纯编号 Markdown 是 `type: paper-redirect` 兼容入口，不是第二份论文正文。
+它们现在会显示“已迁移：<论文标题>”并提供“打开论文笔记”链接；可用
+`paperflow migrate redirect-labels --apply` 补充旧入口，带有用户自定义正文的入口会进入
+`manual_review` 而不会被覆盖。更多示例见 [主题、方法与数据集实体](entity-navigation.md)。

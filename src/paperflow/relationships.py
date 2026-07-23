@@ -7,6 +7,8 @@ from typing import Any
 
 from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json, atomic_write, iso_beijing
+from paperflow.entity_migration import entity_key
+from paperflow.obsidian.frontmatter import read_note
 
 
 ARXIV_REFERENCE_RE = re.compile(
@@ -26,6 +28,37 @@ def _entity_link(root: Path, kind: str, label: str) -> str:
     }[kind]
     relative = Path(folder) / f"{safe_component(clean)[:100]}.md"
     target = root / relative
+    # Reuse a pre-existing entity whose label differs only by case, whitespace
+    # or hyphen punctuation.  This prevents new AI runs from recreating legacy
+    # variants such as `Diffusion Policy` and `Diffusion-Policy`.
+    desired_key = entity_key(clean)
+    if not target.exists():
+        candidates: list[Path] = []
+        directory = root / folder
+        for candidate in sorted(directory.glob("*.md")) if directory.exists() else []:
+            try:
+                frontmatter, _ = read_note(candidate)
+            except Exception:
+                continue
+            candidate_type = str(frontmatter.get("type") or "").casefold()
+            tags = frontmatter.get("tags") or []
+            if isinstance(tags, str):
+                tags = [tags]
+            if candidate_type and candidate_type != kind and f"entity/{kind}" not in tags:
+                continue
+            candidate_label = str(
+                frontmatter.get("title")
+                or frontmatter.get(f"{kind}_name")
+                or candidate.stem
+            )
+            if entity_key(candidate_label) == desired_key:
+                candidates.append(candidate)
+        if candidates:
+            target = next(
+                (candidate for candidate in candidates if candidate.name.casefold() == relative.name.casefold()),
+                candidates[0],
+            )
+    relative = target.relative_to(root)
     if not target.exists():
         atomic_write(
             target,
@@ -202,6 +235,17 @@ def derive_relationships(root: Path, record: dict[str, Any]) -> dict[str, Any]:
         root / ".paperflow/data/relationships" / f"{paper_id}.json",
         relationships,
     )
+    # Keep the reverse Topic/Method/Dataset views useful after every paper
+    # render.  The index writer only touches its machine-managed section and
+    # never replaces user-authored entity prose.
+    try:
+        from paperflow.entity_indexes import rebuild_entity_indexes
+
+        rebuild_entity_indexes(root, apply=True, backup=False, record_history=False)
+    except (OSError, ValueError, KeyError):
+        # Relationship generation remains usable even if an entity projection
+        # needs manual review or the Vault is mid-migration.
+        pass
     return {
         "ai_topic_links": topic_links,
         "ai_method_links": method_links,

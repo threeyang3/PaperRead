@@ -68,11 +68,11 @@ class WorkspacePaths(StrictModel):
     )
     note: PathRule = PathRule(
         root="10 Papers",
-        template="{{year}}/{{paper_id}}.md",
+        template="{{year}}/{{short_title|slug}}-{{paper_id}}.md",
     )
     paper_hub: PathRule = PathRule(
         root="10 Papers",
-        template="{{year}}/{{paper_id}}.md",
+        template="{{year}}/{{short_title|slug}}-{{paper_id}}.md",
     )
     ai_analysis_note: PathRule = PathRule(
         root="20 AI Analyses",
@@ -298,6 +298,55 @@ class CommunitySettings(StrictModel):
     show_small_sample_warning_below: int = Field(default=5, ge=1, le=100)
 
 
+class IntegrationToggle(StrictModel):
+    enabled: bool = True
+
+
+class IntegrationsSettings(StrictModel):
+    """Feature switches shared by Core integrations."""
+
+    zotero: IntegrationToggle = IntegrationToggle()
+    obsidian: IntegrationToggle = IntegrationToggle()
+
+
+class ZoteroEnvironmentSettings(StrictModel):
+    auto_detect: bool = True
+    do_not_assume_default_data_dir: bool = True
+    local_api_url: str = "http://127.0.0.1:23119/api/"
+    core_service_port: int = Field(default=23140, ge=1024, le=65535)
+
+
+class ZoteroPrimaryCollectionSettings(StrictModel):
+    name: str = "PaperFlow"
+    create_if_missing: bool = True
+    collection_key: str = ""
+
+
+class ZoteroCollectionsSettings(StrictModel):
+    primary: ZoteroPrimaryCollectionSettings = ZoteroPrimaryCollectionSettings()
+
+
+class ZoteroMigrationSettings(StrictModel):
+    attachment_mode: Literal["stored", "linked"] = "stored"
+    preserve_original_pdf: bool = True
+    require_hash_verification: bool = True
+
+
+class ZoteroAnalysisTriggerSettings(StrictModel):
+    mode: Literal["manual", "ask", "automatic", "collection_only", "tag_only"] = "collection_only"
+    collections: list[str] = Field(default_factory=lambda: ["PaperFlow"])
+    debounce_seconds: int = Field(default=10, ge=0, le=3600)
+    require_pdf: bool = True
+
+
+class ZoteroSettings(StrictModel):
+    enabled: bool = True
+    environment: ZoteroEnvironmentSettings = ZoteroEnvironmentSettings()
+    collections: ZoteroCollectionsSettings = ZoteroCollectionsSettings()
+    migration: ZoteroMigrationSettings = ZoteroMigrationSettings()
+    analysis_trigger: ZoteroAnalysisTriggerSettings = ZoteroAnalysisTriggerSettings()
+
+
 class WorkspaceSettings(StrictModel):
     workspace_name: str = "PaperFlow Workspace"
     versions: WorkspaceVersions = WorkspaceVersions()
@@ -320,6 +369,8 @@ class WorkspaceSettings(StrictModel):
     analysis_selection: AnalysisSelection = AnalysisSelection()
     annotations: AnnotationSettings = AnnotationSettings()
     community: CommunitySettings = CommunitySettings()
+    integrations: IntegrationsSettings = IntegrationsSettings()
+    zotero: ZoteroSettings = ZoteroSettings()
 
     @field_validator("timezone")
     @classmethod
@@ -455,6 +506,8 @@ def default_workspace_dict() -> dict[str, Any]:
         "analysis_selection": AnalysisSelection().model_dump(mode="json"),
         "annotations": AnnotationSettings().model_dump(mode="json"),
         "community": CommunitySettings().model_dump(mode="json"),
+        "integrations": IntegrationsSettings().model_dump(mode="json"),
+        "zotero": ZoteroSettings().model_dump(mode="json"),
     }
 
 

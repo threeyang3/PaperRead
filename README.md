@@ -76,6 +76,28 @@ index rebuild. The reading workspace asks the central CLI for the configured
 per-paper index path instead of assuming a year-based folder; legacy index
 files are retained and user-authored text is imported without duplication.
 Direct PDF editing remains disabled.
+
+## Zotero 主阅读前端（增量接入）
+
+PaperFlow 正在把 Zotero 作为论文管理和 PDF 阅读的主要前端，Obsidian PDF 功能保留为兼容模式。第一阶段已经提供只读环境审计：
+
+```text
+paperflow zotero detect --vault <vault>
+paperflow zotero status --vault <vault>
+paperflow zotero doctor --vault <vault>
+```
+
+检测会读取活动 Profile 和 `prefs.js` 来识别自定义 data directory，只探测 `127.0.0.1` Local API，绝不直接读写 `zotero.sqlite`。Zotero 插件骨架位于 `integrations/zotero-paperflow`；真实 Collection、附件迁移和标注镜像会在独立测试 Profile 验证后接入。
+
+Core 的 loopback 服务和安全身份映射也可先行使用：
+
+```text
+paperflow zotero service start --vault <vault>
+paperflow zotero service status --vault <vault>
+paperflow zotero link --items-json <zotero-export.json> --vault <vault>
+```
+
+服务只绑定 `127.0.0.1`；身份匹配优先使用精确 arXiv/DOI，只有标题的候选不会静默合并。
 There is no arbitrary shell input; remote push has a separate confirmation and
 repeats validation and privacy scanning.
 
@@ -97,8 +119,19 @@ stable Paper Hub, `20 AI Analyses` contains generated analysis snapshots, and
 `USER_NOTES_START/END` blocks can be migrated with a backup and dry-run:
 `paperflow migrate user-notes --dry-run` followed by `--apply`. Display titles
 (`paper_display_title`/`paper_short_title`) are derived from the source title;
-ID-based filenames remain stable and user aliases are preserved. Built-in and
-custom Template Sets are managed with `paperflow templates list|copy|use|validate|preview`.
+Paper Hub filenames use a readable short-title fragment followed by the arXiv ID
+(for example `π₀.₅-2504.16054.md`). The ID remains the stable identity and is
+preserved in YAML/aliases. Existing ID-only Vaults can be migrated with
+`paperflow migrate readable-paper-paths` followed by
+`paperflow migrate readable-paper-paths --apply`. Built-in and custom Template
+Sets are managed with `paperflow templates list|copy|use|validate|preview`.
+Topic, Method, and Dataset entities are separate graph types; generated labels
+are slug-normalized within each type. Legacy duplicates can be inspected and
+merged with `paperflow migrate entities` and `paperflow migrate entities --apply`.
+The old ID-only Markdown files are compatibility redirect entries, not duplicate
+paper notes; `paperflow migrate redirect-labels --apply` decorates them with the
+target title and a clear link, while preserving user-authored redirect content
+for manual review.
 Templates receive a versioned Paper View Model and run inside a Jinja sandbox.
 See [docs/paper-workspace-artifacts.md](docs/paper-workspace-artifacts.md).
 
@@ -196,6 +229,8 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 - [1.5 迁移指南](docs/1.5-migration-guide.md)
 - [PaperFlow 1.4 用户指南](docs/用户指南-1.4.md)
 - [PaperFlow 1.4 维护者指南](docs/维护者指南-1.4.md)
+- [Zotero 本机环境审计](docs/audits/zotero-local-environment-audit.md)
+- [Zotero 主阅读工作流审计](docs/audits/zotero-primary-workflow-audit.md)
 - [ChatGPT 网页分析与隐私](docs/ChatGPT网页分析与隐私.md)
 - [Nutstore Sync 兼容建议](docs/Nutstore兼容建议.md)
 - [1.4 迁移指南](docs/1.4迁移指南.md)

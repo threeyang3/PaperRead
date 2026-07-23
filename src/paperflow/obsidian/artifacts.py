@@ -23,7 +23,7 @@ USER_RE = re.compile(
 )
 MIGRATION_MARKER = "paperflow-user-note-migrated"
 MIGRATED_LINK_RE = re.compile(
-    r"(?:已迁移到|migrated\s+to)\s+\[\[([^\]]+)\]\]",
+    r"(?:已迁移到|migrated\s+to|我的笔记|my\s+notes)\s*[:：-]?\s*\[\[([^\]]+)\]\]",
     re.IGNORECASE,
 )
 

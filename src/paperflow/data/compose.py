@@ -53,5 +53,8 @@ def compose_record(
     override = user_display_title(record)
     record["paper_display_title"] = override or record["paper_title_display"]
     record["display_title"] = record["paper_display_title"]
-    record["file_name"] = f"{safe_component(paper_id)}.md"
+    title_fragment = safe_component(
+        str(record.get("paper_short_title") or paper_id)
+    )
+    record["file_name"] = f"{title_fragment}-{safe_component(paper_id)}.md"
     return record

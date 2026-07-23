@@ -101,6 +101,14 @@ def validate_all(root: Path) -> list[str]:
     for path in (root / "10 Papers").rglob("*.md"):
         try:
             frontmatter, body = read_note(path)
+            # Path migrations leave a small redirect note at the old stable
+            # ID-only path so existing inbound links continue to resolve. It
+            # is intentionally not a Paper Hub and must not be checked against
+            # the paper frontmatter schema.
+            if frontmatter.get("type") == "paper-redirect" and frontmatter.get(
+                "paperflow_redirect"
+            ):
+                continue
             if frontmatter.get("type") != "paper": errors.append(f"{path}: type is not paper")
             # Migrated Hubs intentionally replace the inline user section with
             # a link to 60 User Notes.  The migration marker is the durable

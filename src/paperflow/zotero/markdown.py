@@ -1,0 +1,138 @@
+"""Reader-focused AI Markdown projection for Zotero attachments.
+
+The projection is a system-managed view of AI Raw data.  It deliberately keeps
+metadata in frontmatter, omits repeated author/URL paragraphs, and refuses to
+overwrite a user-edited projection unless a caller explicitly chooses a new
+output path.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+from paperflow.obsidian.frontmatter import dump_frontmatter
+from paperflow.utils import atomic_write, iso_beijing
+from paperflow.zotero.store import data_root, standalone
+
+
+def _text(value: object) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _authors(record: dict[str, Any]) -> list[str]:
+    values = record.get("paper_authors") or record.get("authors") or []
+    if isinstance(values, str):
+        values = [values]
+    names = [_text(value.get("name") if isinstance(value, dict) else value) for value in values]
+    names = [value for value in names if value]
+    return names[:2] + (["et al."] if len(names) > 2 else [])
+
+
+def _field(record: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _list(record: dict[str, Any], *keys: str) -> list[str]:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, list):
+            return [_text(item) for item in value if _text(item)]
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+    return []
+
+
+def _paper_record(root: Path, paper_uid: str) -> dict[str, Any]:
+    safe = paper_uid.replace(":", "_")
+    candidates = [root / ".paperflow/data/papers" / f"{safe}.json", data_root(root) / "papers" / f"{safe}.json"]
+    for path in candidates:
+        if path.is_file():
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                return value
+    raise FileNotFoundError(f"paper record not found: {paper_uid}")
+
+
+def _projection_path(root: Path, paper_uid: str) -> Path:
+    safe = paper_uid.replace(":", "_")
+    if standalone(root):
+        return root / "documents/zotero" / f"{safe}.analysis.md"
+    return root / ".paperflow/data/zotero/markdown" / f"{safe}.analysis.md"
+
+
+def build_ai_markdown(record: dict[str, Any], *, zotero_item_key: str = "") -> str:
+    title = _field(record, "paper_title_display", "paper_display_title", "paper_title") or "Untitled"
+    summary = _field(record, "ai_summary_short", "ai_one_sentence_summary")
+    contributions = _list(record, "ai_contributions", "ai_key_contributions", "ai_novelty_points")
+    methods = _list(record, "ai_method_family", "ai_methods")
+    evidence = _list(record, "ai_experimental_findings", "ai_results", "ai_evidence")
+    limitations = _list(record, "ai_limitations", "ai_risks", "ai_open_questions")
+    questions = _list(record, "ai_feynman_questions", "feynman_questions")
+    if not summary:
+        summary = "（当前分析没有提供一句话摘要。）"
+    frontmatter = {
+        "type": "paper-ai-analysis",
+        "schema_version": 2,
+        "artifact_permission": "SYSTEM_MANAGED",
+        "paper_uid": _field(record, "paper_uid"),
+        "title": title,
+        "authors": _authors(record),
+        "published_at": _field(record, "paper_submitted_date", "paper_published_date", "paper_year"),
+        "venue": _field(record, "paper_published_venue") or "arXiv",
+        "url": _field(record, "paper_abs_url", "paper_pdf_url"),
+        "zotero_item_key": zotero_item_key,
+        "analysis_status": _field(record, "ai_analysis_status") or "complete",
+        "reading_status": _field(record, "user_reading_status") or "inbox",
+        "review_status": _field(record, "user_review_status") or "pending",
+        "reproduction_status": _field(record, "user_reproduction_status") or "not_started",
+        "updated_at": iso_beijing(),
+    }
+    sections = [f"# {title}", "", "## 一句话概述", "", summary]
+    if contributions:
+        sections += ["", "## 主要贡献", "", *[f"- {value}" for value in contributions]]
+    if methods:
+        sections += ["", "## 方法线索", "", *[f"- {value}" for value in methods]]
+    if evidence:
+        sections += ["", "## 证据与结果", "", *[f"- {value}" for value in evidence]]
+    if limitations:
+        sections += ["", "## 局限与风险", "", *[f"- {value}" for value in limitations]]
+    if questions:
+        sections += ["", "## 费曼问题", "", *[f"- [ ] {value}" for value in questions]]
+    sections += ["", "---", "", "> 本页是 AI Raw 的系统管理投影；个人答案、复盘和复现记录请写入独立用户文档。", ""]
+    return dump_frontmatter(frontmatter) + "\n" + "\n".join(sections)
+
+
+def render_ai_projection(root: Path, paper_uid: str, *, zotero_item_key: str = "", output: Path | None = None, apply_changes: bool = False) -> dict[str, Any]:
+    record = _paper_record(root, paper_uid)
+    body = build_ai_markdown(record, zotero_item_key=zotero_item_key)
+    target = output.expanduser().resolve() if output else _projection_path(root, paper_uid)
+    content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+    changed = existing != body
+    result: dict[str, Any] = {
+        "paper_uid": paper_uid,
+        "path": target.as_posix(),
+        "dry_run": not apply_changes,
+        "changed": changed,
+        "content_sha256": content_hash,
+        "permission": "SYSTEM_MANAGED",
+    }
+    if apply_changes:
+        if existing and existing != body:
+            result.update({"status": "manual-review-required", "reason": "existing projection differs"})
+            return result
+        atomic_write(target, body)
+        result["status"] = "written"
+    else:
+        result["status"] = "would-write" if changed else "up-to-date"
+    return result
+
+
+__all__ = ["build_ai_markdown", "render_ai_projection"]

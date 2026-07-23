@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAML
 
 from paperflow.paths.migrate import migrate_paths
+from paperflow.paths.readable import apply_readable_paper_paths, plan_readable_paper_paths
 from paperflow.workspace import WorkspaceSettings, default_workspace_dict
+from paperflow.workspace import init_workspace
 
 
 def test_path_migration_creates_note_redirect_and_updates_pdf_link(
@@ -94,3 +97,100 @@ def test_path_migration_refuses_existing_target(tmp_path: Path) -> None:
         migrate_paths(tmp_path, settings, dry_run=False)
     assert source.read_text(encoding="utf-8") == "source"
     assert target.read_text(encoding="utf-8") == "existing"
+
+
+def test_readable_paper_path_migration_is_explicit_and_preserves_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    init_workspace(tmp_path)
+    workspace = tmp_path / ".paperflow/workspace.yaml"
+    value = YAML(typ="safe").load(workspace.read_text(encoding="utf-8"))
+    value["paths"]["note"]["template"] = "{{year}}/{{paper_id}}.md"
+    value["paths"]["paper_hub"]["template"] = "{{year}}/{{paper_id}}.md"
+    YAML().dump(value, workspace.open("w", encoding="utf-8", newline="\n"))
+    record = {
+        "paper_uid": "arxiv:2504.16054",
+        "paper_source": "arxiv",
+        "paper_arxiv_id": "2504.16054",
+        "paper_arxiv_version": 1,
+        "paper_title": r"$\pi_{0.5}$: Open-World Generalization",
+        "paper_year": 2025,
+        "paper_submitted_date": "2025-04-20",
+        "note_path": "10 Papers/2025/2504.16054.md",
+        "paper_pdf_path": "",
+    }
+    record_path = tmp_path / ".paperflow/data/papers/arxiv_2504.16054.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    source = tmp_path / record["note_path"]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "---\npaper_uid: arxiv:2504.16054\n---\n\n"
+        "# old\n\n<!-- USER_NOTES_START -->keep<!-- USER_NOTES_END -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "paperflow.pipeline.render.render_uid",
+        lambda config, uid: config.root / json.loads(record_path.read_text())["note_path"],
+    )
+    plan = plan_readable_paper_paths(tmp_path)
+    assert plan["move_count"] == 1
+    result = apply_readable_paper_paths(tmp_path)
+    assert result["status"] == "applied"
+    new_paths = list((tmp_path / "10 Papers/2025").glob("*-2504.16054.md"))
+    assert len(new_paths) == 1
+    new_path = new_paths[0]
+    assert "paperflow_redirect" in source.read_text(encoding="utf-8")
+    updated = json.loads(record_path.read_text(encoding="utf-8"))
+    assert updated["note_path"].endswith("-2504.16054.md")
+
+
+def test_readable_migration_updates_selected_derived_path(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    workspace = tmp_path / ".paperflow/workspace.yaml"
+    value = YAML(typ="safe").load(workspace.read_text(encoding="utf-8"))
+    value["paths"]["note"]["template"] = "{{year}}/{{paper_id}}.md"
+    value["paths"]["paper_hub"]["template"] = "{{year}}/{{paper_id}}.md"
+    YAML().dump(value, workspace.open("w", encoding="utf-8", newline="\n"))
+    record = {
+        "paper_uid": "arxiv:2504.16054",
+        "paper_source": "arxiv",
+        "paper_arxiv_id": "2504.16054",
+        "paper_arxiv_version": 1,
+        "paper_title": "Pi Open World",
+        "paper_year": 2025,
+        "paper_submitted_date": "2025-04-20",
+        "note_path": "10 Papers/2025/2504.16054.md",
+        "paper_pdf_path": "",
+    }
+    papers = tmp_path / ".paperflow/data/papers/arxiv_2504.16054.json"
+    papers.parent.mkdir(parents=True, exist_ok=True)
+    papers.write_text(json.dumps(record), encoding="utf-8")
+    derived = tmp_path / ".paperflow/data/derived/2504.16054.json"
+    derived.parent.mkdir(parents=True, exist_ok=True)
+    derived.write_text(
+        json.dumps({"derived": {"note_path": record["note_path"]}}), encoding="utf-8"
+    )
+    source = tmp_path / record["note_path"]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "---\npaper_uid: arxiv:2504.16054\n---\n\n"
+        "# old\n\n<!-- USER_NOTES_START -->keep<!-- USER_NOTES_END -->\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            "paperflow.pipeline.render.render_uid",
+            lambda config, uid: config.root / json.loads(papers.read_text())[
+                "note_path"
+            ],
+        )
+        result = apply_readable_paper_paths(tmp_path)
+    finally:
+        monkeypatch.undo()
+
+    assert result["status"] == "applied"
+    updated = json.loads(derived.read_text(encoding="utf-8"))
+    assert updated["derived"]["note_path"].endswith("-2504.16054.md")
