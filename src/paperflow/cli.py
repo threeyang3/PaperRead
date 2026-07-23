@@ -67,7 +67,8 @@ from paperflow.health import scan_workspace_health
 from paperflow.template_sets import TemplateSetManager
 from paperflow.obsidian.artifacts import apply_user_note_migration, plan_user_note_migration, ensure_user_note, artifact_path
 from paperflow.obsidian.view_model import build_paper_view_model
-from paperflow.zotero.environment import detect_environment, redact_environment
+from paperflow.zotero import environment as zotero_environment
+from paperflow.zotero.environment import redact_environment
 from paperflow.zotero.core_service import PaperFlowCoreService, read_pairing_token, read_session
 from paperflow.zotero.mapping import apply_links, load_items, plan_links
 from paperflow.zotero.cli_commands import attach_zotero_commands
@@ -205,7 +206,7 @@ def zotero_detect(
     redacted: bool = typer.Option(False, "--redacted", help="隐藏本机路径，适合复制到公共审计报告。"),
 ):
     """只读检测 Zotero 安装、活动 Profile、自定义数据目录和 Local API。"""
-    report = detect_environment()
+    report = zotero_environment.detect_environment()
     persisted = ""
     if persist and vault is not None:
         persisted = _persist_zotero_environment(_root(vault), report)
@@ -221,7 +222,7 @@ def zotero_status(
     redacted: bool = typer.Option(False, "--redacted"),
 ):
     """显示当前 Zotero 连接状态；Zotero 未启动不被误报为数据库故障。"""
-    report = detect_environment()
+    report = zotero_environment.detect_environment()
     output = redact_environment(report) if redacted else report
     output["ready_for_read_only_integration"] = bool(
         report["zotero"]["installed"]
@@ -239,7 +240,7 @@ def zotero_doctor(
     redacted: bool = typer.Option(False, "--redacted"),
 ):
     """对 Zotero 集成前置条件做只读诊断，不写入 Zotero。"""
-    report = detect_environment()
+    report = zotero_environment.detect_environment()
     checks = {
         "installed": bool(report["zotero"]["installed"]),
         "profile_detected": bool(report["profiles"]),
