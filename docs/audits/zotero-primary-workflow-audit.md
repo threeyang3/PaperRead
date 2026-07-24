@@ -26,6 +26,7 @@
 ## 本轮审计证据（2026-07-23）
 
 - 本机 Zotero 9.0.5、单一活动 Profile 和自定义数据目录已被只读探测；Zotero 未启动时 Local API 不可达被正确报告为“未启动”，没有读取或修改 `zotero.sqlite`。
+- 已在源码仓库内用 Zotero `--profile`/`--headless` 创建隔离测试 Profile 并完成启动探测；该 Profile 未指向真实 `D:\\Zotero`。由于 headless 启动不会通过安装向导加载未签名 XPI，插件实际安装/Reader 对象 API E2E 仍待用户在独立可见 Profile 中手动安装验证，未触碰主 Profile。
 - PaperRead 当前分支完整 pytest 169 个用例全部通过，5 组 Node 插件/Core 集成测试全部通过。
 - 新增 `ArtifactPolicy`、`PermissionGuard`、`WriteAuthorizer` 和 `PublishScanner`：系统写入不得落到用户论文/笔记目录，Feed 发布前拒绝用户文件、数据库、日志和 PDF。
 - Feynman 问题由 AI 投影，用户答案单独保存在 user-managed 文件；系统重新分析不会覆盖答案。

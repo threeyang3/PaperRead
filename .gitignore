@@ -27,6 +27,7 @@ paperflow.yaml
 90 System/
 dist/
 build/
+var/zotero-test-profile/
 *.pyc
 __pycache__/
 .pytest_cache/
