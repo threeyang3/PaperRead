@@ -23,7 +23,7 @@ from paperflow._version import __version__
 from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json, iso_beijing
 from paperflow.utils import atomic_write
-from paperflow.zotero.store import data_root, runtime_root, state_root
+from paperflow.zotero.store import data_root, runtime_root, state_root, standalone
 from paperflow.zotero.events import ZoteroEventProcessor
 from paperflow.security.artifacts import PermissionGuard
 
@@ -358,11 +358,40 @@ class PaperFlowCoreService:
         _append_event(self.root, "jobs", {"job_id": job_id, "kind": kind, "paper_uid": paper_uid, "status": "running"})
         result: dict[str, Any] = {"job_id": job_id, "kind": kind, "paper_uid": paper_uid}
         try:
-            # A standalone Core Data Root deliberately has no Vault pipeline.
-            # It remains a safe queue/reader until a configured Workspace is
-            # explicitly used as the service root.
             workspace = self.root / ".paperflow/workspace.yaml"
-            if not workspace.is_file():
+            if standalone(self.root):
+                if kind == "analysis":
+                    from paperflow.zotero.standalone_ai import analyze_standalone
+
+                    value = analyze_standalone(self.root, paper_uid)
+                    if job.get("target") in {"zotero", "obsidian", "both"}:
+                        from paperflow.zotero.markdown import render_ai_projection
+
+                        value = {
+                            "analysis": value,
+                            "ai_projection": render_ai_projection(
+                                self.root,
+                                paper_uid,
+                                zotero_item_key=str(job.get("zotero_item_key") or ""),
+                                target=str(job["target"]),
+                                apply_changes=True,
+                            ),
+                        }
+                    result.update({"status": "completed", "result": value})
+                elif kind == "render":
+                    from paperflow.zotero.markdown import render_ai_projection
+
+                    value = render_ai_projection(
+                        self.root,
+                        paper_uid,
+                        zotero_item_key=str(job.get("zotero_item_key") or ""),
+                        target=str(job.get("target") or "zotero"),
+                        apply_changes=True,
+                    )
+                    result.update({"status": "completed", "result": value})
+                else:
+                    result.update({"status": "skipped", "reason": "standalone-subscription-worker-not-configured"})
+            elif not workspace.is_file():
                 result.update({"status": "skipped", "reason": "workspace-not-configured"})
             elif kind == "subscription-sync":
                 from paperflow.config import load_config
@@ -416,11 +445,18 @@ class PaperFlowCoreService:
                 result.update({"status": "skipped", "reason": "worker-not-implemented"})
         except Exception as exc:  # worker failures remain observable and do not kill Core
             result.update({"status": "failed", "error": str(exc)})
+        persisted_result = result.get("result")
+        if persisted_result is None:
+            persisted_result = {
+                key: value
+                for key, value in result.items()
+                if key not in {"job_id", "kind", "paper_uid", "status"}
+            }
         self._update_job_state(
             job_id,
             status=str(result.get("status") or "failed"),
             finished_at=iso_beijing(),
-            result={key: value for key, value in result.items() if key not in {"job_id", "kind", "paper_uid"}},
+            result=persisted_result,
         )
         _append_event(self.root, "jobs", result)
 

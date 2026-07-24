@@ -125,7 +125,7 @@ def test_core_job_state_survives_service_restart(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     first = PaperFlowCoreService(tmp_path, port=0)
-    queued = first.enqueue_job("analysis", {"paper_uid": "arxiv:1", "trigger": "test"})
+    queued = first.enqueue_job("analysis", {"paper_uid": "arxiv:1", "trigger": "test", "target": "zotero"})
     first.start()
     first.jobs.join()
     first.stop()
@@ -133,8 +133,8 @@ def test_core_job_state_survives_service_restart(tmp_path: Path) -> None:
     second = PaperFlowCoreService(tmp_path, port=0)
     second.start()
     status = second.job(queued["job_id"])
-    assert status["status"] == "skipped"
-    assert status["result"]["reason"] == "workspace-not-configured"
+    assert status["status"] == "completed"
+    assert status["result"]["analysis"]["status"] in {"written", "reused"}
     assert second.list_jobs()["jobs"][0]["job_id"] == queued["job_id"]
     second.stop()
 

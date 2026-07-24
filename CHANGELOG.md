@@ -43,9 +43,10 @@
 - Added a SYSTEM_MANAGED Zotero annotation mirror for highlights, underlines, image
   annotations, comments, colors, tags, pages, positions, and deletion state; old
   Obsidian private annotations remain untouched.
-- Added a guarded Core worker that consumes analysis/render jobs only for a configured
-  PaperFlow Workspace under the existing pipeline lock; standalone Data Roots remain
-  queue-only and Windows stop now removes stale session/token files after verified exit.
+- Added a guarded Core worker that consumes the full Workspace analysis/render pipeline
+  under the existing lock and a standalone deterministic Mock AI Raw/Markdown path;
+  unsupported external providers fail explicitly. Windows stop now removes stale
+  session/token files after verified exit.
 - Persisted Core analysis, render, and subscription jobs under `state/jobs`, added
   authenticated job/list endpoints, and made Zotero's status action show recent
   job states while recovering queued work after a Core restart.

@@ -19,8 +19,8 @@
 - 迁移计划、插件结果接收、校验和回滚清单均保持 plan/apply/verify/rollback 分层；没有对真实 Library 执行批量迁移。
 - Zotero annotation mirror 已接入：插件仅通过公开 Item API 提取高亮、下划线、图片标注、评论、颜色、标签、页码、位置和删除状态，Core 写入 `.paperflow/data/annotations/zotero/<paper_uid>` 的 SYSTEM_MANAGED JSON；Obsidian 私有 Annotation Note 不被覆盖。
 - Core 会话需要用户显式复制一次令牌到 Zotero 本机偏好；没有令牌时插件只显示“未连接”，不会降级为公网请求。
-- Zotero-only Core 已可通过 standalone `data-root` 启动，状态、令牌、运行日志和数据不需要 Vault；没有 Workspace 的 standalone Core 只提供安全队列/读取，不会误写 Obsidian。
-- Core 任务已持久化到 `state/jobs/*.json`，Zotero UI 可读取最近任务；服务重启会恢复 `queued` 任务，依赖 Vault pipeline 的 standalone 分析会明确记录 `skipped / workspace-not-configured`，不产生假成功。
+- Zotero-only Core 已可通过 standalone `data-root` 启动，状态、令牌、运行日志和数据不需要 Vault；默认安全 Mock Provider 可生成 AI Raw/current pointer、Zotero AI Markdown、标注镜像和 Feynman 用户数据，不会误写 Obsidian。
+- Core 任务已持久化到 `state/jobs/*.json`，Zotero UI 可读取最近任务；服务重启会恢复 `queued` 任务。standalone 下的外部 Claude/Codex/Web Provider 会明确拒绝并记录原因，接入 Workspace 后才启用完整 Provider pipeline。
 - 订阅渲染和社区发布仍以 PaperFlow/Obsidian 通道为主，Zotero 面板目前提供本地 Core 队列和发布预览，尚未静默写入远端。
 
 ## 本轮审计证据（2026-07-23）
@@ -39,6 +39,6 @@ Zotero 作为后续主要阅读前端，Obsidian PDF 作为 Legacy / Compatibili
 
 1. 在独立测试 Profile 验证 PaperFlow Collection 创建/复用、附件导入和 Reader 事件回传。
 2. 将已有 migration plan/apply/verify/rollback 在测试 Profile 跑通，并把真实文件 hash 从 pending 提升为 verified。
-3. 继续把订阅/社区面板和 standalone Core 的完整 AI worker 接入 Zotero UI；Obsidian 仍只保留兼容模式。
+3. 继续把订阅/社区面板和 standalone Core 的外部 AI Provider/Feed worker 接入 Zotero UI；Obsidian 仍只保留兼容模式。
 
 在上述能力完成并通过测试前，不会对真实 Zotero Library 执行批量迁移。

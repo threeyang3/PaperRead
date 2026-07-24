@@ -18,4 +18,10 @@
 - Obsidian 的 AI Markdown、个人笔记、费曼答案、复盘和复现仍是独立目标；AI Raw 更新
   不会覆盖用户输出。
 
+独立 Core Data Root 在没有 Obsidian Workspace 时也可运行默认 `mock` 分析：
+`state/jobs/*.json` 记录任务，`data/ai/<profile>/<paper>/v<version>/` 保存不可变
+AI Raw，`current.json` 只指向当前分析，`documents/zotero/` 保存 Markdown 投影。
+配置为 Claude/Codex/ChatGPT Web 等外部 Provider 时，Core 会明确要求 Workspace，
+不会静默降级为另一模型。
+
 费曼问题可执行 `paperflow zotero feynman init --paper <uid> --apply` 投影到独立的用户答案文件；答案写入 `.paperflow/data/user/feynman/`（standalone Core 为 `data/user/feynman/`），属于 `USER_MANAGED`，不会被 AI 重分析、订阅更新或 Markdown 重渲染覆盖。

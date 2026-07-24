@@ -95,7 +95,19 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
             result["created"] = ensure_layout(root, force_standalone=True)
             config = root / "config.yaml"
             if not config.exists():
-                config.write_text("schema_version: 1\nstore: paperflow-core\n", encoding="utf-8")
+                config.write_text(
+                    "schema_version: 1\n"
+                    "store: paperflow-core\n"
+                    "timezone: Asia/Shanghai\n"
+                    "analysis:\n"
+                    "  provider: mock\n"
+                    "  profile: full_analysis\n"
+                    "  model: deterministic-v1\n"
+                    "  prompt_version: paper-analysis-v3\n"
+                    "subscriptions:\n"
+                    "  sources: []\n",
+                    encoding="utf-8",
+                )
                 result["config"] = "config.yaml"
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -114,6 +126,30 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
         if result.get("status") == "manual-review-required":
             raise typer.Exit(2)
+
+    @zotero_app.command("analyze")
+    def zotero_analyze(
+        paper_uid: str = typer.Option(..., "--paper"),
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """在 standalone Core 中运行配置的 AI Provider 并写入 AI Raw。"""
+        root = _command_root(vault, core_root)
+        if not (root / "data").is_dir() or (root / ".paperflow").exists():
+            raise typer.BadParameter("zotero analyze currently requires --data-root standalone mode")
+        if not apply_changes:
+            typer.echo(json.dumps({
+                "paper_uid": paper_uid,
+                "dry_run": True,
+                "status": "would-analyze",
+                "provider": "configured-in-config.yaml",
+                "artifact_permission": "AI_VERSIONED",
+            }, ensure_ascii=False, indent=2))
+            return
+        from paperflow.zotero.standalone_ai import analyze_standalone
+
+        typer.echo(json.dumps(analyze_standalone(root, paper_uid), ensure_ascii=False, indent=2))
 
     @zotero_app.command("attach-ai-markdown")
     def zotero_attach_ai_markdown(

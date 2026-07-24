@@ -57,6 +57,22 @@ def _paper_record(root: Path, paper_uid: str) -> dict[str, Any]:
         if path.is_file():
             value = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(value, dict):
+                # A standalone Core keeps the bibliographic paper record and
+                # append-only AI Raw separate.  Merge only the selected AI
+                # payload into this read model; never rewrite the source file.
+                if (root / "data").is_dir() and not (root / ".paperflow").exists():
+                    from paperflow.zotero.standalone_ai import load_current_analysis
+
+                    selected = load_current_analysis(root, paper_uid)
+                    if isinstance(selected, dict) and isinstance(selected.get("analysis"), dict):
+                        value = {
+                            **value,
+                            **selected["analysis"],
+                            "ai_analysis_provider": (selected.get("identity") or {}).get("provider", ""),
+                            "ai_analysis_model": (selected.get("identity") or {}).get("model", ""),
+                            "ai_analysis_profile": (selected.get("identity") or {}).get("profile", ""),
+                            "ai_analyzed_at": selected.get("analyzed_at", ""),
+                        }
                 return value
     raise FileNotFoundError(f"paper record not found: {paper_uid}")
 

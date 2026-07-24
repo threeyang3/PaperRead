@@ -31,11 +31,13 @@ paperflow zotero service start --data-root <core-data-root>
 paperflow zotero service token --data-root <core-data-root>
 ```
 
-standalone Core 使用 `data/`、`state/`、`runtime/` 等目录，不会创建或扫描 Obsidian Vault；没有 Workspace 配置时只提供安全队列和本地镜像。
+standalone Core 使用 `data/`、`state/`、`runtime/` 等目录，不会创建或扫描 Obsidian Vault；
+没有 Workspace 配置时仍可用默认安全 Mock Provider 生成 AI Raw/current pointer、
+Zotero AI Markdown、标注镜像和 Feynman 用户数据。
 分析、渲染和订阅请求会写入 `state/jobs/*.json`，任务状态可通过“查看状态”菜单或
 认证的 `/jobs`、`/jobs/{job_id}` 读取；Core 重启会恢复仍为 `queued` 的任务。没有
-Workspace 的 standalone 根会明确将依赖 Vault pipeline 的分析任务标记为
-`skipped / workspace-not-configured`，不会伪称分析成功。
+Workspace 的外部 Claude/Codex/Web Provider 会明确拒绝并记录原因，不会伪称分析成功；
+将 Core 接入 Workspace 后才启用完整 Provider pipeline。
 
 Zotero Reader 的高亮、下划线、图片标注和评论以只读镜像形式保存到
 `.paperflow/data/annotations/zotero/<paper_uid>/`，镜像由 Core 统一写入并带有
