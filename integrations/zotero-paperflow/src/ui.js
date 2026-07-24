@@ -24,7 +24,7 @@ class PaperFlowZoteroUi {
       ["paperflow-sync", "PaperFlow 同步", "sync"],
     ];
     this.sections = [
-      ["AI 分析", [["状态", "ai"], ["模型", "analysis_model"], ["分析版本", "analysis_status"]], true],
+      ["AI 分析", [["状态", "ai"], ["模型", "analysis_model"], ["分析状态", "analysis_status"]], true],
       ["阅读", [["状态", "reading"], ["位置", "reading_position"]], true],
       ["订阅", [["状态", "subscription"], ["来源", "subscription_source"], ["更新", "subscription_update"]], false],
       ["社区", [["状态", "community"], ["贡献数", "community_count"], ["更新", "community_update"]], false],
