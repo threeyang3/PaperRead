@@ -46,6 +46,9 @@
 - Added a guarded Core worker that consumes analysis/render jobs only for a configured
   PaperFlow Workspace under the existing pipeline lock; standalone Data Roots remain
   queue-only and Windows stop now removes stale session/token files after verified exit.
+- Persisted Core analysis, render, and subscription jobs under `state/jobs`, added
+  authenticated job/list endpoints, and made Zotero's status action show recent
+  job states while recovering queued work after a Core restart.
 - Added reader-focused Zotero AI Markdown projections with compact frontmatter,
   explicit SYSTEM_MANAGED permission, content-hash conflict refusal, and a
   plugin-required attachment plan; Obsidian user outputs remain separate.

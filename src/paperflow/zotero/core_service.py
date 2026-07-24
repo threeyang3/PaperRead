@@ -17,7 +17,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from paperflow._version import __version__
 from paperflow.paths.templates import safe_component
@@ -33,6 +33,8 @@ DEFAULT_PORT = 23140
 SESSION_FILE = "zotero-core-session.json"
 PAIRING_TOKEN_FILE = "zotero-core-session.token"
 MAX_REQUEST_BYTES = 1024 * 1024
+JOB_SCHEMA_VERSION = 1
+JOB_ID_MAX_LENGTH = 160
 
 
 def _json_bytes(value: object) -> bytes:
@@ -65,6 +67,46 @@ def _append_event(root: Path, name: str, payload: dict[str, Any]) -> None:
     record = {"at": iso_beijing(), "event": name, **payload}
     with target.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _job_root(root: Path) -> Path:
+    """Return the system-managed durable job state directory.
+
+    Jobs are state, not runtime output: keeping them under the Core state root
+    means a service restart can recover queued work while the ignored runtime
+    directory remains suitable for short-lived logs and pairing tokens.
+    """
+
+    return state_root(root) / "jobs"
+
+
+def _job_path(root: Path, job_id: str) -> Path:
+    value = str(job_id or "").strip()
+    if (
+        not value
+        or len(value) > JOB_ID_MAX_LENGTH
+        or any(char in value for char in "\\/\x00")
+        or not all(char.isalnum() or char in "-_." for char in value)
+    ):
+        raise ValueError("invalid job_id")
+    return _job_root(root) / f"{safe_component(value)}.json"
+
+
+def _write_job_state(root: Path, value: dict[str, Any]) -> Path:
+    target = _job_path(root, str(value.get("job_id") or ""))
+    PermissionGuard(root).authorize(target, "SYSTEM_MANAGED")
+    atomic_json(target, value)
+    return target
+
+
+def _read_job_state(root: Path, job_id: str) -> dict[str, Any]:
+    target = _job_path(root, job_id)
+    if not target.is_file():
+        raise FileNotFoundError(f"job not found: {job_id}")
+    value = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("job_id") != job_id:
+        raise ValueError("invalid persisted job state")
+    return value
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -128,6 +170,21 @@ class _Handler(BaseHTTPRequestHandler):
                 paper_uid = unquote(path.removeprefix("/zotero/annotations/"))
                 self._send(200, self.core.annotation_list(paper_uid))
                 return
+            if path == "/jobs":
+                raw_limit = parse_qs(parsed.query).get("limit", ["50"])[0]
+                try:
+                    limit = max(1, min(200, int(raw_limit)))
+                except ValueError as exc:
+                    raise ValueError("limit must be an integer") from exc
+                self._send(200, self.core.list_jobs(limit=limit))
+                return
+            if path.startswith("/jobs/"):
+                job_id = unquote(path.removeprefix("/jobs/"))
+                try:
+                    self._send(200, self.core.job(job_id))
+                except FileNotFoundError:
+                    self._send(404, {"ok": False, "error": "job not found"})
+                return
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._send(400, {"ok": False, "error": str(exc)})
             return
@@ -182,6 +239,8 @@ class PaperFlowCoreService:
         self.worker: threading.Thread | None = None
         self.worker_stop = threading.Event()
         self.jobs: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.job_state_lock = threading.RLock()
+        self.pending_jobs_loaded = False
 
     @property
     def port(self) -> int:
@@ -238,12 +297,43 @@ class PaperFlowCoreService:
         if self.worker and self.worker.is_alive():
             return
         self.worker_stop.clear()
+        self._load_pending_jobs()
         self.worker = threading.Thread(
             target=self._worker_loop,
             name="paperflow-core-jobs",
             daemon=True,
         )
         self.worker.start()
+
+    def _load_pending_jobs(self) -> None:
+        """Recover queued jobs exactly once after a service restart."""
+
+        with self.job_state_lock:
+            if self.pending_jobs_loaded:
+                return
+            self.pending_jobs_loaded = True
+            for path in sorted(_job_root(self.root).glob("*.json")):
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict) and value.get("status") == "queued":
+                    self.jobs.put({
+                        key: value.get(key)
+                        for key in (
+                            "job_id", "kind", "paper_uid", "provider",
+                            "zotero_item_key", "target", "source_names",
+                        )
+                        if key in value
+                    })
+
+    def _update_job_state(self, job_id: str, **updates: Any) -> dict[str, Any]:
+        with self.job_state_lock:
+            value = _read_job_state(self.root, job_id)
+            value.update(updates)
+            value["updated_at"] = iso_beijing()
+            _write_job_state(self.root, value)
+            return value
 
     def _worker_loop(self) -> None:
         while not self.worker_stop.is_set():
@@ -260,6 +350,11 @@ class PaperFlowCoreService:
         job_id = str(job.get("job_id") or "")
         kind = str(job.get("kind") or "")
         paper_uid = str(job.get("paper_uid") or "")
+        self._update_job_state(
+            job_id,
+            status="running",
+            started_at=iso_beijing(),
+        )
         _append_event(self.root, "jobs", {"job_id": job_id, "kind": kind, "paper_uid": paper_uid, "status": "running"})
         result: dict[str, Any] = {"job_id": job_id, "kind": kind, "paper_uid": paper_uid}
         try:
@@ -321,6 +416,12 @@ class PaperFlowCoreService:
                 result.update({"status": "skipped", "reason": "worker-not-implemented"})
         except Exception as exc:  # worker failures remain observable and do not kill Core
             result.update({"status": "failed", "error": str(exc)})
+        self._update_job_state(
+            job_id,
+            status=str(result.get("status") or "failed"),
+            finished_at=iso_beijing(),
+            result={key: value for key, value in result.items() if key not in {"job_id", "kind", "paper_uid"}},
+        )
         _append_event(self.root, "jobs", result)
 
     def start(self, *, background: bool = True) -> dict[str, Any]:
@@ -554,16 +655,45 @@ class PaperFlowCoreService:
         if target and target not in {"zotero", "obsidian", "both"}:
             raise ValueError("target must be zotero, obsidian, or both")
         job = {
+            "schema_version": JOB_SCHEMA_VERSION,
             "job_id": job_id,
             "kind": kind,
             "paper_uid": paper_uid,
             "provider": body.get("provider"),
             "zotero_item_key": body.get("zotero_item_key"),
             "target": target,
+            "created_at": iso_beijing(),
+            "updated_at": iso_beijing(),
+            "status": "queued",
+            "trigger": body.get("trigger", ""),
         }
+        _write_job_state(self.root, job)
         _append_event(self.root, "jobs", {**job, "status": "queued", "trigger": body.get("trigger", "")})
-        self.jobs.put(job)
+        # Before the HTTP service starts, durable state is enough; startup
+        # recovery will enqueue it exactly once.  Once recovery has run, new
+        # requests can be placed directly on the live queue.
+        if self.pending_jobs_loaded:
+            self.jobs.put(job)
         return {"ok": True, "job_id": job_id, "status": "queued"}
+
+    def job(self, job_id: str) -> dict[str, Any]:
+        """Return one durable job record for Zotero UI polling."""
+
+        return {"ok": True, **_read_job_state(self.root, job_id)}
+
+    def list_jobs(self, *, limit: int = 50) -> dict[str, Any]:
+        """Return recent durable jobs without exposing raw paths or prompts."""
+
+        records: list[dict[str, Any]] = []
+        for path in _job_root(self.root).glob("*.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and value.get("job_id"):
+                records.append(value)
+        records.sort(key=lambda value: str(value.get("updated_at") or ""), reverse=True)
+        return {"ok": True, "jobs": records[: max(1, min(200, int(limit)))]}
 
     def community_plan(self, body: dict[str, Any]) -> dict[str, Any]:
         if not body.get("paper_uid"):
@@ -592,10 +722,16 @@ class PaperFlowCoreService:
         if source and source not in source_names:
             source_names.append(source)
         job = {
+            "schema_version": JOB_SCHEMA_VERSION,
             "job_id": job_id,
             "kind": "subscription-sync",
             "source_names": source_names,
+            "created_at": iso_beijing(),
+            "updated_at": iso_beijing(),
+            "status": "queued",
+            "trigger": body.get("trigger", ""),
         }
+        _write_job_state(self.root, job)
         _append_event(self.root, "jobs", {
             "job_id": job_id,
             "kind": "subscription-sync",
@@ -604,7 +740,8 @@ class PaperFlowCoreService:
             "source_names": source_names,
             "trigger": body.get("trigger", ""),
         })
-        self.jobs.put(job)
+        if self.pending_jobs_loaded:
+            self.jobs.put(job)
         return {
             "ok": True,
             "job_id": job_id,

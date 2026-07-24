@@ -45,6 +45,13 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
         body={"paper_uid": "arxiv:2504.16054"},
     )
     assert status == 202 and queued["status"] == "queued"
+    status, job = _request(
+        service.url + f"/jobs/{queued['job_id']}",
+        token=service.token,
+    )
+    assert status == 200 and job["job_id"] == queued["job_id"]
+    status, jobs = _request(service.url + "/jobs?limit=5", token=service.token)
+    assert status == 200 and any(item["job_id"] == queued["job_id"] for item in jobs["jobs"])
     with pytest.raises(ValueError):
         service.enqueue_job("render", {"paper_uid": "arxiv:2504.16054", "target": "unknown"})
     status, subscription = _request(
@@ -108,6 +115,28 @@ def test_standalone_core_service_does_not_require_vault(tmp_path: Path) -> None:
     assert (tmp_path / "state/zotero-core-session.json").is_file()
     assert not (tmp_path / ".paperflow").exists()
     service.stop()
+
+
+def test_core_job_state_survives_service_restart(tmp_path: Path) -> None:
+    papers = tmp_path / "data/papers"
+    papers.mkdir(parents=True)
+    (papers / "arxiv_1.json").write_text(
+        json.dumps({"paper_uid": "arxiv:1", "paper_title": "Standalone"}),
+        encoding="utf-8",
+    )
+    first = PaperFlowCoreService(tmp_path, port=0)
+    queued = first.enqueue_job("analysis", {"paper_uid": "arxiv:1", "trigger": "test"})
+    first.start()
+    first.jobs.join()
+    first.stop()
+
+    second = PaperFlowCoreService(tmp_path, port=0)
+    second.start()
+    status = second.job(queued["job_id"])
+    assert status["status"] == "skipped"
+    assert status["result"]["reason"] == "workspace-not-configured"
+    assert second.list_jobs()["jobs"][0]["job_id"] == queued["job_id"]
+    second.stop()
 
 
 def test_mapping_prefers_exact_arxiv_and_applies_only_exact(tmp_path: Path) -> None:

@@ -20,6 +20,7 @@
 - Zotero annotation mirror 已接入：插件仅通过公开 Item API 提取高亮、下划线、图片标注、评论、颜色、标签、页码、位置和删除状态，Core 写入 `.paperflow/data/annotations/zotero/<paper_uid>` 的 SYSTEM_MANAGED JSON；Obsidian 私有 Annotation Note 不被覆盖。
 - Core 会话需要用户显式复制一次令牌到 Zotero 本机偏好；没有令牌时插件只显示“未连接”，不会降级为公网请求。
 - Zotero-only Core 已可通过 standalone `data-root` 启动，状态、令牌、运行日志和数据不需要 Vault；没有 Workspace 的 standalone Core 只提供安全队列/读取，不会误写 Obsidian。
+- Core 任务已持久化到 `state/jobs/*.json`，Zotero UI 可读取最近任务；服务重启会恢复 `queued` 任务，依赖 Vault pipeline 的 standalone 分析会明确记录 `skipped / workspace-not-configured`，不产生假成功。
 - 订阅渲染和社区发布仍以 PaperFlow/Obsidian 通道为主，Zotero 面板目前提供本地 Core 队列和发布预览，尚未静默写入远端。
 
 ## 本轮审计证据（2026-07-23）

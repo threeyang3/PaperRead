@@ -74,7 +74,21 @@ async function coreStatus() {
   }
   try {
     const value = await coreClient.health();
-    notify(`PaperFlow Core：${value && value.ok ? "已连接" : "不可用"}`);
+    if (!value || !value.ok) {
+      notify("PaperFlow Core：不可用");
+      return;
+    }
+    let detail = "暂无任务";
+    try {
+      const jobs = await coreClient.jobs(5);
+      const records = Array.isArray(jobs?.jobs) ? jobs.jobs : [];
+      if (records.length) {
+        detail = records.map((job) => `${job.kind || "job"}=${job.status || "?"}`).join("，");
+      }
+    } catch (_error) {
+      detail = "任务状态暂不可读";
+    }
+    notify(`PaperFlow Core：已连接；${detail}`);
   } catch (error) {
     notify(`PaperFlow Core：${error.message || error}`);
   }

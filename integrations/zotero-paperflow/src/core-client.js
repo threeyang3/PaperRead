@@ -90,6 +90,15 @@ class PaperFlowCoreClient {
   syncSubscriptions(payload = {}) { return this._request("POST", "/subscriptions/sync", payload); }
 
   communityPlan(payload) { return this._request("POST", "/community/publish-plan", payload); }
+
+  jobs(limit = 20) {
+    const value = Math.max(1, Math.min(200, Number(limit) || 20));
+    return this._request("GET", `/jobs?limit=${value}`);
+  }
+
+  job(jobId) {
+    return this._request("GET", `/jobs/${encodeURIComponent(String(jobId || ""))}`);
+  }
 }
 
 this.PaperFlowCoreClient = PaperFlowCoreClient;
