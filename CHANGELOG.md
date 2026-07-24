@@ -50,6 +50,12 @@
 - Persisted Core analysis, render, and subscription jobs under `state/jobs`, added
   authenticated job/list endpoints, and made Zotero's status action show recent
   job states while recovering queued work after a Core restart.
+- Completed standalone Core Provider dispatch for Claude, Codex, and ChatGPT Web with
+  explicit configuration, staged inputs, UTF-8 validation, browser upload permission,
+  and fail-closed handling for unavailable tools or required user takeover.
+- Added standalone Feed/Community synchronization, `zotero sync-subscriptions`, and
+  explicit `/community/publish` outbox generation; remote GitHub push remains opt-in
+  and is never performed by the Core worker.
 - Added reader-focused Zotero AI Markdown projections with compact frontmatter,
   explicit SYSTEM_MANAGED permission, content-hash conflict refusal, and a
   plugin-required attachment plan; Obsidian user outputs remain separate.

@@ -13,6 +13,8 @@ from paperflow.ai.schema_validation import validate_analysis
 from paperflow.models import Analysis, PaperMetadata
 from paperflow.text_quality import validate_text_quality
 from paperflow.utils import atomic_json, atomic_write, iso_beijing
+from paperflow.zotero.store import runtime_root, state_root, standalone
+from .paths import ai_log_path, prompt_path, schema_path
 
 
 PROMPT_VERSION = "paper-analysis-v3"
@@ -76,7 +78,7 @@ class ChatGPTWebAdapter:
 
     def _save_state(self, status: str, detail: str = "") -> None:
         atomic_json(
-            self.root / ".paperflow/state/chatgpt-web.json",
+            state_root(self.root) / "chatgpt-web.json",
             {
                 "status": status,
                 "detail": detail,
@@ -87,7 +89,10 @@ class ChatGPTWebAdapter:
 
     def _paper_pdf(self, metadata: PaperMetadata) -> Path:
         paper_id = metadata.paper_arxiv_id
-        candidates = list((self.root / "80 Attachments/Papers").rglob(f"{paper_id}.pdf"))
+        roots = [self.root / "80 Attachments/Papers"]
+        if standalone(self.root):
+            roots = [self.root / "documents/zotero"]
+        candidates = [path for root in roots if root.exists() for path in root.rglob(f"{paper_id}.pdf")]
         if not candidates:
             raise FileNotFoundError(f"No local PDF found for {metadata.paper_uid}")
         return candidates[0]
@@ -107,16 +112,14 @@ class ChatGPTWebAdapter:
             ) from exc
 
         pdf = self._paper_pdf(metadata)
-        schema = self.root / ".paperflow/schemas/paper-analysis.schema.json"
-        prompt = (self.root / ".paperflow/prompts/paper-analysis-v3.md").read_text(
-            encoding="utf-8"
-        )
+        schema = schema_path(self.root)
+        prompt = prompt_path(self.root).read_text(encoding="utf-8")
         prompt += (
             "\n\nAnalyze the attached PDF. METADATA:\n"
             + metadata.model_dump_json(indent=2)
             + "\nReturn one schema-valid JSON object."
         )
-        staging_root = self.root / ".paperflow/runtime/staging"
+        staging_root = runtime_root(self.root) / "staging"
         staging_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=staging_root) as temporary:
             staged_pdf = Path(temporary) / "paper.pdf"
@@ -236,9 +239,7 @@ class ChatGPTWebAdapter:
             validate_text_quality(value, label="chatgpt-web-analysis")
             self._save_state("ready", self.actual_model)
             atomic_write(
-                self.root
-                / ".paperflow/logs/ai"
-                / f"{iso_beijing().replace(':', '-')}-chatgpt-web.txt",
+                ai_log_path(self.root, f"{iso_beijing().replace(':', '-')}-chatgpt-web.txt"),
                 response_text,
             )
             return validate_analysis(value, schema)

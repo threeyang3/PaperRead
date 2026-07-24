@@ -90,6 +90,7 @@ class PaperFlowCoreClient {
   syncSubscriptions(payload = {}) { return this._request("POST", "/subscriptions/sync", payload); }
 
   communityPlan(payload) { return this._request("POST", "/community/publish-plan", payload); }
+  publishCommunity(payload) { return this._request("POST", "/community/publish", payload); }
 
   jobs(limit = 20) {
     const value = Math.max(1, Math.min(200, Number(limit) || 20));

@@ -139,6 +139,68 @@ def test_core_job_state_survives_service_restart(tmp_path: Path) -> None:
     second.stop()
 
 
+def test_core_community_publish_requires_confirmation_and_writes_outbox(tmp_path: Path) -> None:
+    (tmp_path / "data/papers").mkdir(parents=True)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    service.start()
+    contribution = {
+        "contribution_id": "core-publish-1",
+        "paper_uid": "arxiv:1",
+        "kind": "passage-comment",
+        "body": "A reviewed public comment.",
+        "tags": ["evidence"],
+        "anchor": {
+            "pdf_version": 1,
+            "pdf_sha256": "a" * 64,
+            "page": 1,
+            "exact_quote": "A verified quote.",
+        },
+        "created_at": "2026-07-24T10:00:00+08:00",
+    }
+    plan = service.community_plan({
+        "paper_uid": "arxiv:1",
+        "contribution": contribution,
+        "creator": "reader",
+        "license": "CC-BY-4.0",
+    })
+    assert plan["status"] == "preview-only"
+    with pytest.raises(ValueError, match="confirm=true"):
+        service.community_publish({
+            "paper_uid": "arxiv:1",
+            "contribution": contribution,
+            "creator": "reader",
+            "license": "CC-BY-4.0",
+        })
+    result = service.community_publish({
+        "paper_uid": "arxiv:1",
+        "contribution": contribution,
+        "creator": "reader",
+        "license": "CC-BY-4.0",
+        "confirm": True,
+    })
+    assert result["status"] == "outbox-written"
+    assert result["network_changes"] == 0
+    outbox = tmp_path / result["path"]
+    assert outbox.is_file()
+    from paperflow.community.publisher import verify_content_sha256
+
+    assert verify_content_sha256(json.loads(outbox.read_text(encoding="utf-8")))
+    status, routed = _request(
+        service.url + "/community/publish",
+        token=service.token,
+        method="POST",
+        body={
+            "paper_uid": "arxiv:1",
+            "contribution": contribution,
+            "creator": "reader",
+            "license": "CC-BY-4.0",
+            "confirm": True,
+        },
+    )
+    assert status == 200 and routed["status"] == "reused"
+    service.stop()
+
+
 def test_mapping_prefers_exact_arxiv_and_applies_only_exact(tmp_path: Path) -> None:
     papers = tmp_path / ".paperflow/data/papers"
     papers.mkdir(parents=True)

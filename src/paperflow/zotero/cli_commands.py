@@ -104,6 +104,20 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
                     "  profile: full_analysis\n"
                     "  model: deterministic-v1\n"
                     "  prompt_version: paper-analysis-v3\n"
+                    "  providers:\n"
+                    "    claude:\n"
+                    "      executable: claude\n"
+                    "      timeout_seconds: 1800\n"
+                    "    codex:\n"
+                    "      executable: codex\n"
+                    "      timeout_seconds: 1800\n"
+                    "      reasoning_effort: high\n"
+                    "    chatgpt-web:\n"
+                    "      browser_executable: ''\n"
+                    "      browser_profile_dir: '%LOCALAPPDATA%/PaperFlow/ChatGPTWeb'\n"
+                    "      base_url: https://chatgpt.com/\n"
+                    "      allow_pdf_upload: false\n"
+                    "      model_preference: [Pro, Thinking, GPT-5.6, GPT-5]\n"
                     "subscriptions:\n"
                     "  sources: []\n",
                     encoding="utf-8",
@@ -150,6 +164,53 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         from paperflow.zotero.standalone_ai import analyze_standalone
 
         typer.echo(json.dumps(analyze_standalone(root, paper_uid), ensure_ascii=False, indent=2))
+
+    @zotero_app.command("sync-subscriptions")
+    def zotero_sync_subscriptions(
+        source: list[str] = typer.Option([], "--source", help="只同步指定 source name；可重复传入"),
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """在 standalone Core 中同步 config.yaml 已配置的订阅源。"""
+        root = _command_root(None, core_root)
+        if not (root / "data").is_dir() or (root / ".paperflow").exists():
+            raise typer.BadParameter("zotero sync-subscriptions requires --data-root standalone mode")
+        from ruamel.yaml import YAML
+
+        config_path = root / "config.yaml"
+        loaded = YAML(typ="safe").load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        config = loaded if isinstance(loaded, dict) else {}
+        configured = (config.get("subscriptions") or {}).get("sources") or []
+        requested = {str(value).strip() for value in source if str(value).strip()}
+        selected = [
+            value for value in configured
+            if isinstance(value, dict) and value.get("url")
+            and (not requested or str(value.get("name") or value["url"]) in requested)
+        ]
+        if not apply_changes:
+            typer.echo(json.dumps({
+                "dry_run": True,
+                "source_count": len(selected),
+                "sources": [str(value.get("name") or value["url"]) for value in selected],
+                "network_changes": 0,
+            }, ensure_ascii=False, indent=2))
+            return
+        from paperflow.zotero.standalone_sync import sync_core_feed
+
+        results = [
+            sync_core_feed(
+                root,
+                url=str(value["url"]),
+                name=str(value.get("name") or value["url"]),
+                branch=str(value.get("branch") or "main"),
+                trust=str(value.get("trust") or "metadata-and-ai"),
+                auto_download_pdf=bool(value.get("auto_download_pdf", False)),
+                auto_render_notes=bool(value.get("auto_render_notes", False)),
+                capabilities=list(value.get("capabilities") or ["raw", "ai"]),
+            )
+            for value in selected
+        ]
+        typer.echo(json.dumps({"dry_run": False, "source_count": len(results), "results": results}, ensure_ascii=False, indent=2))
 
     @zotero_app.command("attach-ai-markdown")
     def zotero_attach_ai_markdown(

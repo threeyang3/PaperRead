@@ -23,6 +23,14 @@ class PaperFlowZoteroUi {
       ["paperflow-reproduction", "PaperFlow 复现", "reproduction"],
       ["paperflow-sync", "PaperFlow 同步", "sync"],
     ];
+    this.sections = [
+      ["AI 分析", [["状态", "ai"], ["模型", "analysis_model"], ["分析版本", "analysis_status"]], true],
+      ["阅读", [["状态", "reading"], ["位置", "reading_position"]], true],
+      ["订阅", [["状态", "subscription"], ["来源", "subscription_source"], ["更新", "subscription_update"]], false],
+      ["社区", [["状态", "community"], ["贡献数", "community_count"], ["更新", "community_update"]], false],
+      ["个人输出", [["复盘", "review"], ["复现", "reproduction"], ["费曼", "feynman"]], false],
+      ["诊断", [["同步", "sync"], ["更新时间", "updated_at"]], false],
+    ];
   }
 
   _value(itemKey, field) {
@@ -93,6 +101,21 @@ class PaperFlowZoteroUi {
     annotationRow.className = "paperflow-pane-row";
     annotationRow.textContent = `Zotero 标注镜像：${value.annotation_count ?? "—"}`;
     body.appendChild(annotationRow);
+    for (const [label, fields, open] of this.sections) {
+      const details = doc.createElement("details");
+      details.className = "paperflow-pane-section";
+      details.open = Boolean(open);
+      const summary = doc.createElement("summary");
+      summary.textContent = label;
+      details.appendChild(summary);
+      for (const [fieldLabel, field] of fields) {
+        const row = doc.createElement("div");
+        row.className = "paperflow-pane-row";
+        row.textContent = `${fieldLabel}：${value[field] ?? "—"}`;
+        details.appendChild(row);
+      }
+      body.appendChild(details);
+    }
     const hint = doc.createElement("small");
     hint.textContent = value.updated_at ? `更新：${value.updated_at}` : "Core 未返回状态时显示缓存占位";
     body.appendChild(hint);

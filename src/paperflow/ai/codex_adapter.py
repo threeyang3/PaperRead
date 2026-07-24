@@ -10,6 +10,7 @@ from .schema_validation import validate_analysis
 from .context import select_context
 from .codex_runtime import CODEX_ISOLATION_ARGS, isolated_codex_environment
 from paperflow.text_quality import validate_text_quality
+from .paths import ai_log_path, prompt_path, provider_runtime_path, schema_path
 
 PROMPT_VERSION = "paper-analysis-v3"
 REASONING_EFFORTS = {"", "low", "medium", "high", "xhigh", "max"}
@@ -50,11 +51,9 @@ class CodexAdapter:
         executable = shutil.which(self.executable)
         if not executable:
             raise RuntimeError("Codex CLI not found")
-        schema = self.root / ".paperflow/schemas/paper-analysis.schema.json"
-        prompt_template = (
-            self.root / ".paperflow/prompts/paper-analysis-v3.md"
-        ).read_text(encoding="utf-8")
-        with tempfile.TemporaryDirectory(dir=self.root / ".paperflow/runtime") as temporary:
+        schema = schema_path(self.root)
+        prompt_template = prompt_path(self.root).read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory(dir=provider_runtime_path(self.root)) as temporary:
             work = Path(temporary)
             shutil.copy2(text_path, work / "paper.txt")
             (work / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
@@ -86,10 +85,10 @@ class CodexAdapter:
             stdout = result.stdout.decode("utf-8", errors="strict")
             stderr = result.stderr.decode("utf-8", errors="strict")
             log_name = iso_beijing().replace(":", "-") + ".log"
-            atomic_write(self.root / ".paperflow/logs/ai" / log_name, stdout + "\nSTDERR:\n" + stderr)
+            atomic_write(ai_log_path(self.root, log_name), stdout + "\nSTDERR:\n" + stderr)
             if result.returncode != 0:
                 raise RuntimeError(f"Codex analysis failed with exit code {result.returncode}")
             raw = output.read_text(encoding="utf-8")
             validate_text_quality(json.loads(raw), label="codex-analysis")
-            atomic_write(self.root / ".paperflow/logs/ai" / log_name.replace(".log", "-raw.json"), raw)
+            atomic_write(ai_log_path(self.root, log_name.replace(".log", "-raw.json")), raw)
             return validate_analysis(json.loads(raw), schema)

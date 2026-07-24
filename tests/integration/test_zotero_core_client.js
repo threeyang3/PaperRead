@@ -36,6 +36,7 @@ async function main() {
   await client.jobs(5);
   await client.job("zotero-analysis-abc");
   await client.migrationResults({ items: [] });
+  await client.publishCommunity({ paper_uid: "arxiv:2504.16054", confirm: true });
   assert.equal(requests[0].options.headers.Authorization, undefined);
   assert.equal(requests[1].options.headers.Authorization, `Bearer ${token}`);
   assert.match(requests[2].url, /zotero\/annotations/);
@@ -44,6 +45,7 @@ async function main() {
   assert.match(requests[5].url, /jobs\?limit=5$/);
   assert.match(requests[6].url, /jobs\/zotero-analysis-abc$/);
   assert.match(requests[7].url, /zotero\/migration\/results$/);
+  assert.match(requests[8].url, /community\/publish$/);
   assert.throws(() => new sandbox.PaperFlowCoreClient("https://example.com", token), /loopback/);
   assert.throws(() => client.setToken("short"), /invalid/);
   const noToken = new sandbox.PaperFlowCoreClient();

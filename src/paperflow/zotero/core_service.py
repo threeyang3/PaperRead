@@ -218,6 +218,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/community/publish-plan":
                 self._send(200, self.core.community_plan(body))
                 return
+            if path == "/community/publish":
+                self._send(200, self.core.community_publish(body))
+                return
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._send(400, {"ok": False, "error": str(exc)})
             return
@@ -389,8 +392,49 @@ class PaperFlowCoreService:
                         apply_changes=True,
                     )
                     result.update({"status": "completed", "result": value})
+                elif kind == "subscription-sync":
+                    from paperflow.zotero.standalone_sync import sync_core_feed
+
+                    config_path = self.root / "config.yaml"
+                    config_value: dict[str, Any] = {}
+                    if config_path.is_file():
+                        from ruamel.yaml import YAML
+
+                        loaded = YAML(typ="safe").load(config_path.read_text(encoding="utf-8"))
+                        if isinstance(loaded, dict):
+                            config_value = loaded
+                    requested = {
+                        str(value).strip()
+                        for value in (job.get("source_names") or [])
+                        if str(value).strip()
+                    }
+                    configured = (config_value.get("subscriptions") or {}).get("sources") or []
+                    sources = []
+                    for source in configured:
+                        if not isinstance(source, dict) or not source.get("url"):
+                            continue
+                        source_name = str(source.get("name") or source.get("url"))
+                        if requested and source_name not in requested:
+                            continue
+                        sources.append(source)
+                    results = []
+                    for source in sources:
+                        results.append(
+                            sync_core_feed(
+                                self.root,
+                                url=str(source["url"]),
+                                name=str(source.get("name") or source["url"]),
+                                branch=str(source.get("branch") or "main"),
+                                trust=str(source.get("trust") or "metadata-and-ai"),
+                                dry_run=False,
+                                auto_download_pdf=bool(source.get("auto_download_pdf", False)),
+                                auto_render_notes=bool(source.get("auto_render_notes", False)),
+                                capabilities=list(source.get("capabilities") or ["raw", "ai"]),
+                            )
+                        )
+                    result.update({"status": "completed", "sources": results, "source_count": len(sources)})
                 else:
-                    result.update({"status": "skipped", "reason": "standalone-subscription-worker-not-configured"})
+                    result.update({"status": "skipped", "reason": "standalone-worker-not-implemented"})
             elif not workspace.is_file():
                 result.update({"status": "skipped", "reason": "workspace-not-configured"})
             elif kind == "subscription-sync":
@@ -734,12 +778,84 @@ class PaperFlowCoreService:
     def community_plan(self, body: dict[str, Any]) -> dict[str, Any]:
         if not body.get("paper_uid"):
             raise ValueError("paper_uid is required")
-        return {
+        value = {
             "ok": True,
             "paper_uid": str(body["paper_uid"]),
             "status": "preview-only",
             "requires_user_confirmation": True,
             "network_changes": 0,
+        }
+        if body.get("contribution") is not None:
+            value["contribution"] = self._community_contribution(body, preview=True)
+        return value
+
+    def _community_contribution(self, body: dict[str, Any], *, preview: bool) -> dict[str, Any]:
+        from paperflow.community.publisher import immutable_snapshot
+
+        source = body.get("contribution")
+        if not isinstance(source, dict):
+            raise ValueError("contribution must be an object")
+        creator = str(body.get("creator") or source.get("creator") or "").strip()
+        license_name = str(body.get("license") or source.get("license") or "").strip()
+        if not creator or not license_name:
+            raise ValueError("creator and license are required")
+        snapshot = immutable_snapshot(
+            source,
+            creator=creator,
+            license_name=license_name,
+            revision=int(body.get("revision") or source.get("revision") or 1),
+            supersedes=str(body.get("supersedes") or source.get("supersedes") or ""),
+        )
+        value = snapshot.model_dump(mode="json")
+        paper_id = safe_component(str(value["paper_uid"]))
+        relative = (
+            Path("papers")
+            / paper_id
+            / "community"
+            / safe_component(creator)
+            / safe_component(str(value["contribution_id"]))
+            / f"r{value['revision']}.json"
+        )
+        value.update({
+            "path": relative.as_posix(),
+            "artifact_permission": "PUBLIC_IMMUTABLE",
+            "network_changes": 0,
+            "requires_user_confirmation": preview,
+        })
+        return value
+
+    def community_publish(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not body.get("paper_uid"):
+            raise ValueError("paper_uid is required")
+        if body.get("confirm") is not True:
+            raise ValueError("community publish requires explicit confirm=true")
+        value = self._community_contribution(body, preview=False)
+        if str(value.get("paper_uid")) != str(body["paper_uid"]):
+            raise ValueError("paper_uid does not match contribution")
+        relative = Path(str(value.pop("path")))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("invalid community outbox path")
+        target = self.root / "data/community/outbox" / relative
+        stored = dict(value)
+        for key in ("path", "artifact_permission", "network_changes", "requires_user_confirmation"):
+            stored.pop(key, None)
+        PermissionGuard(self.root).authorize(target, "PUBLIC_IMMUTABLE")
+        if target.is_file():
+            existing = json.loads(target.read_text(encoding="utf-8"))
+            if existing != stored:
+                raise RuntimeError("immutable community outbox record already exists")
+            status = "reused"
+        else:
+            atomic_json(target, stored)
+            status = "outbox-written"
+        return {
+            "ok": True,
+            "paper_uid": str(body["paper_uid"]),
+            "status": status,
+            "path": target.relative_to(self.root).as_posix(),
+            "network_changes": 0,
+            "remote_push": "not-automatic",
+            "requires_user_confirmation": False,
         }
 
     def subscription_sync(self, body: dict[str, Any]) -> dict[str, Any]:

@@ -29,6 +29,7 @@ from paperflow.feed import (
 from paperflow.feed.git_ops import normalize_github_repository_url
 from paperflow.feed.subscriber import _download_linked_pdf
 from paperflow.community.publisher import build_outbox, immutable_snapshot
+from paperflow.zotero.standalone_sync import sync_core_feed
 from paperflow.workspace import (
     WorkspaceSettings,
     default_workspace_dict,
@@ -161,6 +162,23 @@ def test_build_validate_and_sync_feed_without_user_data(tmp_path: Path) -> None:
     )
     assert repeated["created"] == 0
     assert repeated["reused"] == 2
+
+
+def test_standalone_core_sync_preserves_feed_contract(tmp_path: Path) -> None:
+    publisher, analysis_id = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(publisher, _settings(), feed)
+
+    core = tmp_path / "core"
+    result = sync_core_feed(core, url=str(feed), name="core-feed", trust="metadata-and-ai")
+    assert result["created"] == 2
+    assert result["remote_code_executed"] is False
+    assert list((core / "data/raw/subscriptions").rglob("*.json"))
+    assert list((core / "data/ai/subscriptions").rglob(f"{analysis_id}.json"))
+    repeated = sync_core_feed(core, url=str(feed), name="core-feed", trust="metadata-and-ai")
+    assert repeated["created"] == 0
+    assert repeated["reused"] == 2
+    assert not (core / ".paperflow").exists()
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="Git not installed")
@@ -311,6 +329,54 @@ def test_community_annotation_round_trip_renders_read_only_local_note(
     assert "A published annotation comment." in text
     assert "A short verified quote." in text
     assert not (subscriber / ".paperflow/data/user").exists()
+
+
+def test_standalone_core_community_subscription_isolated_from_user_data(
+    tmp_path: Path,
+) -> None:
+    publisher, _ = _workspace(tmp_path)
+    snapshot = immutable_snapshot(
+        {
+            "contribution_id": "core-ann-roundtrip",
+            "paper_uid": "arxiv:2607.00001",
+            "kind": "passage-comment",
+            "body": "Core community subscription comment.",
+            "tags": ["method"],
+            "anchor": {
+                "pdf_version": 1,
+                "pdf_sha256": "a" * 64,
+                "page": 2,
+                "exact_quote": "A short verified quote.",
+            },
+            "created_at": "2026-07-20T10:00:00+08:00",
+        },
+        creator="threeyang3",
+        license_name="CC-BY-4.0",
+    )
+    build_outbox(publisher, snapshot, dry_run=False)
+    settings = _settings().model_copy(
+        update={
+            "publishing": _settings().publishing.model_copy(
+                update={"include_community_contributions": True}
+            )
+        }
+    )
+    feed = tmp_path / "core-feed"
+    build_feed(publisher, settings, feed)
+    core = tmp_path / "core"
+    result = sync_core_feed(
+        core,
+        url=str(feed),
+        name="core-community",
+        trust="metadata-and-ai",
+        capabilities=["raw", "ai", "community"],
+    )
+    assert result["community"]["accepted"] == 1
+    assert list((core / "data/community/subscriptions").rglob("r1.json"))
+    note = core / "documents/zotero/arxiv_2607.00001.community.md"
+    assert note.is_file()
+    assert "Core community subscription comment." in note.read_text(encoding="utf-8")
+    assert not (core / "data/user").exists() or not list((core / "data/user").rglob("*"))
 
 
 def test_feed_build_uses_installed_workspace_schemas(tmp_path: Path) -> None:

@@ -109,10 +109,101 @@ def load_current_analysis(root: Path, paper_uid: str) -> dict[str, Any] | None:
 
 
 def _text_for_analysis(root: Path, record: dict[str, Any]) -> str:
-    """Use a staged local text file input without exposing Vault paths."""
+    """Use staged local PDF text when available, without exposing source paths."""
+
+    paper_id = str(record.get("paper_arxiv_id") or "").strip()
+    candidates: list[Path] = []
+    explicit = record.get("paper_pdf_path") or record.get("pdf_path")
+    if explicit:
+        candidate = Path(str(explicit)).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidates.append(candidate)
+    if paper_id:
+        documents = root / "documents/zotero"
+        if documents.is_dir():
+            candidates.extend(documents.rglob(f"{paper_id}.pdf"))
+    for pdf in candidates:
+        if not pdf.is_file():
+            continue
+        try:
+            import fitz
+
+            with fitz.open(pdf) as document:
+                pages = [
+                    f"\n\n--- PAGE {index + 1} ---\n{page.get_text('text')}"
+                    for index, page in enumerate(document)
+                ]
+            text = "".join(pages).strip()
+            if text:
+                return text
+        except Exception:
+            # A missing/unsupported PDF must not prevent metadata-only analysis.
+            break
 
     abstract = str(record.get("paper_abstract") or "").strip()
     return "\n\n".join(value for value in (str(record.get("paper_title") or ""), abstract) if value)
+
+
+def _provider_config(policy: dict[str, Any], provider: str) -> dict[str, Any]:
+    configured = policy.get("providers") or {}
+    value = configured.get(provider) if isinstance(configured, dict) else {}
+    if not isinstance(value, dict):
+        value = {}
+    # Permit a provider-specific block directly under analysis for compact configs.
+    direct = policy.get(provider)
+    if isinstance(direct, dict):
+        merged = dict(value)
+        merged.update(direct)
+        value = merged
+    return value
+
+
+def _make_standalone_adapter(root: Path, policy: dict[str, Any], provider: str, model: str):
+    from paperflow.ai.chatgpt_web_adapter import ChatGPTWebAdapter
+    from paperflow.ai.claude_adapter import ClaudeAdapter
+    from paperflow.ai.codex_adapter import CodexAdapter
+
+    allowed = {"mock", "claude", "codex", "chatgpt-web"}
+    if provider not in allowed:
+        raise ValueError(f"unsupported standalone provider: {provider}")
+    if provider == "mock":
+        return MockAdapter()
+    config = _provider_config(policy, provider)
+    timeout = int(config.get("timeout_seconds") or policy.get("timeout_seconds") or 1800)
+    extra_args = config.get("extra_args") or []
+    if not isinstance(extra_args, list) or not all(isinstance(item, str) for item in extra_args):
+        raise ValueError(f"analysis.providers.{provider}.extra_args must be a list of strings")
+    if provider == "claude":
+        return ClaudeAdapter(
+            root,
+            timeout=timeout,
+            model=model,
+            executable=str(config.get("executable") or "claude"),
+            extra_args=extra_args,
+        )
+    if provider == "codex":
+        return CodexAdapter(
+            root,
+            timeout=timeout,
+            model=model,
+            executable=str(config.get("executable") or "codex"),
+            profile=str(config.get("profile") or ""),
+            reasoning_effort=str(config.get("reasoning_effort") or ""),
+            extra_args=extra_args,
+        )
+    preference = config.get("model_preference") or []
+    if not isinstance(preference, list) or not all(isinstance(item, str) for item in preference):
+        raise ValueError("analysis.providers.chatgpt-web.model_preference must be a list of strings")
+    return ChatGPTWebAdapter(
+        root,
+        timeout=timeout,
+        browser_executable=str(config.get("browser_executable") or ""),
+        browser_profile_dir=str(config.get("browser_profile_dir") or ""),
+        base_url=str(config.get("base_url") or "https://chatgpt.com/"),
+        allow_pdf_upload=bool(config.get("allow_pdf_upload", False)),
+        model_preference=preference or None,
+    )
 
 
 def analyze_standalone(root: Path, paper_uid: str, *, force: bool = False) -> dict[str, Any]:
@@ -131,13 +222,14 @@ def analyze_standalone(root: Path, paper_uid: str, *, force: bool = False) -> di
     provider = str(policy.get("provider") or "mock").strip().lower()
     profile = str(policy.get("profile") or "full_analysis").strip() or "full_analysis"
     model = str(policy.get("model") or "deterministic-v1").strip() or "deterministic-v1"
-    if provider != "mock":
-        raise RuntimeError(
-            f"standalone provider {provider!r} is not available without a configured Workspace; "
-            "set analysis.provider=mock or connect this Core to a Workspace"
-        )
+    adapter = _make_standalone_adapter(root, policy, provider, model)
+    staged_text = _text_for_analysis(root, record)
     source_hash = hashlib.sha256(
-        json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        (
+            json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+            + staged_text
+        ).encode("utf-8")
     ).hexdigest()
     identity = AnalysisIdentity(
         provider=provider,
@@ -162,8 +254,8 @@ def analyze_standalone(root: Path, paper_uid: str, *, force: bool = False) -> di
         }
     with TemporaryDirectory(prefix=f"paperflow-{_paper_id(paper_uid)}-", dir=runtime_root(root)) as temporary:
         staged = Path(temporary) / "paper.txt"
-        staged.write_text(_text_for_analysis(root, record), encoding="utf-8", newline="\n")
-        analysis = MockAdapter().analyze(metadata, staged).model_dump(mode="json")
+        staged.write_text(staged_text, encoding="utf-8", newline="\n")
+        analysis = adapter.analyze(metadata, staged).model_dump(mode="json")
     validate_text_quality(analysis, label="standalone-ai")
     now = iso_beijing()
     value = AIAnalysisRecord(

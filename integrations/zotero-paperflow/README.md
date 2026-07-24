@@ -32,15 +32,36 @@ paperflow zotero service token --data-root <core-data-root>
 ```
 
 standalone Core 使用 `data/`、`state/`、`runtime/` 等目录，不会创建或扫描 Obsidian Vault；
-没有 Workspace 配置时仍可用默认安全 Mock Provider 生成 AI Raw/current pointer、
-Zotero AI Markdown、标注镜像和 Feynman 用户数据。
+默认使用安全 Mock Provider，也可在 `config.yaml` 中显式选择 Claude、Codex 或 ChatGPT Web。
+外部 Provider 只接收 staged 文本/PDF；ChatGPT Web 还要求 `allow_pdf_upload: true`，
+并使用 Vault 外的专用浏览器配置目录。
 分析、渲染和订阅请求会写入 `state/jobs/*.json`，任务状态可通过“查看状态”菜单或
-认证的 `/jobs`、`/jobs/{job_id}` 读取；Core 重启会恢复仍为 `queued` 的任务。没有
-Workspace 的外部 Claude/Codex/Web Provider 会明确拒绝并记录原因，不会伪称分析成功；
-将 Core 接入 Workspace 后才启用完整 Provider pipeline。
+认证的 `/jobs`、`/jobs/{job_id}` 读取；Core 重启会恢复仍为 `queued` 的任务。如果
+外部 Provider 不可用、登录、验证码或模型选择失败，会明确拒绝并记录原因，不会伪称分析成功；
+ChatGPT Web 的网页会话仍需要用户在专用浏览器配置中完成首次登录。
+
+standalone 订阅源写在 Core `config.yaml` 的 `subscriptions.sources` 中，例如：
+
+```yaml
+subscriptions:
+  sources:
+    - name: ArXiv-data
+      url: https://github.com/threeyang3/ArXiv-data.git
+      branch: main
+      trust: metadata-and-ai
+      capabilities: [raw, ai, community]
+      auto_download_pdf: false
+      auto_render_notes: true
+```
+
+Zotero 菜单的“同步订阅预览”只排队任务；Core 会把远端数据写入独立
+`data/raw`、`data/ai` 和 `data/community` 缓存。社区发布必须先走
+`/community/publish-plan`，再由用户明确确认 `/community/publish`；后者只生成
+`data/community/outbox` 的不可变记录，返回 `network_changes: 0`，不会自动 push GitHub。
 
 Zotero Reader 的高亮、下划线、图片标注和评论以只读镜像形式保存到
-`.paperflow/data/annotations/zotero/<paper_uid>/`，镜像由 Core 统一写入并带有
+standalone 的 `data/annotations/zotero/<paper_uid>/`（Vault 模式为
+`.paperflow/data/annotations/zotero/<paper_uid>/`），镜像由 Core 统一写入并带有
 `SYSTEM_MANAGED` 权限；不要手动编辑这些 JSON。删除的 Zotero 标注只标记 deleted，不会
 删除旧 Obsidian 私有标注。
 
