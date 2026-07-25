@@ -175,9 +175,15 @@ def test_standalone_core_sync_preserves_feed_contract(tmp_path: Path) -> None:
     assert result["remote_code_executed"] is False
     assert list((core / "data/raw/subscriptions").rglob("*.json"))
     assert list((core / "data/ai/subscriptions").rglob(f"{analysis_id}.json"))
+    inbox = core / "data/subscriptions/inbox/arxiv_2607.00001.json"
+    assert inbox.is_file()
+    inbox_record = json.loads(inbox.read_text(encoding="utf-8"))
+    assert inbox_record["status"] == "pending-confirmation"
+    assert inbox_record["artifact_permission"] == "REMOTE_READ_ONLY"
     repeated = sync_core_feed(core, url=str(feed), name="core-feed", trust="metadata-and-ai")
     assert repeated["created"] == 0
     assert repeated["reused"] == 2
+    assert json.loads(inbox.read_text(encoding="utf-8"))["status"] == "pending-confirmation"
     assert not (core / ".paperflow").exists()
 
 

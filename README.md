@@ -79,7 +79,8 @@ Direct PDF editing remains disabled.
 
 ## Zotero 主阅读前端（增量接入）
 
-PaperFlow 正在把 Zotero 作为论文管理和 PDF 阅读的主要前端，Obsidian PDF 功能保留为兼容模式。第一阶段已经提供只读环境审计：
+PaperFlow 把 Zotero 作为论文管理和 PDF 阅读的主要前端，Obsidian PDF 功能保留为兼容模式。
+当前主线已经提供只读环境审计、loopback Core，以及“导入并分析选中论文”的完整入口：
 
 ```text
 paperflow zotero detect --vault <vault>
@@ -87,7 +88,7 @@ paperflow zotero status --vault <vault>
 paperflow zotero doctor --vault <vault>
 ```
 
-检测会读取活动 Profile 和 `prefs.js` 来识别自定义 data directory，只探测 `127.0.0.1` Local API，绝不直接读写 `zotero.sqlite`。Zotero 插件骨架位于 `integrations/zotero-paperflow`；真实 Collection、附件迁移和标注镜像会在独立测试 Profile 验证后接入。
+检测会读取活动 Profile 和 `prefs.js` 来识别自定义 data directory，只探测 `127.0.0.1` Local API，绝不直接读写 `zotero.sqlite`。Zotero 插件位于 `integrations/zotero-paperflow`；选中论文后会通过公开对象 API 导出元数据并把 PDF 分块发送到已认证的 Core staging，Core 校验 SHA-256 后才写入 standalone canonical data。真实主 Profile 的安装/Reader E2E 仍只在用户明确选择的独立测试 Profile 中验证。
 
 Core 的 loopback 服务和安全身份映射也可先行使用：
 

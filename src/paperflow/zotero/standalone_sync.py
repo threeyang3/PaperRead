@@ -27,7 +27,7 @@ from paperflow.feed.subscriber import _acquire, _sha256
 from paperflow.security.artifacts import PermissionGuard
 from paperflow.versioning import check_reader_version
 from paperflow.zotero.store import data_root
-from paperflow.utils import atomic_json
+from paperflow.utils import atomic_json, iso_beijing
 
 
 def _paper_id(value: str) -> str:
@@ -88,6 +88,79 @@ def _download_pdf(root: Path, item: dict[str, Any]) -> bool:
         temporary.unlink(missing_ok=True)
         raise
     return True
+
+
+def _zotero_mapping_exists(root: Path, paper_uid: str) -> bool:
+    mapping_root = data_root(root) / "connectors/zotero/mappings"
+    for path in sorted(mapping_root.glob("*.json")) if mapping_root.is_dir() else []:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and value.get("paper_uid") == paper_uid:
+            return bool((value.get("zotero") or {}).get("item_key"))
+    return False
+
+
+def _update_subscription_inbox(
+    root: Path,
+    item: dict[str, Any],
+    *,
+    feed_id: str,
+    source_path: str,
+    source_sha256: str,
+) -> str:
+    """Create a durable, metadata-only handoff for papers absent from Zotero.
+
+    The inbox is a system-managed projection.  A user's decision is preserved
+    across refreshes; only a still-pending record may move between ``linked``
+    and ``pending-confirmation`` as a mapping appears or disappears.
+    """
+
+    paper_uid = str(item.get("paper_uid") or "").strip()
+    if not paper_uid:
+        raise ValueError("subscription item is missing paper_uid")
+    inbox_root = data_root(root) / "subscriptions/inbox"
+    target = inbox_root / f"{_paper_id(paper_uid)}.json"
+    existing: dict[str, Any] = {}
+    if target.is_file():
+        try:
+            loaded = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+    old_status = str(existing.get("status") or "")
+    if old_status in {"imported", "dismissed"}:
+        status = old_status
+    else:
+        status = "linked" if _zotero_mapping_exists(root, paper_uid) else "pending-confirmation"
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else item
+    value = {
+        "schema_version": 1,
+        "artifact_permission": "REMOTE_READ_ONLY",
+        "paper_uid": paper_uid,
+        "title": str(metadata.get("paper_title_display") or metadata.get("paper_title") or item.get("title") or ""),
+        "authors": metadata.get("paper_authors") or metadata.get("authors") or [],
+        "abstract": str(metadata.get("paper_abstract") or metadata.get("abstract") or ""),
+        "url": str(metadata.get("paper_abs_url") or metadata.get("paper_pdf_url") or item.get("url") or ""),
+        "source": str(item.get("source") or ""),
+        "source_id": str(item.get("source_id") or ""),
+        "source_version": int(item.get("version") or item.get("source_version") or 1),
+        "feed_id": feed_id,
+        "source_path": source_path,
+        "source_sha256": source_sha256,
+        "pdf": item.get("pdf") if isinstance(item.get("pdf"), dict) else {},
+        "status": status,
+        "created_at": str(existing.get("created_at") or iso_beijing()),
+        "updated_at": iso_beijing(),
+    }
+    for key in ("decision_at", "zotero_item_key", "decision_note"):
+        if key in existing:
+            value[key] = existing[key]
+    PermissionGuard(root).authorize(target, "SYSTEM_MANAGED")
+    atomic_json(target, value)
+    return status
 
 
 def _ingest_community(
@@ -199,6 +272,7 @@ def sync_core_feed(
         reused = 0
         conflicts: list[dict[str, str]] = []
         raw_items: list[dict[str, Any]] = []
+        inbox_statuses: list[str] = []
         for item in manifests:
             source = resolve_feed_file(feed_root, item["path"])
             expected = str(item.get("sha256") or "")
@@ -219,13 +293,20 @@ def sync_core_feed(
 
             if not dry_run and not is_ai:
                 raw = json.loads(source.read_text(encoding="utf-8"))
+                metadata = dict(raw.get("metadata") or raw)
+                metadata["paper_uid"] = str(item["paper_uid"])
+                metadata.setdefault("paper_arxiv_id", str(item.get("source_id") or "").removeprefix("arxiv_"))
                 paper_target = root / "data/papers" / f"{paper_id}.json"
                 if not paper_target.exists():
-                    metadata = dict(raw.get("metadata") or raw)
-                    metadata["paper_uid"] = str(item["paper_uid"])
-                    metadata.setdefault("paper_arxiv_id", str(item.get("source_id") or "").removeprefix("arxiv_"))
                     PermissionGuard(root).authorize(paper_target, "RAW_VERSIONED")
                     atomic_json(paper_target, metadata)
+                inbox_statuses.append(_update_subscription_inbox(
+                    root,
+                    {**item, "metadata": metadata},
+                    feed_id=feed_id,
+                    source_path=source.relative_to(feed_root).as_posix(),
+                    source_sha256=expected or _sha256(source),
+                ))
 
         downloaded = sum(_download_pdf(root, item) for item in raw_items) if not dry_run and auto_download_pdf else 0
         rendered_notes = 0
@@ -248,6 +329,13 @@ def sync_core_feed(
             "conflicts": conflicts,
             "downloaded_pdfs": downloaded,
             "rendered_notes": rendered_notes,
+            "subscription_inbox": {
+                "total": len(inbox_statuses),
+                "pending_confirmation": inbox_statuses.count("pending-confirmation"),
+                "linked": inbox_statuses.count("linked"),
+                "imported": inbox_statuses.count("imported"),
+                "dismissed": inbox_statuses.count("dismissed"),
+            },
             "remote_code_executed": False,
             "validation": validation,
             "feed_schema_version": int(feed.get("feed_schema_version", 1)),

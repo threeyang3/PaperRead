@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -92,6 +93,31 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
         }]},
     )
     assert status == 200 and migration["mappings"]
+    inbox = tmp_path / "data/subscriptions/inbox/arxiv_2504.16054.json"
+    inbox.parent.mkdir(parents=True, exist_ok=True)
+    inbox.write_text(json.dumps({
+        "schema_version": 1,
+        "artifact_permission": "REMOTE_READ_ONLY",
+        "paper_uid": "arxiv:2504.16054",
+        "title": "π0.5",
+        "authors": ["Physical Intelligence"],
+        "abstract": "A paper",
+        "url": "https://arxiv.org/abs/2504.16054",
+        "source_id": "arxiv_2504.16054",
+        "feed_id": "ArXiv-data",
+        "status": "pending-confirmation",
+        "updated_at": "2026-07-24T10:00:00+08:00",
+    }, ensure_ascii=False), encoding="utf-8")
+    status, listed = _request(service.url + "/subscriptions/inbox?status=pending-confirmation", token=service.token)
+    assert status == 200 and listed["count"] == 1
+    assert listed["items"][0]["paper"]["paper_title"] == "π0.5"
+    status, decision = _request(
+        service.url + "/subscriptions/inbox/decision",
+        token=service.token,
+        method="POST",
+        body={"paper_uid": "arxiv:2504.16054", "decision": "imported", "item_key": "ABCD1234"},
+    )
+    assert status == 200 and decision["status"] == "imported"
     service.stop()
     assert not (tmp_path / ".paperflow/state/zotero-core-session.json").exists()
     assert read_pairing_token(tmp_path) is None
@@ -114,6 +140,62 @@ def test_standalone_core_service_does_not_require_vault(tmp_path: Path) -> None:
     assert mirrored["path"].startswith("data/annotations/zotero/")
     assert (tmp_path / "state/zotero-core-session.json").is_file()
     assert not (tmp_path / ".paperflow").exists()
+    service.stop()
+
+
+def test_subscription_paper_normalizes_bare_arxiv_source_id() -> None:
+    paper = PaperFlowCoreService._subscription_paper({
+        "paper_uid": "arxiv:2607.00001",
+        "source": "arxiv",
+        "source_id": "2607.00001",
+        "source_version": 3,
+        "title": "A public paper",
+        "authors": ["Author"],
+    })
+    assert paper["paper_source"] == "arxiv"
+    assert paper["paper_arxiv_id"] == "2607.00001"
+    assert paper["paper_arxiv_version"] == 3
+
+
+def test_zotero_public_snapshot_import_and_pdf_staging(tmp_path: Path) -> None:
+    (tmp_path / "data/papers").mkdir(parents=True)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    service.start()
+    imported = service.import_paper({
+        "paper": {
+            "paper_uid": "arxiv:2504.16054",
+            "paper_title": "$\\pi_{0.5}$",
+            "paper_arxiv_id": "2504.16054",
+            "paper_authors": ["Physical Intelligence"],
+            "paper_abs_url": "https://arxiv.org/abs/2504.16054",
+        }
+    })
+    assert imported["status"] == "imported"
+    pdf = b"%PDF-1.7\nPaperFlow Zotero staging\n%%EOF\n"
+    digest = hashlib.sha256(pdf).hexdigest()
+    first = service.stage_pdf_chunk(
+        "arxiv:2504.16054", pdf[:10], offset="0", total=str(len(pdf)),
+        expected_sha256=digest, filename="pi05.pdf", item_key="ABCD1234",
+    )
+    assert first["status"] == "staging"
+    final = service.stage_pdf_chunk(
+        "arxiv:2504.16054", pdf[10:], offset="10", total=str(len(pdf)),
+        expected_sha256=digest, filename="pi05.pdf", item_key="ABCD1234",
+    )
+    assert final["status"] == "stored"
+    assert (tmp_path / "documents/zotero/arxiv_2504.16054.pdf").read_bytes() == pdf
+    record = json.loads((tmp_path / "data/papers/arxiv-2504.16054.json").read_text(encoding="utf-8"))
+    assert record["paper_pdf_path"] == "documents/zotero/arxiv_2504.16054.pdf"
+    doi = service.import_paper({
+        "paper": {"paper_uid": "doi:10.1000/xyz", "paper_title": "DOI paper"}
+    })
+    assert doi["status"] == "imported"
+    assert (tmp_path / "data/papers/doi-10.1000-xyz.json").is_file()
+    with pytest.raises(ValueError, match="SHA-256"):
+        service.stage_pdf_chunk(
+            "arxiv:2504.16054", b"%PDF-bad", offset="0", total="8",
+            expected_sha256="0" * 64, filename="bad.pdf",
+        )
     service.stop()
 
 

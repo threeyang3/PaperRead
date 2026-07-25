@@ -53,11 +53,15 @@ async function main() {
     getAttachments: () => [21],
     getCollections: () => [],
   };
+  const pdfAttachment = {
+    key: "PDF00001",
+    getField: (field) => field === "contentType" ? "application/pdf" : field === "title" ? "paper.pdf" : "",
+  };
   const eventApi = new Api({
     Libraries: { userLibraryID: 1 },
     Items: {
       getByLibraryAndKey: () => item,
-      getAsync: async (id) => id === "ABCD1234" ? item : annotation,
+      getAsync: async (id) => id === "ABCD1234" ? item : (id === 21 || id === "21") ? pdfAttachment : annotation,
     },
     Collections: { get: () => null },
   });
@@ -65,6 +69,14 @@ async function main() {
   assert.equal(payload.paper_uid, "arxiv:2504.16054v2");
   assert.equal(payload.has_pdf, true);
   assert.equal(payload.identity_resolved, true);
+  assert.equal(await eventApi.hasPdfAttachment(item), true);
+  const noPdf = { ...item, getAttachments: () => [22] };
+  const noPdfApi = new Api({
+    Libraries: { userLibraryID: 1 },
+    Items: { getByLibraryAndKey: () => noPdf, getAsync: async () => ({ getField: (field) => field === "contentType" ? "text/plain" : "notes.txt" }) },
+    Collections: { get: () => null },
+  });
+  assert.equal(await noPdfApi.hasPdfAttachment(noPdf), false);
   const annotation = {
     key: "ANN00001",
     parentID: 11,
@@ -95,6 +107,49 @@ async function main() {
   assert.equal(annotationPayload.paper_uid, "arxiv:2504.16054v2");
   assert.equal(annotationPayload.text, "A quoted result");
   assert.equal(JSON.stringify(annotationPayload.position), JSON.stringify({ rects: [[1, 2, 3, 4]] }));
+  const selectedAnnotation = { isAnnotation: () => true, key: "ANN00001" };
+  const selectedApi = new Api({
+    getMainWindow: () => ({ ZoteroPane: { getSelectedItems: () => [selectedAnnotation] } }),
+  });
+  assert.deepEqual(selectedApi.selectedAnnotations(), [selectedAnnotation]);
+  const createdCalls = [];
+  const createApi = new Api({
+    Libraries: { userLibraryID: 1 },
+    Items: { getAll: () => [] },
+    Collections: {
+      getByLibrary: () => [],
+    },
+    Collection: function Collection() {
+      this.key = "PFCOLL02";
+      this.name = "PaperFlow";
+      this.deleted = false;
+      this.saveTx = async () => createdCalls.push("collection-save");
+      this.hasItem = () => false;
+      this.addItem = async (id) => createdCalls.push(`collection-add:${id}`);
+    },
+    Item: function Item(type) {
+      this.itemType = type;
+      this.fields = {};
+      this.setField = (field, value) => { this.fields[field] = value; };
+      this.setCreators = (value) => { this.creators = value; };
+      this.saveTx = async () => { this.key = "NEWITEM1"; this.id = 77; createdCalls.push("item-save"); };
+      this.getCollections = () => ["PFCOLL02"];
+      this.getAttachments = () => [];
+      this.getField = (field) => field === "url" ? this.fields.url : field === "extra" ? this.fields.extra : field === "title" ? this.fields.title : "";
+    },
+  });
+  const createdItem = await createApi.createBibliographicItem({
+    paper_uid: "arxiv:2504.16054",
+    paper_source: "arxiv",
+    paper_arxiv_id: "2504.16054",
+    paper_title: "π0.5",
+    paper_authors: ["Physical Intelligence"],
+    paper_abs_url: "https://arxiv.org/abs/2504.16054",
+  });
+  assert.equal(createdItem.status, "created");
+  assert.equal(createdItem.item.fields.title, "π0.5");
+  assert.ok(createdCalls.includes("item-save"));
+  assert.ok(createdCalls.some((value) => value.startsWith("collection-add:")));
   const deletedPayload = await annotationApi.annotationPayload("ANN00001", "delete");
   assert.equal(JSON.stringify(deletedPayload), JSON.stringify({
     event: "delete",

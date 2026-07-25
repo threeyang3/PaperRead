@@ -15,6 +15,16 @@ from paperflow._version import __version__
 
 VERSION = __version__
 DIST = ROOT / "dist"
+EXCLUDED_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".git", "node_modules"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+
+
+def excluded_path(path: Path) -> bool:
+    return any(part in EXCLUDED_DIRS for part in path.parts) or path.suffix.lower() in EXCLUDED_SUFFIXES
+
+
+def copy_ignore(_directory: str, names: list[str]) -> set[str]:
+    return {name for name in names if excluded_path(Path(name))}
 
 
 def sha256(path: Path) -> str:
@@ -28,7 +38,7 @@ def sha256(path: Path) -> str:
 def zip_tree(output: Path, source: Path, prefix: str = "") -> None:
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(source.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not excluded_path(path.relative_to(source)):
                 archive.write(path, Path(prefix) / path.relative_to(source))
 
 
@@ -38,7 +48,7 @@ def copy_selected(stage: Path, names: list[str]) -> None:
         target = stage / name
         target.parent.mkdir(parents=True, exist_ok=True)
         if source.is_dir():
-            shutil.copytree(source, target)
+            shutil.copytree(source, target, ignore=copy_ignore)
         else:
             shutil.copy2(source, target)
 
@@ -67,6 +77,8 @@ def audit_archive(path: Path, *, template_vault: bool = False) -> None:
         name
         for name in names
         if any(fragment in f"/{name}" for fragment in banned)
+        or any(f"/{directory}/" in f"/{name}/" for directory in EXCLUDED_DIRS)
+        or name.lower().endswith((".pyc", ".pyo"))
         or name.lower().endswith((".pdf", ".sqlite", ".db", ".log", ".wal"))
     ]
     if not template_vault:

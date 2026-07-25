@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- 将 Zotero 的“导入并分析选中论文”补成完整主链：插件仅通过公开对象 API
+  发送元数据和分块 PDF，loopback Core 校验偏移、PDF 魔数和 SHA-256 后才写入
+  standalone canonical data；不读取 `zotero.sqlite`，不覆盖不同哈希的既有 PDF。
+- DOI 条目也可以使用 PaperFlow canonical 文件名和本地 PDF 进行分析，避免把
+  仅有 arXiv ID 的路径假定为所有论文的唯一布局。
+- Doctor 将未开启 PDF 上传许可的 ChatGPT Web 视为可选能力；启用许可后仍会
+  严格检查 Edge/Playwright，并把登录、验证码和模型探测状态明确报告给用户。
+
 ## 1.5.0 - 2026-07-21
 
 - Added template bundle v6: queryable metadata stays in YAML while generated
@@ -33,7 +43,7 @@
   source hashes and Collection membership but never write Zotero objects.
 - Added standalone Core Data Root planning/initialization, while preserving the
   existing Vault `.paperflow` layout, and added guarded Zotero Item Tree columns,
-  Item Pane status projection, and one-second Notifier debounce adapters.
+  Item Pane status projection, and configurable Notifier debounce adapters (10 seconds by default).
 - Added a Core-side Zotero Connector event state machine that waits for a regular
   item, stable PDF, configured Collection, and resolved identity before queuing
   analysis; repeated PDF hash/profile pairs become complete without re-analysis.

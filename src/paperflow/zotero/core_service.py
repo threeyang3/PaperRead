@@ -33,6 +33,8 @@ DEFAULT_PORT = 23140
 SESSION_FILE = "zotero-core-session.json"
 PAIRING_TOKEN_FILE = "zotero-core-session.token"
 MAX_REQUEST_BYTES = 1024 * 1024
+MAX_PDF_CHUNK_BYTES = 768 * 1024
+MAX_PDF_BYTES = 100 * 1024 * 1024
 JOB_SCHEMA_VERSION = 1
 JOB_ID_MAX_LENGTH = 160
 
@@ -42,12 +44,59 @@ def _json_bytes(value: object) -> bytes:
 
 
 def _paper_path(root: Path, paper_uid: str) -> Path:
-    if not paper_uid or len(paper_uid) > 200 or any(char in paper_uid for char in "\\/\x00"):
+    if not paper_uid or len(paper_uid) > 200 or "\x00" in paper_uid:
         raise ValueError("invalid paper_uid")
     directory = data_root(root) / "papers"
     canonical = directory / f"{safe_component(paper_uid)}.json"
     legacy = directory / f"{safe_component(paper_uid.replace(':', '_'))}.json"
     return legacy if legacy.is_file() and not canonical.is_file() else canonical
+
+
+def _paper_component(value: object, label: str = "paper UID") -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > 200 or "\x00" in text:
+        raise ValueError(f"invalid {label}")
+    return safe_component(text.replace(":", "_"))
+
+
+def _canonical_paper_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Normalize public Zotero object data into the standalone paper record.
+
+    The plugin is the only component allowed to inspect Zotero objects.  Core
+    receives a deliberately small, JSON-only snapshot and stores only the
+    canonical PaperMetadata-compatible fields needed by the AI pipeline.
+    """
+    if not isinstance(snapshot, dict):
+        raise ValueError("paper snapshot must be an object")
+    paper_uid = str(snapshot.get("paper_uid") or "").strip()
+    title = str(snapshot.get("paper_title") or "").strip()
+    if not paper_uid or not title:
+        raise ValueError("paper_uid and paper_title are required")
+    authors = snapshot.get("paper_authors") or []
+    if isinstance(authors, str):
+        authors = [authors]
+    if not isinstance(authors, list) or any(len(str(value)) > 500 for value in authors):
+        raise ValueError("paper_authors must be a list of short strings")
+    allowed = (
+        "paper_uid", "paper_source", "paper_arxiv_id", "paper_arxiv_version",
+        "paper_doi", "paper_title", "paper_title_display", "paper_authors",
+        "paper_first_author", "paper_year", "paper_submitted_date",
+        "paper_updated_date", "paper_published_venue", "paper_primary_category",
+        "paper_categories", "paper_abstract", "paper_pdf_url", "paper_abs_url",
+        "paper_project_url", "paper_code_url", "paper_dataset_url",
+    )
+    unknown = sorted(set(snapshot) - set(allowed))
+    if unknown:
+        raise ValueError(f"unsupported paper snapshot fields: {', '.join(unknown)}")
+    value = {key: snapshot[key] for key in allowed if key in snapshot}
+    value["paper_uid"] = paper_uid
+    value["paper_title"] = title
+    value["paper_authors"] = [str(item).strip() for item in authors if str(item).strip()]
+    value.setdefault("paper_source", "zotero")
+    value.setdefault("paper_arxiv_version", 1)
+    value.setdefault("paper_abstract", "")
+    value["artifact_permission"] = "RAW_VERSIONED"
+    return value
 
 
 def _annotation_root(root: Path) -> Path:
@@ -56,7 +105,7 @@ def _annotation_root(root: Path) -> Path:
 
 def _annotation_component(value: object, label: str) -> str:
     text = str(value or "").strip()
-    if not text or len(text) > 200 or any(char in text for char in "\\/\x00"):
+    if not text or len(text) > 200 or "\x00" in text:
         raise ValueError(f"invalid Zotero {label}")
     return safe_component(text)
 
@@ -148,6 +197,16 @@ class _Handler(BaseHTTPRequestHandler):
             raise ValueError("JSON body must be an object")
         return value
 
+    def _raw_body(self, limit: int = MAX_PDF_CHUNK_BYTES) -> bytes:
+        raw_length = self.headers.get("Content-Length", "0")
+        try:
+            length = int(raw_length)
+        except ValueError as exc:
+            raise ValueError("invalid Content-Length") from exc
+        if length < 0 or length > limit:
+            raise ValueError("request body too large")
+        return self.rfile.read(length)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -169,6 +228,19 @@ class _Handler(BaseHTTPRequestHandler):
             if path.startswith("/zotero/annotations/"):
                 paper_uid = unquote(path.removeprefix("/zotero/annotations/"))
                 self._send(200, self.core.annotation_list(paper_uid))
+                return
+            if path == "/subscriptions/inbox":
+                raw_limit = parse_qs(parsed.query).get("limit", ["100"])[0]
+                try:
+                    limit = max(1, min(500, int(raw_limit)))
+                except ValueError as exc:
+                    raise ValueError("limit must be an integer") from exc
+                status = parse_qs(parsed.query).get("status", [""])[0]
+                self._send(200, self.core.subscription_inbox(limit=limit, status=status))
+                return
+            if path.startswith("/subscriptions/inbox/"):
+                paper_uid = unquote(path.removeprefix("/subscriptions/inbox/"))
+                self._send(200, self.core.subscription_inbox_item(paper_uid))
                 return
             if path == "/jobs":
                 raw_limit = parse_qs(parsed.query).get("limit", ["50"])[0]
@@ -196,9 +268,24 @@ class _Handler(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path.rstrip("/") or "/"
         try:
+            if path.startswith("/zotero/staging/"):
+                paper_uid = unquote(path.removeprefix("/zotero/staging/"))
+                self._send(200, self.core.stage_pdf_chunk(
+                    paper_uid,
+                    self._raw_body(),
+                    offset=self.headers.get("X-PaperFlow-Offset", "0"),
+                    total=self.headers.get("X-PaperFlow-Total", "0"),
+                    expected_sha256=self.headers.get("X-PaperFlow-Sha256", ""),
+                    filename=self.headers.get("X-PaperFlow-Filename", "paper.pdf"),
+                    item_key=self.headers.get("X-PaperFlow-Item-Key", ""),
+                ))
+                return
             body = self._body()
             if path == "/zotero/events":
                 self._send(202, self.core.accept_event(body))
+                return
+            if path == "/zotero/papers/import":
+                self._send(200, self.core.import_paper(body))
                 return
             if path == "/zotero/annotations":
                 self._send(202, self.core.mirror_annotation(body))
@@ -214,6 +301,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/subscriptions/sync":
                 self._send(202, self.core.subscription_sync(body))
+                return
+            if path == "/subscriptions/inbox/decision":
+                self._send(200, self.core.subscription_decision(body))
                 return
             if path == "/community/publish-plan":
                 self._send(200, self.core.community_plan(body))
@@ -243,6 +333,7 @@ class PaperFlowCoreService:
         self.worker_stop = threading.Event()
         self.jobs: queue.Queue[dict[str, Any]] = queue.Queue()
         self.job_state_lock = threading.RLock()
+        self.stage_lock = threading.RLock()
         self.pending_jobs_loaded = False
 
     @property
@@ -569,6 +660,140 @@ class PaperFlowCoreService:
         value = json.loads(path.read_text(encoding="utf-8"))
         return {"ok": True, "paper_uid": paper_uid, "paper": value}
 
+    def import_paper(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Import a PaperMetadata snapshot supplied by the Zotero plugin.
+
+        This is an append/merge operation: existing canonical records are not
+        overwritten with empty Zotero fields, and conflicting non-empty values
+        are preserved in a review snapshot instead of silently replaced.
+        """
+        snapshot = body.get("paper") if isinstance(body.get("paper"), dict) else body
+        value = _canonical_paper_from_snapshot(snapshot)
+        paper_uid = str(value["paper_uid"])
+        target = _paper_path(self.root, paper_uid)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        conflicts: dict[str, dict[str, Any]] = {}
+        if target.is_file():
+            try:
+                existing = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"existing paper record is invalid: {target}") from exc
+            if not isinstance(existing, dict):
+                raise ValueError("existing paper record must be an object")
+            conflicts = {
+                key: {"existing": existing[key], "incoming": value[key]}
+                for key in value
+                if key in existing and existing[key] not in ("", [], None)
+                and value[key] not in ("", [], None)
+                and existing[key] != value[key]
+                and key not in {"artifact_permission"}
+            }
+            merged = dict(existing)
+            for key, incoming in value.items():
+                if key not in merged or merged[key] in ("", [], None):
+                    merged[key] = incoming
+            if conflicts:
+                review = runtime_root(self.root) / "manual-review" / f"{_paper_component(paper_uid)}-zotero-import.json"
+                review.parent.mkdir(parents=True, exist_ok=True)
+                atomic_json(review, {"paper_uid": paper_uid, "conflicts": conflicts, "incoming": value})
+            value = merged
+            if merged != existing:
+                PermissionGuard(self.root).authorize(target, "RAW_VERSIONED")
+                atomic_json(target, merged)
+            status = "reused" if not conflicts else "manual-review"
+        else:
+            PermissionGuard(self.root).authorize(target, "RAW_VERSIONED")
+            atomic_json(target, value)
+            status = "imported"
+        return {
+            "ok": True,
+            "paper_uid": paper_uid,
+            "status": status,
+            "path": target.relative_to(self.root).as_posix(),
+            "conflicts": sorted(conflicts),
+        }
+
+    def stage_pdf_chunk(
+        self,
+        paper_uid: str,
+        chunk: bytes,
+        *,
+        offset: str,
+        total: str,
+        expected_sha256: str,
+        filename: str,
+        item_key: str = "",
+    ) -> dict[str, Any]:
+        """Receive a PDF through authenticated loopback chunks.
+
+        Zotero reads the attachment with its public object API and sends only
+        bytes to this endpoint.  Core never receives a Zotero filesystem path.
+        The final file is hash-checked and atomically promoted to the
+        standalone ``documents/zotero`` area.
+        """
+        component = _paper_component(paper_uid)
+        try:
+            start = int(offset)
+            size = int(total)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("offset and total must be integers") from exc
+        digest = str(expected_sha256 or "").strip().lower()
+        if start < 0 or size <= 0 or size > MAX_PDF_BYTES or start > size:
+            raise ValueError("invalid PDF upload range")
+        if len(chunk) > MAX_PDF_CHUNK_BYTES or start + len(chunk) > size:
+            raise ValueError("PDF chunk is too large")
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("expected_sha256 must be a SHA-256 hex digest")
+        safe_name = safe_component(Path(str(filename or "paper.pdf")).name)
+        if not safe_name.lower().endswith(".pdf"):
+            safe_name += ".pdf"
+        staging = runtime_root(self.root) / "staging" / "zotero" / component
+        part = staging / f"{safe_name}.part"
+        with self.stage_lock:
+            staging.mkdir(parents=True, exist_ok=True)
+            current = part.stat().st_size if part.is_file() else 0
+            if current != start:
+                raise ValueError(f"unexpected PDF upload offset: expected {current}, got {start}")
+            mode = "wb" if start == 0 else "ab"
+            with part.open(mode) as stream:
+                stream.write(chunk)
+                stream.flush()
+                os.fsync(stream.fileno())
+            uploaded = part.stat().st_size
+            if uploaded < size:
+                return {"ok": True, "status": "staging", "paper_uid": paper_uid, "offset": uploaded, "total": size}
+            if uploaded != size or part.read_bytes()[:5] != b"%PDF-":
+                part.unlink(missing_ok=True)
+                raise ValueError("staged file is not a complete PDF")
+            actual = hashlib.sha256(part.read_bytes()).hexdigest()
+            if not hmac.compare_digest(actual, digest):
+                part.unlink(missing_ok=True)
+                raise ValueError("staged PDF SHA-256 mismatch")
+            documents = self.root / "documents/zotero"
+            documents.mkdir(parents=True, exist_ok=True)
+            target = documents / f"{component}.pdf"
+            if target.is_file():
+                existing = hashlib.sha256(target.read_bytes()).hexdigest()
+                if existing != actual:
+                    conflict = target.with_name(f"{target.stem}-conflict-{actual[:12]}{target.suffix}")
+                    part.replace(conflict)
+                    return {"ok": True, "status": "manual-review", "paper_uid": paper_uid, "path": conflict.relative_to(self.root).as_posix(), "sha256": actual}
+                part.unlink(missing_ok=True)
+                final_path = target
+                status = "reused"
+            else:
+                PermissionGuard(self.root).authorize(target, "RAW_VERSIONED")
+                part.replace(target)
+                final_path = target
+                status = "stored"
+            paper_path = _paper_path(self.root, paper_uid)
+            if paper_path.is_file():
+                record = json.loads(paper_path.read_text(encoding="utf-8"))
+                if isinstance(record, dict) and not record.get("paper_pdf_path"):
+                    record["paper_pdf_path"] = final_path.relative_to(self.root).as_posix()
+                    atomic_json(paper_path, record)
+            return {"ok": True, "status": status, "paper_uid": paper_uid, "path": final_path.relative_to(self.root).as_posix(), "sha256": actual, "item_key": item_key}
+
     def item_status(self, item_key: str) -> dict[str, Any]:
         if not item_key or len(item_key) > 80 or not item_key.replace("-", "").isalnum():
             raise ValueError("invalid Zotero item key")
@@ -602,6 +827,129 @@ class PaperFlowCoreService:
             "annotations": annotations,
             "permission": "SYSTEM_MANAGED",
         }
+
+    def _subscription_inbox_root(self) -> Path:
+        """Return the canonical Inbox directory, with a one-way legacy fallback.
+
+        Older standalone fixtures used ``<root>/data`` while a Vault-backed
+        service uses ``<vault>/.paperflow/data``.  Prefer the configured
+        canonical path; only consult the old path when it is already present
+        and the canonical directory has not been created.  This keeps a Vault
+        from accidentally merging arbitrary top-level data while allowing an
+        existing Inbox to be read during migration.
+        """
+        canonical = data_root(self.root) / "subscriptions/inbox"
+        legacy = self.root / "data/subscriptions/inbox"
+        if canonical.is_dir() or not legacy.is_dir() or canonical == legacy:
+            return canonical
+        return legacy
+
+    @staticmethod
+    def _subscription_paper(value: dict[str, Any]) -> dict[str, Any]:
+        paper_uid = str(value.get("paper_uid") or "")
+        source_id = str(value.get("source_id") or "")
+        source = str(value.get("source") or "").strip().lower()
+        arxiv_id = ""
+        if source_id.startswith("arxiv_"):
+            arxiv_id = source_id.removeprefix("arxiv_")
+        elif source_id.startswith("arxiv:"):
+            arxiv_id = source_id.removeprefix("arxiv:")
+        elif paper_uid.startswith("arxiv:"):
+            arxiv_id = paper_uid.removeprefix("arxiv:")
+        elif source == "arxiv" and source_id:
+            arxiv_id = source_id
+        version = value.get("source_version") or value.get("version") or 1
+        try:
+            version = max(1, int(version))
+        except (TypeError, ValueError):
+            version = 1
+        paper_source = "arxiv" if arxiv_id else ("doi" if paper_uid.startswith("doi:") or source == "doi" else source or "unknown")
+        return {
+            "paper_uid": paper_uid,
+            "paper_source": paper_source,
+            "paper_arxiv_id": arxiv_id,
+            "paper_arxiv_version": version,
+            "paper_title": str(value.get("title") or ""),
+            "paper_authors": value.get("authors") if isinstance(value.get("authors"), list) else [],
+            "paper_abstract": str(value.get("abstract") or ""),
+            "paper_abs_url": str(value.get("url") or ""),
+            "paper_pdf_url": str(((value.get("pdf") or {}).get("source_url") if isinstance(value.get("pdf"), dict) else "") or ""),
+        }
+
+    @classmethod
+    def _public_subscription_record(cls, value: dict[str, Any]) -> dict[str, Any]:
+        # Never expose local source paths or hashes through the Zotero UI API.
+        public = {
+            key: value.get(key)
+            for key in (
+                "schema_version", "artifact_permission", "paper_uid", "title", "authors",
+                "abstract", "url", "source", "source_id", "source_version", "feed_id", "pdf", "status", "created_at",
+                "updated_at", "decision_at", "zotero_item_key", "decision_note",
+            )
+            if key in value
+        }
+        public["paper"] = cls._subscription_paper(value)
+        return public
+
+    def subscription_inbox(self, *, limit: int = 100, status: str = "") -> dict[str, Any]:
+        records: list[dict[str, Any]] = []
+        expected_status = str(status or "").strip().lower()
+        for path in sorted(self._subscription_inbox_root().glob("*.json")) if self._subscription_inbox_root().is_dir() else []:
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(value, dict) or not value.get("paper_uid"):
+                continue
+            if expected_status and str(value.get("status") or "").lower() != expected_status:
+                continue
+            records.append(self._public_subscription_record(value))
+        records.sort(key=lambda value: str(value.get("updated_at") or ""), reverse=True)
+        counts: dict[str, int] = {}
+        for value in records:
+            key = str(value.get("status") or "unknown")
+            counts[key] = counts.get(key, 0) + 1
+        return {"ok": True, "count": len(records), "counts": counts, "items": records[: max(1, min(500, int(limit)))]}
+
+    def subscription_inbox_item(self, paper_uid: str) -> dict[str, Any]:
+        component = _paper_component(paper_uid)
+        target = self._subscription_inbox_root() / f"{component}.json"
+        if not target.is_file():
+            return {"ok": False, "paper_uid": paper_uid, "status": "not-found"}
+        value = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("subscription inbox record must be an object")
+        return {"ok": True, **self._public_subscription_record(value)}
+
+    def subscription_decision(self, body: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"paper_uid", "decision", "item_key", "note"}
+        unknown = sorted(set(body) - allowed)
+        if unknown:
+            raise ValueError(f"unsupported subscription decision fields: {', '.join(unknown)}")
+        paper_uid = str(body.get("paper_uid") or "").strip()
+        component = _paper_component(paper_uid)
+        decision = str(body.get("decision") or "").strip().lower()
+        if decision not in {"approve", "imported", "dismiss"}:
+            raise ValueError("decision must be approve, imported, or dismiss")
+        item_key = str(body.get("item_key") or "").strip()
+        if decision == "imported" and (not item_key or len(item_key) > 80 or not item_key.replace("-", "").isalnum()):
+            raise ValueError("imported decision requires a valid Zotero item key")
+        target = self._subscription_inbox_root() / f"{component}.json"
+        if not target.is_file():
+            raise FileNotFoundError(f"subscription inbox item not found: {paper_uid}")
+        value = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or value.get("paper_uid") != paper_uid:
+            raise ValueError("subscription inbox identity mismatch")
+        value["status"] = {"approve": "approved", "imported": "imported", "dismiss": "dismissed"}[decision]
+        value["updated_at"] = iso_beijing()
+        value["decision_at"] = value["updated_at"]
+        if item_key:
+            value["zotero_item_key"] = item_key
+        if body.get("note") is not None:
+            value["decision_note"] = str(body.get("note") or "")[:1000]
+        PermissionGuard(self.root).authorize(target, "SYSTEM_MANAGED")
+        atomic_json(target, value)
+        return {"ok": True, "decision": decision, **self._public_subscription_record(value)}
 
     def migration_results(self, body: dict[str, Any]) -> dict[str, Any]:
         """Persist only plugin-returned identity/attachment facts.

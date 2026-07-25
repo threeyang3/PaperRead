@@ -33,13 +33,16 @@ PROMPT_VERSION = "paper-analysis-v3"
 
 def _paper_id(paper_uid: str) -> str:
     value = str(paper_uid or "").strip()
-    if not value or any(char in value for char in "\\/\x00"):
+    if not value or "\x00" in value:
         raise ValueError("invalid paper_uid")
-    return safe_component(value.replace(":", "_"))
+    return safe_component(value.replace(":", "_").replace("/", "_"))
 
 
 def _paper_path(root: Path, paper_uid: str) -> Path:
-    return data_root(root) / "papers" / f"{_paper_id(paper_uid)}.json"
+    directory = data_root(root) / "papers"
+    canonical = directory / f"{safe_component(paper_uid)}.json"
+    legacy = directory / f"{_paper_id(paper_uid)}.json"
+    return canonical if canonical.is_file() else legacy
 
 
 def _config(root: Path) -> dict[str, Any]:
@@ -112,6 +115,7 @@ def _text_for_analysis(root: Path, record: dict[str, Any]) -> str:
     """Use staged local PDF text when available, without exposing source paths."""
 
     paper_id = str(record.get("paper_arxiv_id") or "").strip()
+    paper_uid = safe_component(str(record.get("paper_uid") or "").strip().replace(":", "_"))
     candidates: list[Path] = []
     explicit = record.get("paper_pdf_path") or record.get("pdf_path")
     if explicit:
@@ -122,7 +126,10 @@ def _text_for_analysis(root: Path, record: dict[str, Any]) -> str:
     if paper_id:
         documents = root / "documents/zotero"
         if documents.is_dir():
-            candidates.extend(documents.rglob(f"{paper_id}.pdf"))
+            if paper_id:
+                candidates.extend(documents.rglob(f"{paper_id}.pdf"))
+            if paper_uid:
+                candidates.extend(documents.rglob(f"{paper_uid}.pdf"))
     for pdf in candidates:
         if not pdf.is_file():
             continue

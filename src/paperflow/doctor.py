@@ -67,18 +67,27 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
                 pass
         checks.append((display, ok, detail))
     if cfg.workspace and "chatgpt-web" in cfg.workspace.ai.providers:
-        report = make_provider(
-            "chatgpt-web",
-            root,
-            cfg.workspace.ai.providers["chatgpt-web"],
-        ).check_available()
-        checks.append(
-            (
-                "ChatGPT Web",
-                report.available,
-                f"{report.executable}; {report.detail}",
+        chatgpt_config = cfg.workspace.ai.providers["chatgpt-web"]
+        # Browser analysis is explicitly consent-gated. A missing optional
+        # browser must not make the normal local/CLI workflow unhealthy while
+        # PDF upload is disabled.
+        if not chatgpt_config.allow_pdf_upload:
+            checks.append(
+                (
+                    "ChatGPT Web",
+                    True,
+                    "disabled until explicit PDF upload consent; browser not required",
+                )
             )
-        )
+        else:
+            report = make_provider("chatgpt-web", root, chatgpt_config).check_available()
+            checks.append(
+                (
+                    "ChatGPT Web",
+                    report.available,
+                    f"{report.executable}; {report.detail}",
+                )
+            )
     obsidian = shutil.which("obsidian") or ("D:/Obsidian/Obsidian.exe" if Path("D:/Obsidian/Obsidian.exe").exists() else None)
     checks.append(("Obsidian", bool(obsidian), str(obsidian or "not found")))
     cli_ok, cli_detail = _command("obsidian", ["version"], timeout=45)

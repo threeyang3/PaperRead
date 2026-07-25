@@ -35,6 +35,7 @@ const fakeZotero = {
 
 async function main() {
   const ui = new Ui(fakeZotero, {
+    debounceMs: 10,
     statusProvider: async () => ({ ai: "已完成", reading: "未读", sync: "正常" }),
     eventPublisher: async (key, options) => published.push({ key, options }),
   });

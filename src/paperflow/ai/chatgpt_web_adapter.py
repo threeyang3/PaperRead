@@ -14,6 +14,7 @@ from paperflow.models import Analysis, PaperMetadata
 from paperflow.text_quality import validate_text_quality
 from paperflow.utils import atomic_json, atomic_write, iso_beijing
 from paperflow.zotero.store import runtime_root, state_root, standalone
+from paperflow.paths.templates import safe_component
 from .paths import ai_log_path, prompt_path, schema_path
 
 
@@ -88,7 +89,7 @@ class ChatGPTWebAdapter:
         )
 
     def _paper_pdf(self, metadata: PaperMetadata) -> Path:
-        paper_id = metadata.paper_arxiv_id
+        paper_id = metadata.paper_arxiv_id or safe_component(metadata.paper_uid.replace(":", "_"))
         roots = [self.root / "80 Attachments/Papers"]
         if standalone(self.root):
             roots = [self.root / "documents/zotero"]

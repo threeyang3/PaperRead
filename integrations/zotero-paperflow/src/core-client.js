@@ -77,6 +77,43 @@ class PaperFlowCoreClient {
     return this._request("GET", `/zotero/annotations/${encodeURIComponent(String(paperUid || ""))}`);
   }
 
+  importPaper(paper) {
+    return this._request("POST", "/zotero/papers/import", { paper });
+  }
+
+  async uploadPdfChunk(paperUid, bytes, { offset = 0, total, sha256, filename = "paper.pdf", itemKey = "" } = {}) {
+    if (!this.token) throw new Error("Core session token is not configured");
+    if (!(bytes instanceof ArrayBuffer) && !(ArrayBuffer.isView(bytes))) {
+      throw new Error("PDF chunk must be an ArrayBuffer or typed array");
+    }
+    const value = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const headers = {
+      Accept: "application/json",
+      "Content-Type": "application/pdf",
+      Authorization: `Bearer ${this.token}`,
+      "X-PaperFlow-Offset": String(offset),
+      "X-PaperFlow-Total": String(total),
+      "X-PaperFlow-Sha256": String(sha256 || ""),
+      "X-PaperFlow-Filename": String(filename || "paper.pdf"),
+      "X-PaperFlow-Item-Key": String(itemKey || ""),
+    };
+    let response;
+    try {
+      response = await fetch(`${this.baseUrl}/zotero/staging/${encodeURIComponent(String(paperUid || ""))}`, {
+        method: "POST", headers, body: value, cache: "no-store",
+      });
+    } catch (_error) {
+      throw new Error("PaperFlow Core 不可达；请确认服务已启动且仍为本机 loopback");
+    }
+    let result = null;
+    try { result = await response.json(); } catch (_error) {}
+    if (!response.ok) {
+      const detail = result && result.error ? `: ${result.error}` : "";
+      throw new Error(`Core HTTP ${response.status}${detail}`);
+    }
+    return result;
+  }
+
   mirrorAnnotation(payload) { return this._request("POST", "/zotero/annotations", payload); }
 
   migrationResults(payload) { return this._request("POST", "/zotero/migration/results", payload); }
@@ -88,6 +125,15 @@ class PaperFlowCoreClient {
   enqueueRender(payload) { return this._request("POST", "/render/jobs", payload); }
 
   syncSubscriptions(payload = {}) { return this._request("POST", "/subscriptions/sync", payload); }
+  subscriptionInbox({ limit = 100, status = "" } = {}) {
+    const value = Math.max(1, Math.min(500, Number(limit) || 100));
+    const query = `limit=${encodeURIComponent(String(value))}${status ? `&status=${encodeURIComponent(String(status))}` : ""}`;
+    return this._request("GET", `/subscriptions/inbox?${query}`);
+  }
+  subscriptionInboxItem(paperUid) {
+    return this._request("GET", `/subscriptions/inbox/${encodeURIComponent(String(paperUid || ""))}`);
+  }
+  subscriptionDecision(payload) { return this._request("POST", "/subscriptions/inbox/decision", payload); }
 
   communityPlan(payload) { return this._request("POST", "/community/publish-plan", payload); }
   publishCommunity(payload) { return this._request("POST", "/community/publish", payload); }

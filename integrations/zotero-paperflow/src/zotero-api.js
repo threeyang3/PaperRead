@@ -103,6 +103,97 @@ class PaperFlowZoteroApi {
     } catch (_error) { return []; }
   }
 
+  async _isPdfAttachment(rawKey) {
+    const attachment = await this.getItemById(rawKey);
+    if (!attachment) return false;
+    const contentType = this._field(attachment, "contentType") || String(attachment.attachmentContentType || "");
+    const filename = this._field(attachment, "title") || this._field(attachment, "filename") || "";
+    return contentType.toLowerCase() === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
+  }
+
+  async hasPdfAttachment(item) {
+    const parent = item && typeof item === "object" ? item : await this.getItemByKey(item);
+    if (!parent) return false;
+    for (const rawKey of this._attachmentKeys(parent)) {
+      if (await this._isPdfAttachment(rawKey)) return true;
+    }
+    return false;
+  }
+
+  _creators(item) {
+    if (!item || typeof item.getCreators !== "function") return [];
+    try {
+      return (item.getCreators() || []).map((creator) => {
+        if (!creator || typeof creator !== "object") return String(creator || "").trim();
+        const first = String(creator.firstName || "").trim();
+        const last = String(creator.lastName || "").trim();
+        return String(creator.name || [first, last].filter(Boolean).join(" ")).trim();
+      }).filter(Boolean);
+    } catch (_error) { return []; }
+  }
+
+  paperSnapshot(item) {
+    const paper = item && typeof item === "object" ? item : null;
+    if (!paper) throw new Error("Zotero paper item is required");
+    const paperUid = this.paperUid(paper);
+    if (!paperUid) throw new Error("Zotero item has no verifiable arXiv/DOI identity");
+    const arxivMatch = paperUid.match(/^arxiv:(.+)$/i);
+    const title = this._field(paper, "title");
+    if (!title) throw new Error("Zotero item has no title");
+    const authors = this._creators(paper);
+    const date = this._field(paper, "date");
+    const yearMatch = date.match(/\b(19|20)\d{2}\b/);
+    const doi = this._field(paper, "DOI") || this._field(paper, "doi");
+    const url = this._field(paper, "url");
+    const abstract = this._field(paper, "abstractNote");
+    return {
+      paper_uid: paperUid,
+      paper_source: arxivMatch ? "arxiv" : "doi",
+      paper_arxiv_id: arxivMatch ? arxivMatch[1].replace(/v\d+$/i, "") : "",
+      paper_arxiv_version: 1,
+      paper_doi: doi,
+      paper_title: title,
+      paper_authors: authors,
+      paper_first_author: authors[0] || "",
+      paper_year: yearMatch ? Number(yearMatch[0]) : null,
+      paper_submitted_date: date,
+      paper_abstract: abstract,
+      paper_abs_url: url,
+      paper_pdf_url: url && /arxiv\.org\/abs\//i.test(url) ? url.replace(/\/abs\//i, "/pdf/") + ".pdf" : "",
+    };
+  }
+
+  async pdfAttachment(item) {
+    const parent = item && typeof item === "object" ? item : await this.getItemByKey(item);
+    if (!parent) return null;
+    for (const rawKey of this._attachmentKeys(parent)) {
+      const attachment = await this.getItemById(rawKey);
+      if (!attachment) continue;
+      const contentType = this._field(attachment, "contentType") || String(attachment.attachmentContentType || "");
+      const filename = this._field(attachment, "title") || this._field(attachment, "filename") || "paper.pdf";
+      if (contentType && contentType.toLowerCase() !== "application/pdf" && !filename.toLowerCase().endsWith(".pdf")) continue;
+      let filePath = "";
+      try {
+        if (typeof this.Zotero.Attachments?.getFilePath === "function") {
+          filePath = String(await this.Zotero.Attachments.getFilePath(attachment.id) || "");
+        } else if (typeof attachment.getFilePath === "function") {
+          filePath = String(await attachment.getFilePath() || "");
+        }
+      } catch (_error) {}
+      if (!filePath || typeof IOUtils === "undefined" || typeof IOUtils.read !== "function") continue;
+      const bytes = await IOUtils.read(filePath);
+      if (!bytes || !bytes.length || bytes.length > 100 * 1024 * 1024) throw new Error("PDF attachment is empty or exceeds 100 MB");
+      if (bytes[0] !== 0x25 || bytes[1] !== 0x50 || bytes[2] !== 0x44 || bytes[3] !== 0x46 || bytes[4] !== 0x2d) {
+        throw new Error("Zotero attachment is not a PDF");
+      }
+      if (typeof crypto === "undefined" || !crypto.subtle) throw new Error("WebCrypto is required for PDF checksum verification");
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      const sha256 = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+      return { key: String(attachment.key || rawKey), filename, bytes, sha256 };
+    }
+    return null;
+  }
+
   async _sha256File(path) {
     // Zotero/Firefox exposes IOUtils and WebCrypto in modern builds.  If a
     // build does not expose them, return an empty digest and let Core mark the
@@ -223,8 +314,8 @@ class PaperFlowZoteroApi {
     const item = await this.getItemByKey(itemKey);
     if (!item) throw new Error(`Zotero item ${itemKey} was not found`);
     const attachmentKeys = this._attachmentKeys(item);
+    const hasPdf = await this.hasPdfAttachment(item);
     const isRegular = typeof item.isRegularItem === "function" ? item.isRegularItem() : !item.isAttachment?.();
-    const hasPdf = attachmentKeys.length > 0;
     return {
       item_key: String(item.key || itemKey),
       event: String(event),
@@ -261,10 +352,83 @@ class PaperFlowZoteroApi {
     return results;
   }
 
+  async findItemByPaperUid(paperUid) {
+    const libraryID = this._libraryID();
+    if (typeof this.Zotero.Items?.getAll !== "function") {
+      throw new Error("Zotero item enumeration API is unavailable; refusing to risk a duplicate item");
+    }
+    let items;
+    try {
+      items = this.Zotero.Items.getAll(libraryID) || [];
+    } catch (error) {
+      throw new Error(`Zotero item enumeration failed: ${error.message || error}`);
+    }
+    for (const item of items) {
+      if (!item || item.isAttachment?.() || item.isNote?.()) continue;
+      if (this.paperUid(item) === String(paperUid || "")) return item;
+    }
+    return null;
+  }
+
+  _creatorForZotero(value) {
+    const name = String(value || "").trim();
+    if (!name) return null;
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return { name, creatorType: "author" };
+    return {
+      firstName: parts.slice(0, -1).join(" "),
+      lastName: parts[parts.length - 1],
+      creatorType: "author",
+    };
+  }
+
+  async createBibliographicItem(paper, collectionName = "PaperFlow") {
+    if (!paper || typeof paper !== "object") throw new Error("subscription paper snapshot is required");
+    const paperUid = String(paper.paper_uid || "").trim();
+    const title = String(paper.paper_title || paper.title || "").trim();
+    if (!paperUid || !title) throw new Error("subscription paper identity and title are required");
+    const existing = await this.findItemByPaperUid(paperUid);
+    const ensured = await this.ensureCollection(collectionName);
+    if (existing) {
+      const membership = await this.addItemToCollection(ensured.collection, existing);
+      return { status: "reused", item: existing, collection: ensured, membership };
+    }
+    if (typeof this.Zotero.Item !== "function") throw new Error("Zotero Item constructor is unavailable");
+    const item = new this.Zotero.Item("journalArticle");
+    item.libraryID = this._libraryID();
+    const fields = {
+      title,
+      abstractNote: String(paper.paper_abstract || paper.abstract || ""),
+      url: String(paper.paper_abs_url || paper.url || ""),
+      date: String(paper.paper_submitted_date || paper.published_at || ""),
+      DOI: String(paper.paper_doi || paper.doi || ""),
+      archive: paper.paper_source === "arxiv" ? "arXiv" : "",
+      archiveLocation: String(paper.paper_arxiv_id || ""),
+      extra: paper.paper_arxiv_id ? `arXiv:${paper.paper_arxiv_id}` : "",
+    };
+    for (const [field, value] of Object.entries(fields)) {
+      if (!value || typeof item.setField !== "function") continue;
+      item.setField(field, value);
+    }
+    const authors = Array.isArray(paper.paper_authors) ? paper.paper_authors : (Array.isArray(paper.authors) ? paper.authors : []);
+    const creators = authors.map((value) => this._creatorForZotero(value)).filter(Boolean);
+    if (creators.length && typeof item.setCreators === "function") item.setCreators(creators);
+    if (typeof item.saveTx !== "function") throw new Error("Zotero Item save API is unavailable");
+    await item.saveTx();
+    const membership = await this.addItemToCollection(ensured.collection, item);
+    return { status: "created", item, collection: ensured, membership };
+  }
+
   selectedItems(win = this.Zotero.getMainWindow && this.Zotero.getMainWindow()) {
     const pane = win && win.ZoteroPane;
     if (!pane || typeof pane.getSelectedItems !== "function") return [];
     return pane.getSelectedItems().filter((item) => item && !item.isAttachment?.() && !item.isNote?.());
+  }
+
+  selectedAnnotations(win = this.Zotero.getMainWindow && this.Zotero.getMainWindow()) {
+    return this.selectedItems(win).filter((item) => {
+      try { return typeof item.isAnnotation === "function" && item.isAnnotation(); } catch (_error) { return false; }
+    });
   }
 
   async ensureSelectedItemsInCollection(name = "PaperFlow") {

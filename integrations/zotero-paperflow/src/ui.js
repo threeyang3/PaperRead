@@ -12,6 +12,7 @@ class PaperFlowZoteroUi {
     this.annotationProvider = options.annotationProvider || null;
     this.collectionName = options.collectionName || "PaperFlow";
     this.analysisProfile = options.analysisProfile || "";
+    this.debounceMs = Math.max(250, Number(options.debounceMs || 10000));
     this.status = new Map();
     this.pending = new Map();
     this.timer = null;
@@ -184,7 +185,7 @@ class PaperFlowZoteroUi {
         }
         await this.refreshItem(key);
       }
-    }, 1000);
+    }, this.debounceMs);
   }
 
   start() {
