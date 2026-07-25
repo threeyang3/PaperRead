@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from urllib.parse import unquote
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -14,12 +16,44 @@ from paperflow.versioning import APPLICATION_VERSION, VERSIONS
 
 
 def _project_root() -> Path | None:
+    candidates: list[Path] = []
     current = Path.cwd().resolve()
-    for candidate in (current, *current.parents):
+    candidates.extend((current, *current.parents))
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         if (candidate / "pyproject.toml").is_file() and (
             candidate / "src/paperflow/cli.py"
         ).is_file():
             return candidate
+    return None
+
+
+def _audit_project_root() -> Path | None:
+    """Find source resources for audit without changing _project_root semantics."""
+    configured = os.environ.get("PAPERFLOW_PROJECT_ROOT")
+    if configured:
+        candidate = Path(configured).expanduser().resolve()
+        if (candidate / "pyproject.toml").is_file() and (candidate / "src/paperflow/cli.py").is_file():
+            return candidate
+    found = _project_root()
+    if found is not None:
+        return found
+    # Editable installs carry a direct_url.json pointing at the checkout.
+    try:
+        direct = metadata.distribution("paperflow").read_text("direct_url.json")
+        if direct:
+            value = json.loads(direct).get("url", "")
+            if value.startswith("file://"):
+                raw_path = unquote(value.removeprefix("file:///"))
+                candidate = Path(raw_path).resolve()
+                if (candidate / "pyproject.toml").is_file() and (candidate / "src/paperflow/cli.py").is_file():
+                    return candidate
+    except Exception:
+        pass
     return None
 
 
@@ -36,7 +70,7 @@ def _installed_distribution_files() -> set[str]:
 
 def audit(cfg: Config) -> list[dict[str, Any]]:
     root = cfg.root
-    project_root = _project_root()
+    project_root = _audit_project_root()
     package_root = Path(__file__).resolve().parent
     distribution_files = _installed_distribution_files()
     checks: list[dict[str, Any]] = []

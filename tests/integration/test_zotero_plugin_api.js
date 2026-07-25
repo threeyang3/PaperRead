@@ -5,6 +5,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
+const manifest = JSON.parse(fs.readFileSync(
+  path.resolve(__dirname, "../../integrations/zotero-paperflow/manifest.json"),
+  "utf8"
+));
+
 const source = fs.readFileSync(
   path.resolve(__dirname, "../../integrations/zotero-paperflow/src/zotero-api.js"),
   "utf8"
@@ -14,6 +19,9 @@ vm.runInNewContext(source, sandbox, { filename: "zotero-api.js" });
 const Api = sandbox.PaperFlowZoteroApi;
 
 async function main() {
+  assert.equal(manifest.applications.zotero.id, "paperflow-zotero@threeyang");
+  assert.equal(manifest.applications.zotero.strict_min_version, "7.0");
+  assert.equal(manifest.applications.zotero.strict_max_version, "9.0.*");
   const saved = [];
   const collection = {
     key: "PFCOLL01",

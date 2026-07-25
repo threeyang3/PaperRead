@@ -50,7 +50,25 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
     except Exception: writable = False
     checks.append(("Write permission", writable, str(root)))
     checks.append(("Python", sys.version_info >= (3, 11), sys.version.split()[0]))
-    checks.append(("uv or venv", bool(shutil.which("uv") or sys.prefix != sys.base_prefix), shutil.which("uv") or sys.prefix))
+    private_python = next(
+        (
+            candidate
+            for candidate in (
+                root / ".paperflow/.venv/Scripts/python.exe",
+                root / ".paperflow/.venv/bin/python",
+            )
+            if candidate.exists()
+        ),
+        None,
+    )
+    runtime = shutil.which("uv") or (str(private_python) if private_python else None)
+    checks.append(
+        (
+            "uv or venv",
+            bool(runtime or sys.prefix != sys.base_prefix),
+            runtime or sys.prefix,
+        )
+    )
     checks.append(("Configuration", cfg.data["vault"]["timezone"] == "Asia/Shanghai", f"timezone={cfg.data['vault']['timezone']}"))
     checks.append(("UI locale", cfg.ui_locale.locale in {"zh-CN", "en"}, f"{cfg.ui_locale.locale} ({cfg.ui_locale.source})"))
     try: sqlite3.connect(root / ".paperflow/state/paperflow.db").execute("select 1"); sqlite_ok = True

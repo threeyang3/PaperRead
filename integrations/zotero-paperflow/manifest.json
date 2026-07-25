@@ -4,10 +4,12 @@
   "version": "1.5.0",
   "description": "PaperFlow 的 Zotero 7/9 集成：通过公开 API 连接本地 loopback Core。",
   "author": "threeyang",
+  "homepage_url": "https://github.com/threeyang3/PaperRead",
   "applications": {
     "zotero": {
       "id": "paperflow-zotero@threeyang",
-      "strict_min_version": "7.0"
+      "strict_min_version": "7.0",
+      "strict_max_version": "9.0.*"
     }
   }
 }

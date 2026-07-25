@@ -3,6 +3,21 @@
 当前实现只在模拟 Zotero 对象上验证了公共 Collection API。真实主 Profile 未被用于写入
 测试，因此本轮没有创建真实 Collection、条目或附件，也没有访问 `zotero.sqlite`。
 
+Zotero 9.0.6 的正式发行版会识别源码 proxy 文件，但不会像开发版一样自动启用未打包
+的源码扩展；这不是 PaperFlow 的运行时错误。可复现的隔离测试入口是：
+
+```powershell
+python scripts/build_release.py
+.\scripts\zotero-e2e.ps1 -Reset -Launch
+```
+
+脚本只允许 `E:\PaperRead\var` 下的 Profile，并在 Zotero 窗口中提示通过“工具 -> 插件
+-> 齿轮 -> 从文件安装插件”选择构建出的 XPI。完成安装并重启后，脚本会读取该隔离
+Profile 的 `extensions.json`，要求 `paperflow-zotero@threeyang` 为 active 且没有
+`userDisabled/appDisabled`；它不会读取或修改主 Profile 的数据库。Edge 中已安装的
+Zotero Connector 可继续把 arXiv 页面保存到 Zotero，但 Connector 不会替代这一步的
+Zotero 桌面插件安装。
+
 执行真实迁移前，应启动独立测试 Profile，运行 `detect`、迁移 `plan` 和 dry-run，确认
 备份与回滚清单后，再通过 Zotero 插件显式执行。插件返回的 item、attachment 和
 collection keys 交给 `zotero migrate apply` 只写入 PaperFlow mapping；回滚只撤销本轮
