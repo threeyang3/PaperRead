@@ -83,4 +83,26 @@ paperflow zotero link --items-json examples/zotero/items.example.json --vault <v
 
 “同步身份与附件校验”菜单会把选中条目的公开 API 快照发送到已认证的 loopback Core，包含附件键、存储模式和可用 SHA-256，不包含本机路径。Core 校验通过后才写入 mapping；文件复制/链接仍由 Zotero 插件公开附件 API 执行。
 
-发布构建会生成 `PaperFlow-Zotero-1.5.0.xpi`。本轮没有自动安装到真实主 Profile；请先在独立测试 Profile 安装并完成 Collection、Reader 和附件回归，再由用户确认安装到主 Profile。
+发布构建会生成 `PaperFlow-Zotero-1.5.0.xpi`。XPI 使用 Zotero 7+ 的
+`manifest.json`（不是 `install.rdf`），并且 ZIP 成员路径固定为 `/`。但是 Zotero 9
+要求 applications.zotero.update_url、插件 ID 和兼容版本字段完整；缺少 update_url
+时“从文件安装”会报告插件不兼容。当前 XPI 是未签名源码构建包，但在 Zotero 9.0.6
+隔离 Profile 中已验证可被扫描并启用。Windows 下使用反斜杠打包还会导致 Zotero 将
+资源解析失败，因此构建脚本已固定使用 POSIX 路径。
+
+建议的 Zotero 9 安装流程：
+
+1. 开发测试优先使用官方 Extension Proxy，而不是把源码复制进用户 Profile：
+   `scripts\zotero-dev-profile.ps1 -Reset -Launch`。脚本只允许 Profile 位于
+   `E:\PaperRead\var`，并将 `extensions\paperflow-zotero@threeyang` 指向本仓库
+   的解包源码；它不会复制、删除或修改主 Profile。
+2. 在隔离 Zotero 中打开“工具 → 插件”，确认插件 ID 为
+   `paperflow-zotero@threeyang`，再运行 `paperflow zotero doctor`。
+3. 生产安装可在 Zotero 的“工具 → 插件 → 从文件安装插件”中选择 XPI；若仍提示
+   “不兼容”，先确认使用的是重新构建的包（包含 update_url）以及 Zotero 版本在
+   strict_min_version/strict_max_version 范围内。不要编辑 extensions.json、关闭签名
+   校验或复制 XPI 到主 Profile。
+4. `scripts\zotero-e2e.ps1` 仍保留为人工 XPI/隔离 Profile 流程；它不会修改主
+   Profile，并会把安装失败与插件运行时失败分开记录。
+
+本轮没有自动安装到真实主 Profile；真实库仍保持未写入。

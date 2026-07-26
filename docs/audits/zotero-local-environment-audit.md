@@ -11,6 +11,10 @@
 - 当前主 Profile 的 `paperflow-zotero@threeyang` 未安装且未 active；Edge Connector 已安装，但 Connector 不等同于桌面端 PaperFlow 插件。环境检测现在会明确报告 `paperflow_plugin.installed/active`。
 - 没有读取或修改 `zotero.sqlite`，没有复制、移动或删除 storage 文件。
 - Edge 已发现 Zotero Connector（扩展 ID `nmhdhpibnnopknkmonacoephklnflpho`）；检测只读取扩展 manifest 的版本信息，不读取浏览器历史、Cookie 或登录态。
+- Zotero 9.0.6 的安装拒绝已定位：历史构建物曾把 `pathlib.Path` 写成反斜杠 ZIP 成员名，
+  且 manifest 缺少 Zotero 9 要求的 `applications.zotero.update_url`。两项现已修复并有回归测试；
+  重新构建的 XPI 在隔离 Zotero 9.0.6 Profile 中已被扫描并启用。开发验证仍优先使用
+  `scripts/zotero-dev-profile.ps1` 的官方 Extension Proxy，不修改主 Profile。
 
 ## 可重复命令
 
@@ -30,5 +34,5 @@ paperflow zotero doctor --vault <vault>
 
 - 已确认：Windows 11、单一默认 Profile、自定义数据目录存在、`zotero.sqlite`、`storage`、`logs` 存在、Local API 配置启用、Edge Zotero Connector 已安装。
 - 已确认：Zotero 启动后的真实 Local API 请求、20 条目只读扫描和 33 篇本地论文迁移 dry-run 均成功；未执行任何 Zotero 写入。
-- 未确认：Connector 导入、Reader 标注事件和 PaperFlow XPI 在可见隔离 Profile 中的端到端 UI 流程；这些需要在隔离 Profile 手动安装插件后验证。
+- 未确认：Connector 导入、Reader 标注事件和 PaperFlow XPI 在主 Profile 中的端到端 UI 流程；隔离 Profile 的 Extension Proxy 加载已通过 `extensions.json` 与 `addonStartup.json.lz4` 验证。
 - 安全保证：本命令不打开 `zotero.sqlite`，不复制/移动/删除 Zotero storage，网络探测仅限 loopback。

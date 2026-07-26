@@ -39,7 +39,14 @@ def zip_tree(output: Path, source: Path, prefix: str = "") -> None:
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(source.rglob("*")):
             if path.is_file() and not excluded_path(path.relative_to(source)):
-                archive.write(path, Path(prefix) / path.relative_to(source))
+                # ZIP/XPI entries must use POSIX separators even on Windows.
+                # Passing a pathlib.Path directly produces backslashes on
+                # Windows; Zotero's extension loader then cannot resolve the
+                # manifest/bootstrap resources and reports the XPI as
+                # incompatible.
+                relative = path.relative_to(source).as_posix()
+                arcname = f"{prefix.rstrip('/\\')}/{relative}" if prefix else relative
+                archive.write(path, arcname)
 
 
 def copy_selected(stage: Path, names: list[str]) -> None:
@@ -129,6 +136,7 @@ def main() -> None:
         [
             "scripts/install.ps1",
             "scripts/uninstall.ps1",
+            "scripts/zotero-dev-profile.ps1",
             "src",
             "schemas",
             "templates",
@@ -205,6 +213,32 @@ def main() -> None:
     zip_tree(zotero_plugin, zotero_stage)
     audit_archive(zotero_plugin)
     shutil.rmtree(zotero_stage)
+    # Zotero 9 requires applications.zotero.update_url in the plugin manifest.
+    # Publish a standards-compatible update manifest alongside the XPI so the
+    # URL is useful after a GitHub Release is created.
+    update_manifest = DIST / "zotero-update.json"
+    update_manifest.write_text(
+        json.dumps(
+            {
+                "addons": {
+                    "paperflow-zotero@threeyang": {
+                        "updates": [
+                            {
+                                "version": VERSION,
+                                "update_link": (
+                                    "https://github.com/threeyang3/PaperRead/"
+                                    f"releases/download/v{VERSION}/PaperFlow-Zotero-{VERSION}.xpi"
+                                ),
+                            }
+                        ]
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     notes = DIST / "migration-notes.md"
     notes.write_text(
         f"# PaperFlow {VERSION} migration notes\n\n"

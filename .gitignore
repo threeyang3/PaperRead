@@ -29,6 +29,9 @@ dist/
 build/
 var/zotero-test-profile/
 var/zotero-*-profile/
+# Disposable Zotero 9 profiles used by manual/automated integration checks.
+# Never commit their SQLite databases, browser caches, or startup logs.
+var/zotero-*/
 *.pyc
 __pycache__/
 .pytest_cache/

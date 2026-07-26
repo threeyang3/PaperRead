@@ -2391,9 +2391,18 @@ def update_workspace(vault: Path | None = typer.Option(None, "--vault")):
     )
 
 @app.command()
-def doctor(network: bool = typer.Option(False, help="同时测试 arXiv 网络连接。")):
+def doctor(
+    network: bool = typer.Option(False, help="同时测试 arXiv 网络连接。"),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        help="要检查的 Obsidian Vault；未提供时使用 PAPERFLOW_VAULT 或当前目录向上查找。",
+    ),
+):
     """检查 Vault、运行时、AI CLI、插件、Bases、PDF 工具和调度器。"""
-    checks = run_doctor(cfg(), network)
+    value = load_config(vault)
+    ensure_layout(value)
+    checks = run_doctor(value, network)
     for item in checks: typer.echo(f"{'OK' if item['ok'] else 'FAIL':4} {item['name']}: {item['detail']}")
     if not all(i["ok"] for i in checks): raise typer.Exit(1)
 
@@ -2492,9 +2501,17 @@ def health():
         raise typer.Exit(1)
 
 @app.command()
-def audit():
+def audit(
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        help="要审计的 Obsidian Vault；未提供时使用 PAPERFLOW_VAULT 或当前目录向上查找。",
+    ),
+):
     """逐项核对开发计划的本地验收证据，并明确列出仍受阻的系统/UI 项。"""
-    results = acceptance_audit(cfg())
+    value = load_config(vault)
+    ensure_layout(value)
+    results = acceptance_audit(value)
     for item in results:
         typer.echo(f"{'PASS' if item['ok'] else 'BLOCKED' if item['blocker'] else 'FAIL':7} {item['requirement']}: {item['evidence']}")
     if not all(item["ok"] for item in results):

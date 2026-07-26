@@ -199,3 +199,19 @@ def test_relationship_rebuild_has_safe_dry_run(tmp_path: Path) -> None:
         "papers": ["arxiv:2504.16054"],
         "changes_applied": 0,
     }
+
+
+def test_doctor_and_audit_accept_explicit_vault_from_source_checkout(
+    tmp_path: Path,
+) -> None:
+    """Developer commands must not depend on the process cwd being the Vault."""
+    vault = tmp_path / "vault"
+    init_workspace(vault)
+    doctor_result = CliRunner().invoke(app, ["doctor", "--vault", str(vault)])
+    assert doctor_result.exit_code in {0, 1}
+    assert "Traceback" not in (doctor_result.stdout or "")
+    audit_result = CliRunner().invoke(app, ["audit", "--vault", str(vault)])
+    # A minimal fixture may fail product checks, but it must execute the audit
+    # and report evidence rather than fail during Vault discovery.
+    assert audit_result.exit_code in {0, 1}
+    assert "No PaperFlow Workspace found" not in (audit_result.stdout or "")

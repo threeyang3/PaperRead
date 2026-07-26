@@ -8,6 +8,7 @@
   "applications": {
     "zotero": {
       "id": "paperflow-zotero@threeyang",
+      "update_url": "https://github.com/threeyang3/PaperRead/releases/latest/download/zotero-update.json",
       "strict_min_version": "9.0",
       "strict_max_version": "9.0.*"
     }

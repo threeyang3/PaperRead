@@ -87,6 +87,7 @@ def test_portable_contains_installer_examples_and_no_user_data() -> None:
         names = archive.namelist()
     assert any(name.endswith("/install.ps1") for name in names)
     assert any(name.endswith("/uninstall.ps1") for name in names)
+    assert any(name.endswith("/zotero-dev-profile.ps1") for name in names)
     assert any("/schemas/" in name for name in names)
     assert any("/templates/" in name for name in names)
     assert any("/prompts/paper-analysis-v3.md" in name for name in names)
@@ -112,19 +113,44 @@ def test_template_vault_is_curated_and_contains_no_papers() -> None:
     )
 
 
-def test_zotero_xpi_is_installable_source_only() -> None:
+def test_zotero_xpi_is_valid_source_package() -> None:
     plugin = DIST / f"PaperFlow-Zotero-{VERSION}.xpi"
     assert plugin.is_file()
     with zipfile.ZipFile(plugin) as archive:
         names = set(archive.namelist())
         manifest = json.loads(archive.read("manifest.json"))
+    # XPI/ZIP member names are always POSIX paths.  A Windows pathlib.Path
+    # passed to ZipFile.write() would produce backslashes and Zotero 9 would
+    # fail to resolve the root manifest, reporting the plugin as incompatible.
+    assert all("\\" not in name for name in names)
     assert manifest["version"] == VERSION
     assert manifest["applications"]["zotero"]["id"] == "paperflow-zotero@threeyang"
+    assert manifest["applications"]["zotero"]["update_url"].startswith("https://github.com/threeyang3/PaperRead/")
     assert manifest["applications"]["zotero"]["strict_min_version"] == "9.0"
     assert manifest["applications"]["zotero"]["strict_max_version"] == "9.0.*"
     assert "bootstrap.js" in names and "prefs.js" in names and "src/zotero-api.js" in names
     assert "install.rdf" not in names
     assert not any("zotero.sqlite" in name or name.lower().endswith((".pdf", ".db")) for name in names)
+    # The XPI is intentionally unsigned for this local build. Zotero 9's
+    # official build accepts ordinary third-party extension installs when the
+    # manifest is complete; the Extension Proxy remains the safer development
+    # path because it avoids copying code into a user profile.
+    assert not any(name.startswith("META-INF/") for name in names)
+    update_manifest = DIST / "zotero-update.json"
+    assert update_manifest.is_file()
+    update = json.loads(update_manifest.read_text(encoding="utf-8"))
+    record = update["addons"]["paperflow-zotero@threeyang"]["updates"][0]
+    assert record["version"] == VERSION
+    assert record["update_link"].endswith(f"PaperFlow-Zotero-{VERSION}.xpi")
+
+
+def test_zotero_dev_profile_uses_confined_extension_proxy() -> None:
+    script = (ROOT / "scripts/zotero-dev-profile.ps1").read_text(encoding="utf-8")
+    assert "integrations\\zotero-paperflow" in script
+    assert "paperflow-zotero@threeyang" in script
+    assert "ProfilePath 必须位于 PaperRead\\var 下" in script
+    assert "Remove-Item -LiteralPath $profile -Recurse -Force" in script
+    assert "extensions\\.lastApp(BuildId|Version)" in script
 
 
 def test_zotero_e2e_profile_confines_data_root_to_var() -> None:
