@@ -73,6 +73,10 @@ class PaperFlowCoreClient {
     return this._request("GET", `/zotero/items/${encodeURIComponent(String(itemKey || ""))}/status`);
   }
 
+  itemWorkspace(itemKey) {
+    return this._request("GET", `/zotero/items/${encodeURIComponent(String(itemKey || ""))}/workspace`);
+  }
+
   annotations(paperUid) {
     return this._request("GET", `/zotero/annotations/${encodeURIComponent(String(paperUid || ""))}`);
   }
@@ -133,10 +137,14 @@ class PaperFlowCoreClient {
   subscriptionInboxItem(paperUid) {
     return this._request("GET", `/subscriptions/inbox/${encodeURIComponent(String(paperUid || ""))}`);
   }
+  subscriptionStatus() { return this._request("GET", "/subscriptions/status"); }
   subscriptionDecision(payload) { return this._request("POST", "/subscriptions/inbox/decision", payload); }
 
   communityPlan(payload) { return this._request("POST", "/community/publish-plan", payload); }
   publishCommunity(payload) { return this._request("POST", "/community/publish", payload); }
+  communityPaper(paperUid) {
+    return this._request("GET", `/community/papers/${encodeURIComponent(String(paperUid || ""))}`);
+  }
 
   jobs(limit = 20) {
     const value = Math.max(1, Math.min(200, Number(limit) || 20));

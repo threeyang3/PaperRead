@@ -28,15 +28,35 @@
   用户确认导入或拒绝后，`imported`/`dismissed` 状态跨重复刷新保留。Zotero UI 只显示
   脱敏元数据，导入动作由插件公共对象 API 完成，不会自动下载 PDF 或覆盖 Zotero 元数据。
 - Zotero UI 已提供选中标注的社区预览和二次确认发布入口；发布只生成 Core outbox，真实 GitHub push 仍由维护者/用户在独立发布流程中执行。
+- 插件新增 Reader 适配和控制中心：控制中心以独立功能卡片呈现论文/阅读、订阅 Inbox、社区标注和诊断；当前条目的 Reader 工作区聚合 AI 状态、标注、费曼、订阅、社区和最近任务。Core 通过只读 `/zotero/items/{item_key}/workspace`、`/subscriptions/status` 与 `/community/papers/{paper_uid}` 提供摘要，不暴露原始提示、密钥或本地路径。
+- Connector 事件现在对 PDF 做两次公开对象快照；只有大小和 SHA-256 一致时才标记 `pdf_stable`，否则保持 `stabilizing`，避免下载尚未完成就排队分析。事件中的 `analysis_profile` 会由 Core 解析为真实 provider，作业同时保留 profile/provider/model provenance。
 
-## 本轮审计证据（2026-07-24）
+## 独立 Core CLI 入口（本轮新增）
 
-- 本机 Zotero 9.0.5、单一活动 Profile 和自定义数据目录已被只读探测；Zotero 未启动时 Local API 不可达被正确报告为“未启动”，没有读取或修改 `zotero.sqlite`。
+Zotero-only Core 不要求存在 Obsidian Workspace。初始化后可使用以下只读或安全计划命令：
+
+```text
+paperflow zotero items --data-root <core-root> --items-json <fixture>
+paperflow zotero scan --data-root <core-root>
+paperflow zotero create-collection --data-root <core-root>
+paperflow zotero analyze-pending --data-root <core-root>
+paperflow zotero sync-status --data-root <core-root>
+paperflow zotero sync-annotations --data-root <core-root>
+paperflow zotero conflicts --data-root <core-root>
+paperflow zotero community --data-root <core-root>
+```
+
+其中 Collection 创建、标注读取和真实 Zotero 写入始终返回 `plugin-required`，必须由 Zotero 插件通过公开对象 API 执行；Core 不打开 `zotero.sqlite`。`analyze-pending --apply` 仅在 standalone Core 中运行已配置 Provider，并写入版本化 AI Raw。
+
+## 本轮审计证据（2026-07-26）
+
+- 本机 Zotero 9.0.6、单一活动 Profile 和自定义数据目录已被只读探测；Zotero 启动后 Local API 可达，已完成 20 条目只读扫描和 33 篇本地论文 migration plan/dry-run，没有读取或修改 `zotero.sqlite`。
+- 本机 Edge Zotero Connector 已被环境检测识别；PaperFlow 不读取浏览器凭据，Connector 到 Zotero 的导入仍由 Zotero 官方公开对象 API 接收。
 - 已在源码仓库内用 Zotero `--profile`/`--headless` 创建隔离测试 Profile 并完成启动探测；该 Profile 未指向真实 `D:\\Zotero`。由于 headless 启动不会通过安装向导加载未签名 XPI，插件实际安装/Reader 对象 API E2E 仍待用户在独立可见 Profile 中手动安装验证，未触碰主 Profile。
-- PaperRead 当前分支完整 pytest 全部通过，5 组 Node 插件/Core 集成测试全部通过；新增覆盖元数据导入、PDF 分块 staging、SHA-256 拒绝、DOI 路径和订阅 Inbox 首次/重复同步。
+- PaperRead 当前分支完整 pytest 为 191/191 通过（含本轮新增独立 Core CLI、Reader/control-center、插件状态检测和隔离 Profile 数据根回归测试）。新增覆盖 `--data-root` 条目读取、兼容命令安全拒绝数据库写入、冲突文件只读报告、多 Profile、中文/空格路径和缺失数据目录。
 - 新增 `ArtifactPolicy`、`PermissionGuard`、`WriteAuthorizer` 和 `PublishScanner`：系统写入不得落到用户论文/笔记目录，Feed 发布前拒绝用户文件、数据库、日志和 PDF。
 - Feynman 问题由 AI 投影，用户答案单独保存在 user-managed 文件；系统重新分析不会覆盖答案。
-- 当前真实主 Profile 的 extensions 目录未发现 PaperFlow Zotero 插件 XPI；本轮只完成源码、模拟对象和 Core loopback 验证，没有未经确认地改写主 Profile。安装/真实 Collection 与 Reader 回归应在独立测试 Profile 完成后再做。
+- 当前真实主 Profile 的 extensions registry 未发现 `paperflow-zotero@threeyang`，因此真实条目工作区返回 `not-linked`；本轮只完成源码、模拟对象、Core loopback、真实 Local API 读取和 dry-run 验证，没有未经确认地改写主 Profile。Edge Connector 已安装但尚未作为 PaperFlow 端到端证据。安装/真实 Collection 与 Reader 回归应在独立测试 Profile 完成后再做。
 
 ## 设计决策
 

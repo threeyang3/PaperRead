@@ -8,7 +8,7 @@
   "applications": {
     "zotero": {
       "id": "paperflow-zotero@threeyang",
-      "strict_min_version": "7.0",
+      "strict_min_version": "9.0",
       "strict_max_version": "9.0.*"
     }
   }

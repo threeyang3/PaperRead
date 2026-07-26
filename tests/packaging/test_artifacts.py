@@ -120,5 +120,14 @@ def test_zotero_xpi_is_installable_source_only() -> None:
         manifest = json.loads(archive.read("manifest.json"))
     assert manifest["version"] == VERSION
     assert manifest["applications"]["zotero"]["id"] == "paperflow-zotero@threeyang"
-    assert "bootstrap.js" in names and "src/zotero-api.js" in names
+    assert manifest["applications"]["zotero"]["strict_min_version"] == "9.0"
+    assert manifest["applications"]["zotero"]["strict_max_version"] == "9.0.*"
+    assert "bootstrap.js" in names and "prefs.js" in names and "src/zotero-api.js" in names
+    assert "install.rdf" not in names
     assert not any("zotero.sqlite" in name or name.lower().endswith((".pdf", ".db")) for name in names)
+
+
+def test_zotero_e2e_profile_confines_data_root_to_var() -> None:
+    script = (ROOT / "scripts/zotero-e2e.ps1").read_text(encoding="utf-8")
+    assert 'Join-Path $profile "zotero-data"' in script
+    assert 'extensions.zotero.useDataDir' in script

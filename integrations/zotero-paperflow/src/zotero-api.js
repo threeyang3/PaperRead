@@ -223,9 +223,12 @@ class PaperFlowZoteroApi {
         }
       } catch (_error) {}
       let size = null;
+      let mtime = null;
       try {
         if (filePath && typeof IOUtils !== "undefined" && typeof IOUtils.stat === "function") {
-          size = (await IOUtils.stat(filePath)).size || null;
+          const stat = await IOUtils.stat(filePath);
+          size = stat.size || null;
+          mtime = Number.isFinite(Number(stat.lastModified)) ? Number(stat.lastModified) : null;
         }
       } catch (_error) {}
       const linkMode = attachment.attachmentLinkMode ?? this._field(attachment, "attachmentLinkMode");
@@ -237,9 +240,26 @@ class PaperFlowZoteroApi {
         mode: String(linkMode) === "1" ? "linked" : "stored",
         sha256: await this._sha256File(filePath),
         size,
+        mtime,
       });
     }
     return result;
+  }
+
+  async pdfFingerprint(item) {
+    const snapshots = await this.attachmentSnapshot(item);
+    const pdf = snapshots.find((value) => {
+      const type = String(value.content_type || "").toLowerCase();
+      const name = String(value.filename || "").toLowerCase();
+      return type === "application/pdf" || name.endsWith(".pdf");
+    });
+    if (!pdf) return null;
+    return {
+      attachment_key: String(pdf.item_key || pdf.key || ""),
+      size: Number.isFinite(Number(pdf.size)) ? Number(pdf.size) : null,
+      mtime: Number.isFinite(Number(pdf.mtime)) ? Number(pdf.mtime) : null,
+      sha256: String(pdf.sha256 || "").toLowerCase(),
+    };
   }
 
   async migrationSnapshot(items = this.selectedItems(), collectionName = "PaperFlow") {
@@ -314,7 +334,15 @@ class PaperFlowZoteroApi {
     const item = await this.getItemByKey(itemKey);
     if (!item) throw new Error(`Zotero item ${itemKey} was not found`);
     const attachmentKeys = this._attachmentKeys(item);
-    const hasPdf = await this.hasPdfAttachment(item);
+    const firstPdf = await this.pdfFingerprint(item);
+    const secondPdf = await this.pdfFingerprint(item);
+    const hasPdf = Boolean(firstPdf || secondPdf);
+    const pdfStable = Boolean(
+      firstPdf && secondPdf && firstPdf.sha256 && secondPdf.sha256
+      && firstPdf.sha256 === secondPdf.sha256
+      && (firstPdf.size === null || secondPdf.size === null || firstPdf.size === secondPdf.size)
+      && (firstPdf.mtime === null || secondPdf.mtime === null || firstPdf.mtime === secondPdf.mtime)
+    );
     const isRegular = typeof item.isRegularItem === "function" ? item.isRegularItem() : !item.isAttachment?.();
     return {
       item_key: String(item.key || itemKey),
@@ -325,9 +353,10 @@ class PaperFlowZoteroApi {
       is_regular: Boolean(isRegular),
       in_collection: this._inCollection(item, options.collectionName || "PaperFlow"),
       has_pdf: hasPdf,
-      // The public object API exposes attachment existence; Core will still
-      // re-check the file and hash before running an analysis job.
-      pdf_stable: hasPdf,
+      // A PDF is stable only after two public-object snapshots agree.  The
+      // Core still validates the staged bytes before analysis.
+      pdf_stable: pdfStable,
+      pdf_sha256: secondPdf?.sha256 || firstPdf?.sha256 || "",
       identity_resolved: Boolean(this.paperUid(item)),
       paper_uid: this.paperUid(item),
       analysis_profile: String(options.analysisProfile || ""),

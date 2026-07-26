@@ -213,7 +213,15 @@ def _make_standalone_adapter(root: Path, policy: dict[str, Any], provider: str, 
     )
 
 
-def analyze_standalone(root: Path, paper_uid: str, *, force: bool = False) -> dict[str, Any]:
+def analyze_standalone(
+    root: Path,
+    paper_uid: str,
+    *,
+    force: bool = False,
+    provider_override: str = "",
+    profile_override: str = "",
+    model_override: str = "",
+) -> dict[str, Any]:
     """Run the configured standalone provider and write one immutable AI Raw revision."""
 
     root = root.resolve()
@@ -226,9 +234,9 @@ def analyze_standalone(root: Path, paper_uid: str, *, force: bool = False) -> di
         raise ValueError("paper record must be a JSON object")
     metadata = PaperMetadata.model_validate({key: record[key] for key in PaperMetadata.model_fields if key in record})
     policy = _config(root).get("analysis") or {}
-    provider = str(policy.get("provider") or "mock").strip().lower()
-    profile = str(policy.get("profile") or "full_analysis").strip() or "full_analysis"
-    model = str(policy.get("model") or "deterministic-v1").strip() or "deterministic-v1"
+    provider = str(provider_override or policy.get("provider") or "mock").strip().lower()
+    profile = str(profile_override or policy.get("profile") or "full_analysis").strip() or "full_analysis"
+    model = str(model_override or policy.get("model") or "deterministic-v1").strip() or "deterministic-v1"
     adapter = _make_standalone_adapter(root, policy, provider, model)
     staged_text = _text_for_analysis(root, record)
     source_hash = hashlib.sha256(

@@ -15,8 +15,11 @@ let subscriptionInboxMenuItem = null;
 let subscriptionImportMenuItem = null;
 let communityMenuItem = null;
 let communityPublishMenuItem = null;
+let controlCenterMenuItem = null;
 let coreClient = null;
 let zoteroUi = null;
+let readerIntegration = null;
+let controlCenter = null;
 let services = null;
 
 try {
@@ -260,6 +263,7 @@ async function analyzeSelectedItems() {
         paper_uid: snapshot.paper_uid,
         zotero_item_key: String(item.key || ""),
         trigger: "zotero-manual",
+        analysis_profile: prefGet("extensions.paperflow-zotero.analysisProfile", "full_analysis"),
         target: prefGet("extensions.paperflow-zotero.analysisTarget", "zotero"),
       });
       queued += 1;
@@ -268,6 +272,48 @@ async function analyzeSelectedItems() {
     }
   }
   notify(`PaperFlow 导入并分析：已排队 ${queued} 篇${skipped ? `，跳过 ${skipped} 篇（缺少可验证 PDF 或身份）` : ""}`);
+}
+
+function loadZoteroReader() {
+  if (typeof PaperFlowReaderIntegration !== "undefined") return PaperFlowReaderIntegration;
+  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
+  try {
+    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
+    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/reader.js");
+    services.scriptloader.loadSubScript(uri.spec, globalThis);
+    return typeof PaperFlowReaderIntegration === "undefined" ? null : PaperFlowReaderIntegration;
+  } catch (_error) { return null; }
+}
+
+function loadControlCenter() {
+  if (typeof PaperFlowControlCenter !== "undefined") return PaperFlowControlCenter;
+  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
+  try {
+    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
+    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/control-center.js");
+    services.scriptloader.loadSubScript(uri.spec, globalThis);
+    return typeof PaperFlowControlCenter === "undefined" ? null : PaperFlowControlCenter;
+  } catch (_error) { return null; }
+}
+
+function openControlCenter() {
+  if (!controlCenter) {
+    const Center = loadControlCenter();
+    if (!Center) { notify("PaperFlow：当前 Zotero 版本不支持控制中心。"); return; }
+    controlCenter = new Center(Zotero, {
+      clientProvider: () => { if (!coreClient) coreClient = configuredCore(); return coreClient; },
+      reader: readerIntegration,
+      notify,
+      actions: {
+        configureCore,
+        analyze: analyzeSelectedItems,
+        syncSubscriptions,
+        subscriptionInbox: () => subscriptionInboxAction({ importPaper: false }),
+        communityPreview: () => previewCommunitySelected({ publish: false }),
+      },
+    });
+  }
+  controlCenter.open();
 }
 
 async function syncSubscriptions() {
@@ -511,6 +557,13 @@ function addMenuItem() {
   communityPublishMenuItem.setAttribute("label", "PaperFlow：确认发布选中标注");
   communityPublishMenuItem.addEventListener("command", () => previewCommunitySelected({ publish: true }));
   menu.appendChild(communityPublishMenuItem);
+  controlCenterMenuItem = win.document.createXULElement
+    ? win.document.createXULElement("menuitem")
+    : win.document.createElement("menuitem");
+  controlCenterMenuItem.id = "paperflow-zotero-control-center";
+  controlCenterMenuItem.setAttribute("label", "PaperFlow：打开控制中心");
+  controlCenterMenuItem.addEventListener("command", openControlCenter);
+  menu.appendChild(controlCenterMenuItem);
 }
 
 function removeMenuItem() {
@@ -525,6 +578,7 @@ function removeMenuItem() {
   if (subscriptionInboxMenuItem && subscriptionInboxMenuItem.parentNode) subscriptionInboxMenuItem.parentNode.removeChild(subscriptionInboxMenuItem);
   if (communityMenuItem && communityMenuItem.parentNode) communityMenuItem.parentNode.removeChild(communityMenuItem);
   if (communityPublishMenuItem && communityPublishMenuItem.parentNode) communityPublishMenuItem.parentNode.removeChild(communityPublishMenuItem);
+  if (controlCenterMenuItem && controlCenterMenuItem.parentNode) controlCenterMenuItem.parentNode.removeChild(controlCenterMenuItem);
   menuItem = null;
   collectionMenuItem = null;
   migrateMenuItem = null;
@@ -536,12 +590,20 @@ function removeMenuItem() {
   subscriptionImportMenuItem = null;
   communityMenuItem = null;
   communityPublishMenuItem = null;
+  controlCenterMenuItem = null;
 }
 
 function startup() {
   if (typeof Zotero === "undefined") return;
   addMenuItem();
   coreClient = configuredCore();
+  const Reader = loadZoteroReader();
+  if (Reader) {
+    readerIntegration = new Reader(Zotero, {
+      clientProvider: () => { if (!coreClient) coreClient = configuredCore(); return coreClient; },
+      notify,
+    });
+  }
   const Ui = loadZoteroUi();
   if (Ui) {
     zoteroUi = new Ui(Zotero, {
@@ -556,6 +618,7 @@ function startup() {
         return coreClient ? coreClient.annotations(paperUid) : Promise.resolve({ count: 0 });
       },
       debounceMs: Number(prefGet("extensions.paperflow-zotero.eventDebounceMs", "10000")),
+      analysisProfile: prefGet("extensions.paperflow-zotero.analysisProfile", "full_analysis"),
       eventPublisher: (itemKey, options) => publishZoteroEvent(itemKey, options),
     });
     zoteroUi.start();
@@ -584,6 +647,9 @@ function shutdown() {
   annotationTimers.clear();
   if (zoteroUi) zoteroUi.stop();
   zoteroUi = null;
+  if (controlCenter) controlCenter.close();
+  controlCenter = null;
+  readerIntegration = null;
   if (typeof Zotero !== "undefined" && Zotero.Notifier) {
     for (const id of observers.splice(0)) Zotero.Notifier.unregisterObserver(id);
   }

@@ -157,6 +157,58 @@ def test_subscription_paper_normalizes_bare_arxiv_source_id() -> None:
     assert paper["paper_arxiv_version"] == 3
 
 
+def test_reader_workspace_is_read_only_aggregate(tmp_path: Path) -> None:
+    papers = tmp_path / "data/papers"
+    papers.mkdir(parents=True)
+    (papers / "arxiv_2607.00001.json").write_text(
+        json.dumps({"paper_uid": "arxiv:2607.00001", "paper_title": "Reader paper"}),
+        encoding="utf-8",
+    )
+    mapping = tmp_path / "data/connectors/zotero/mappings"
+    mapping.mkdir(parents=True)
+    (mapping / "arxiv_2607.00001.json").write_text(
+        json.dumps({"paper_uid": "arxiv:2607.00001", "zotero": {"item_key": "ABCD1234"}}),
+        encoding="utf-8",
+    )
+    service = PaperFlowCoreService(tmp_path, port=0)
+    service.start()
+    service.mirror_annotation({
+        "paper_uid": "arxiv:2607.00001", "annotation_id": "ANN00001",
+        "item_key": "ANN00001", "text": "A quote",
+    })
+    status, workspace = _request(
+        service.url + "/zotero/items/ABCD1234/workspace", token=service.token
+    )
+    assert status == 200
+    assert workspace["linked"] is True
+    assert workspace["paper_uid"] == "arxiv:2607.00001"
+    assert workspace["annotations"]["active_count"] == 1
+    assert workspace["diagnostics"]["permission"] == "read-only-summary"
+    assert "path" not in workspace["diagnostics"]
+    service.stop()
+
+
+def test_enqueue_analysis_resolves_profile_to_provider(tmp_path: Path) -> None:
+    papers = tmp_path / "data/papers"
+    papers.mkdir(parents=True)
+    (papers / "arxiv_1.json").write_text(
+        json.dumps({"paper_uid": "arxiv:1", "paper_title": "Standalone"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "config.yaml").write_text(
+        "analysis:\n  provider: mock\n  profile: configured\n  model: deterministic\n",
+        encoding="utf-8",
+    )
+    service = PaperFlowCoreService(tmp_path, port=0)
+    queued = service.enqueue_job(
+        "analysis", {"paper_uid": "arxiv:1", "analysis_profile": "configured"}
+    )
+    record = service.job(queued["job_id"])
+    assert record["analysis_profile"] == "configured"
+    assert record["provider"] == "mock"
+    assert record["model"] == "deterministic"
+
+
 def test_zotero_public_snapshot_import_and_pdf_staging(tmp_path: Path) -> None:
     (tmp_path / "data/papers").mkdir(parents=True)
     service = PaperFlowCoreService(tmp_path, port=0)

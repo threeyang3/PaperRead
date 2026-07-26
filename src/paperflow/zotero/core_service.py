@@ -225,9 +225,20 @@ class _Handler(BaseHTTPRequestHandler):
                 item_key = unquote(path.removeprefix("/zotero/items/").removesuffix("/status"))
                 self._send(200, self.core.item_status(item_key))
                 return
+            if path.startswith("/zotero/items/") and path.endswith("/workspace"):
+                item_key = unquote(path.removeprefix("/zotero/items/").removesuffix("/workspace"))
+                self._send(200, self.core.item_workspace(item_key))
+                return
             if path.startswith("/zotero/annotations/"):
                 paper_uid = unquote(path.removeprefix("/zotero/annotations/"))
                 self._send(200, self.core.annotation_list(paper_uid))
+                return
+            if path.startswith("/community/papers/"):
+                paper_uid = unquote(path.removeprefix("/community/papers/"))
+                self._send(200, self.core.community_paper(paper_uid))
+                return
+            if path == "/subscriptions/status":
+                self._send(200, self.core.subscription_status())
                 return
             if path == "/subscriptions/inbox":
                 raw_limit = parse_qs(parsed.query).get("limit", ["100"])[0]
@@ -415,8 +426,8 @@ class PaperFlowCoreService:
                     self.jobs.put({
                         key: value.get(key)
                         for key in (
-                            "job_id", "kind", "paper_uid", "provider",
-                            "zotero_item_key", "target", "source_names",
+                            "job_id", "kind", "paper_uid", "provider", "model",
+                            "analysis_profile", "zotero_item_key", "target", "source_names",
                         )
                         if key in value
                     })
@@ -457,7 +468,13 @@ class PaperFlowCoreService:
                 if kind == "analysis":
                     from paperflow.zotero.standalone_ai import analyze_standalone
 
-                    value = analyze_standalone(self.root, paper_uid)
+                    value = analyze_standalone(
+                        self.root,
+                        paper_uid,
+                        provider_override=str(job.get("provider") or ""),
+                        profile_override=str(job.get("analysis_profile") or ""),
+                        model_override=str(job.get("model") or ""),
+                    )
                     if job.get("target") in {"zotero", "obsidian", "both"}:
                         from paperflow.zotero.markdown import render_ai_projection
 
@@ -807,6 +824,102 @@ class PaperFlowCoreService:
                 return {"ok": True, "item_key": item_key, "linked": True, "mapping": value}
         return {"ok": True, "item_key": item_key, "linked": False, "status": "unlinked"}
 
+    def _mapping_for_item(self, item_key: str) -> dict[str, Any] | None:
+        directory = data_root(self.root) / "connectors/zotero/mappings"
+        for path in sorted(directory.glob("*.json")) if directory.exists() else []:
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and value.get("zotero", {}).get("item_key") == item_key:
+                return value
+        return None
+
+    def _analysis_summary(self, paper_uid: str) -> dict[str, Any]:
+        """Return a bounded analysis summary without exposing raw prompts or paths."""
+        record: dict[str, Any] | None = None
+        try:
+            from paperflow.zotero.standalone_ai import load_current_analysis
+
+            record = load_current_analysis(self.root, paper_uid)
+        except (OSError, ValueError, ImportError):
+            record = None
+        if record is None:
+            base = data_root(self.root) / "ai"
+            component = safe_component(paper_uid.replace(":", "_"))
+            candidates = sorted(base.glob(f"*/{component}/v*/*.json"), key=lambda path: path.stat().st_mtime)
+            for candidate in reversed(candidates):
+                if candidate.name == "current.json":
+                    continue
+                try:
+                    value = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict) and value.get("paper_uid") == paper_uid:
+                    record = value
+                    break
+        if not isinstance(record, dict):
+            return {"status": "not-analyzed"}
+        identity = record.get("identity") if isinstance(record.get("identity"), dict) else {}
+        analysis = record.get("analysis") if isinstance(record.get("analysis"), dict) else {}
+        summary_keys = (
+            "ai_summary_short", "ai_one_sentence_summary", "ai_reading_recommendation",
+            "ai_method_family", "ai_contributions", "ai_experimental_findings",
+            "ai_limitations", "ai_feynman_questions",
+        )
+        summary = {key: analysis[key] for key in summary_keys if key in analysis}
+        return {
+            "status": str(record.get("status") or "complete"),
+            "provider": str(identity.get("provider") or ""),
+            "model": str(identity.get("model") or ""),
+            "profile": str(identity.get("profile") or ""),
+            "prompt_version": str(identity.get("prompt_version") or ""),
+            "analyzed_at": str(record.get("analyzed_at") or ""),
+            "analysis_id": str(record.get("analysis_id") or ""),
+            "summary": summary,
+        }
+
+    def item_workspace(self, item_key: str) -> dict[str, Any]:
+        if not item_key or len(item_key) > 80 or not item_key.replace("-", "").isalnum():
+            raise ValueError("invalid Zotero item key")
+        mapping = self._mapping_for_item(item_key)
+        paper_uid = str(mapping.get("paper_uid") or "") if mapping else ""
+        paper = self.paper(paper_uid).get("paper") if paper_uid else None
+        annotations = self.annotation_list(paper_uid) if paper_uid else {"count": 0, "active_count": 0, "annotations": []}
+        feynman: dict[str, Any] = {"question_count": 0, "answered_count": 0}
+        if paper_uid:
+            try:
+                from paperflow.zotero.feynman import load_answers
+
+                answers = load_answers(self.root, paper_uid)
+                questions = answers.get("questions") if isinstance(answers.get("questions"), list) else []
+                answer_map = answers.get("answers") if isinstance(answers.get("answers"), dict) else {}
+                feynman = {"question_count": len(questions), "answered_count": len(answer_map)}
+            except (OSError, ValueError, ImportError):
+                pass
+        jobs = self.list_jobs(limit=200).get("jobs", [])
+        recent_jobs = [
+            {key: job.get(key) for key in ("job_id", "kind", "status", "provider", "analysis_profile", "created_at", "updated_at", "error") if key in job}
+            for job in jobs if paper_uid and job.get("paper_uid") == paper_uid
+        ][:10]
+        subscription = self.subscription_inbox_item(paper_uid) if paper_uid else {"status": "not-linked"}
+        community = self.community_paper(paper_uid) if paper_uid else {"count": 0, "items": []}
+        return {
+            "ok": True,
+            "item_key": item_key,
+            "linked": bool(mapping and paper_uid),
+            "paper_uid": paper_uid,
+            "paper": paper,
+            "mapping": mapping,
+            "analysis": self._analysis_summary(paper_uid) if paper_uid else {"status": "not-linked"},
+            "annotations": {"count": annotations.get("count", 0), "active_count": annotations.get("active_count", 0)},
+            "feynman": feynman,
+            "subscription": {key: subscription.get(key) for key in ("status", "source", "feed_id", "updated_at") if key in subscription},
+            "community": community,
+            "recent_jobs": recent_jobs,
+            "diagnostics": {"core": "online", "permission": "read-only-summary"},
+        }
+
     def annotation_list(self, paper_uid: str) -> dict[str, Any]:
         _annotation_component(paper_uid, "paper UID")
         directory = _annotation_root(self.root) / safe_component(paper_uid)
@@ -921,6 +1034,57 @@ class PaperFlowCoreService:
             raise ValueError("subscription inbox record must be an object")
         return {"ok": True, **self._public_subscription_record(value)}
 
+    def subscription_status(self) -> dict[str, Any]:
+        inbox = self.subscription_inbox(limit=500)
+        return {
+            "ok": True,
+            "count": inbox.get("count", 0),
+            "counts": inbox.get("counts", {}),
+            "last_updated_at": max(
+                (str(item.get("updated_at") or "") for item in inbox.get("items", [])),
+                default="",
+            ),
+        }
+
+    def community_paper(self, paper_uid: str) -> dict[str, Any]:
+        _paper_component(paper_uid)
+        roots = [
+            data_root(self.root) / "community/subscriptions",
+            data_root(self.root) / "community/outbox",
+        ]
+        items: list[dict[str, Any]] = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            paper_component = safe_component(paper_uid.replace(":", "_"))
+            # Subscription feeds include a feed-id directory, while the
+            # local outbox is intentionally flatter. Read both layouts.
+            paths = []
+            for pattern in (
+                f"*/papers/{paper_component}/community/*/*/r*.json",
+                f"papers/{paper_component}/community/*/*/r*.json",
+            ):
+                paths.extend(root.glob(pattern))
+            for path in paths:
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(value, dict) or value.get("paper_uid") != paper_uid:
+                    continue
+                # The Zotero pane gets enough context to navigate/filter, but
+                # never receives a local path or an unbounded private payload.
+                items.append({
+                    key: value.get(key)
+                    for key in (
+                        "contribution_id", "revision", "creator", "kind", "body",
+                        "tags", "license", "created_at", "content_sha256", "anchor",
+                    ) if key in value
+                })
+        unique = {(str(item.get("creator")), str(item.get("contribution_id")), int(item.get("revision") or 0)): item for item in items}
+        records = sorted(unique.values(), key=lambda item: (str(item.get("created_at") or ""), str(item.get("contribution_id") or "")), reverse=True)
+        return {"ok": True, "paper_uid": paper_uid, "count": len(records), "items": records[:100]}
+
     def subscription_decision(self, body: dict[str, Any]) -> dict[str, Any]:
         allowed = {"paper_uid", "decision", "item_key", "note"}
         unknown = sorted(set(body) - allowed)
@@ -1028,17 +1192,56 @@ class PaperFlowCoreService:
         atomic_json(target, value)
         return {"ok": True, "status": "mirrored", "annotation_id": annotation_id, "paper_uid": paper_uid, "path": target.relative_to(self.root).as_posix(), "permission": "SYSTEM_MANAGED"}
 
+    def _resolve_analysis_request(self, body: dict[str, Any]) -> dict[str, str]:
+        """Resolve a UI profile to the provider understood by the pipeline."""
+        requested_profile = str(body.get("analysis_profile") or "").strip()
+        explicit_provider = str(body.get("provider") or "").strip().lower()
+        profile = requested_profile or "full_analysis"
+        provider = explicit_provider
+        model = str(body.get("model") or "").strip()
+        try:
+            from paperflow.workspace import load_workspace_settings
+
+            _, settings = load_workspace_settings(self.root)
+            if profile not in settings.ai.profiles:
+                profile = settings.ai.full_analysis_profile
+            selected = settings.ai.profiles.get(profile)
+            if selected is not None:
+                provider = provider or selected.provider
+                model = model or selected.model
+        except (OSError, ValueError, KeyError):
+            # Standalone roots use their compact config.yaml policy.
+            config_path = self.root / "config.yaml"
+            try:
+                if config_path.is_file():
+                    from ruamel.yaml import YAML
+
+                    raw = YAML(typ="safe").load(config_path.read_text(encoding="utf-8"))
+                    policy = raw.get("analysis") if isinstance(raw, dict) else {}
+                    if isinstance(policy, dict):
+                        provider = provider or str(policy.get("provider") or "")
+                        model = model or str(policy.get("model") or "")
+                        profile = str(policy.get("profile") or profile)
+            except (OSError, ValueError):
+                pass
+        if provider not in {"codex", "claude", "chatgpt-web", "mock", ""}:
+            raise ValueError(f"unsupported analysis provider: {provider}")
+        return {"analysis_profile": profile, "provider": provider, "model": model}
+
     def accept_event(self, body: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "item_key", "event", "item_type", "attachment_keys", "timestamp",
             "is_regular", "in_collection", "has_pdf", "pdf_stable",
             "identity_resolved", "pdf_sha256", "analysis_profile", "paper_uid",
+            "provider", "model",
         }
         unknown = sorted(set(body) - allowed)
         if unknown:
             raise ValueError(f"unsupported event fields: {', '.join(unknown)}")
         if not body.get("event") or not body.get("item_key"):
             raise ValueError("item_key and event are required")
+        request = self._resolve_analysis_request(body)
+        pipeline_body = {**body, **request}
         processor_kwargs: dict[str, Any] = {}
         try:
             from paperflow.workspace import load_workspace_settings
@@ -1054,7 +1257,7 @@ class PaperFlowCoreService:
             # A standalone Core root has no Workspace policy; retain the
             # conservative collection-only default.
             pass
-        pipeline = ZoteroEventProcessor(self.root, **processor_kwargs).handle(body)
+        pipeline = ZoteroEventProcessor(self.root, **processor_kwargs).handle(pipeline_body)
         _append_event(self.root, "events", {key: body[key] for key in body if key in allowed})
         queued_job = None
         if pipeline.get("queue_analysis") and body.get("paper_uid"):
@@ -1062,7 +1265,9 @@ class PaperFlowCoreService:
                 "analysis",
                 {
                     "paper_uid": body["paper_uid"],
-                    "provider": body.get("analysis_profile") or None,
+                    "analysis_profile": request["analysis_profile"],
+                    "provider": request["provider"] or None,
+                    "model": request["model"],
                     "zotero_item_key": body.get("item_key"),
                     "trigger": "zotero-event",
                 },
@@ -1075,19 +1280,25 @@ class PaperFlowCoreService:
             raise ValueError("paper_uid is required")
         _paper_path(self.root, paper_uid)
         job_id = f"zotero-{kind}-{secrets.token_hex(8)}"
-        allowed = {"paper_uid", "provider", "zotero_item_key", "trigger", "target"}
+        allowed = {"paper_uid", "provider", "model", "analysis_profile", "zotero_item_key", "trigger", "target"}
         unknown = sorted(set(body) - allowed)
         if unknown:
             raise ValueError(f"unsupported job fields: {', '.join(unknown)}")
         target = str(body.get("target") or "").strip().lower()
         if target and target not in {"zotero", "obsidian", "both"}:
             raise ValueError("target must be zotero, obsidian, or both")
+        request = self._resolve_analysis_request(body) if kind == "analysis" else {"analysis_profile": "", "provider": "", "model": ""}
+        provider = str(body.get("provider") or request["provider"] or "")
+        model = str(body.get("model") or request["model"] or "")
+        analysis_profile = str(body.get("analysis_profile") or request["analysis_profile"] or "full_analysis")
         job = {
             "schema_version": JOB_SCHEMA_VERSION,
             "job_id": job_id,
             "kind": kind,
             "paper_uid": paper_uid,
-            "provider": body.get("provider"),
+            "provider": provider,
+            "model": model,
+            "analysis_profile": analysis_profile,
             "zotero_item_key": body.get("zotero_item_key"),
             "target": target,
             "created_at": iso_beijing(),

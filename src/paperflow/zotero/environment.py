@@ -25,6 +25,8 @@ _PREF_RE = re.compile(
     r'user_pref\("(?P<key>extensions\.zotero\.[^"]+)",\s*(?P<value>.+?)\);?\s*$'
 )
 _DEFAULT_API_URL = "http://127.0.0.1:23119/api/"
+_ZOTERO_CONNECTOR_ID = "nmhdhpibnnopknkmonacoephklnflpho"
+_PAPERFLOW_PLUGIN_ID = "paperflow-zotero@threeyang"
 
 
 def _unescape_pref(value: str) -> str:
@@ -201,6 +203,78 @@ def _data_shape(path: Path) -> dict[str, Any]:
     }
 
 
+def _paperflow_plugin(profile: Path) -> dict[str, Any]:
+    """Read the public extension registry, without opening Zotero storage."""
+    state_path = profile / "extensions.json"
+    if not state_path.is_file():
+        return {"installed": False, "active": False, "id": _PAPERFLOW_PLUGIN_ID}
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"installed": False, "active": False, "id": _PAPERFLOW_PLUGIN_ID, "error": "invalid-extensions-registry"}
+    addons = state.get("addons") if isinstance(state, dict) else []
+    addon = next((item for item in addons or [] if isinstance(item, dict) and item.get("id") == _PAPERFLOW_PLUGIN_ID), None)
+    if not addon:
+        return {"installed": False, "active": False, "id": _PAPERFLOW_PLUGIN_ID}
+    return {
+        "installed": True,
+        "active": bool(addon.get("active")),
+        "user_disabled": bool(addon.get("userDisabled")),
+        "app_disabled": bool(addon.get("appDisabled")),
+        "version": str(addon.get("version") or ""),
+        "id": _PAPERFLOW_PLUGIN_ID,
+    }
+
+
+def _edge_connector() -> dict[str, Any]:
+    """Detect Zotero Connector manifests without reading browser history/data."""
+    if os.name != "nt":
+        return {"installed": False, "browser": "edge", "extensions": []}
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if not local_app_data:
+        return {"installed": False, "browser": "edge", "extensions": []}
+    user_data = Path(local_app_data) / "Microsoft/Edge/User Data"
+    if not user_data.is_dir():
+        return {"installed": False, "browser": "edge", "extensions": []}
+    extensions: list[dict[str, Any]] = []
+    profiles = [
+        path for path in user_data.iterdir()
+        if path.is_dir() and (path.name == "Default" or path.name.startswith("Profile "))
+    ]
+    for profile in sorted(profiles):
+        extension_root = profile / "Extensions"
+        if not extension_root.is_dir():
+            continue
+        for extension_id in sorted(extension_root.iterdir()):
+            if not extension_id.is_dir():
+                continue
+            if extension_id.name != _ZOTERO_CONNECTOR_ID:
+                continue
+            versions = sorted(extension_id.iterdir(), reverse=True)
+            for version in versions:
+                manifest_path = version / "manifest.json"
+                if not manifest_path.is_file():
+                    continue
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    manifest = {}
+                extensions.append({
+                    "profile": profile.name,
+                    "extension_id": extension_id.name,
+                    "version": str(manifest.get("version") or version.name),
+                    "name": str(manifest.get("name") or "Zotero Connector"),
+                    "manifest_path": str(manifest_path),
+                })
+                break
+    return {
+        "installed": bool(extensions),
+        "browser": "edge",
+        "connector_id": _ZOTERO_CONNECTOR_ID,
+        "extensions": extensions,
+    }
+
+
 def detect_environment(*, api_url: str = _DEFAULT_API_URL) -> dict[str, Any]:
     profiles_files = _profile_candidates()
     profile_records: list[dict[str, Any]] = []
@@ -218,6 +292,7 @@ def detect_environment(*, api_url: str = _DEFAULT_API_URL) -> dict[str, Any]:
                     ),
                     "prefs_path": str(profile / "prefs.js"),
                     "plugin_dir": str(profile / "extensions"),
+                    "paperflow_plugin": _paperflow_plugin(profile),
                 }
             )
             profile_records.append(record)
@@ -246,6 +321,7 @@ def detect_environment(*, api_url: str = _DEFAULT_API_URL) -> dict[str, Any]:
         )
         > 1,
         "local_api": _probe_api(api_url),
+        "browser_extensions": {"edge": _edge_connector()},
         "safety": {
             "database_modified": False,
             "database_read": False,
@@ -261,6 +337,10 @@ def redact_environment(value: dict[str, Any]) -> dict[str, Any]:
     result.get("zotero", {}).pop("executable", None)
     result.get("zotero", {}).pop("executable_candidates", None)
     result.get("zotero", {}).pop("process", None)
+    for browser in result.get("browser_extensions", {}).values():
+        for extension in browser.get("extensions", []) if isinstance(browser, dict) else []:
+            if isinstance(extension, dict):
+                extension.pop("manifest_path", None)
     for profile in result.get("profiles", []):
         profile.pop("profiles_ini", None)
         profile.pop("prefs_path", None)

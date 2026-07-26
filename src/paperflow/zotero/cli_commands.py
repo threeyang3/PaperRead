@@ -9,10 +9,11 @@ from typing import Any
 import typer
 
 from paperflow.workspace import load_workspace_settings, resolve_vault_root
-from paperflow.zotero.local_api import ZoteroLocalApi
+from paperflow.zotero.local_api import ZoteroLocalApi, ZoteroLocalApiError
 from paperflow.zotero.mapping import load_items
 from paperflow.zotero.migration import ingest_plugin_results, plan_migration, verify_migration
-from paperflow.zotero.store import data_root as store_data_root, ensure_layout, layout
+from paperflow.zotero.store import data_root as store_data_root, ensure_layout, layout, state_root, runtime_root, standalone
+from paperflow.sync_safety import find_sync_conflicts
 from paperflow.zotero.markdown import render_ai_projection
 from paperflow.zotero.feynman import ensure_questions, load_answers, save_answer
 
@@ -43,9 +44,39 @@ def _items_from_input(
 ) -> list[dict[str, Any]]:
     if items_json is not None:
         return load_items(items_json)
-    _, settings = load_workspace_settings(root)
-    client = ZoteroLocalApi(settings.zotero.environment.local_api_url)
+    if standalone(root):
+        # Standalone Core has no Workspace model.  Read only the explicit
+        # loopback URL from config.yaml; never guess a Zotero data directory.
+        api_url = "http://127.0.0.1:23119/api/"
+        config_path = root / "config.yaml"
+        if config_path.is_file():
+            from ruamel.yaml import YAML
+
+            loaded = YAML(typ="safe").load(config_path.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                zotero = loaded.get("zotero") or {}
+                environment = zotero.get("environment") if isinstance(zotero, dict) else {}
+                if isinstance(environment, dict) and environment.get("local_api_url"):
+                    api_url = str(environment["local_api_url"])
+                # Keep the compact standalone config contract working too.
+                api_url = str((loaded.get("zotero_local_api_url") or api_url))
+        client = ZoteroLocalApi(api_url)
+    else:
+        _, settings = load_workspace_settings(root)
+        client = ZoteroLocalApi(settings.zotero.environment.local_api_url)
     return client.items(limit=limit, q=q)
+
+
+def _emit_local_api_required(error: ZoteroLocalApiError) -> None:
+    """Report an unavailable Zotero process without a traceback."""
+    typer.echo(json.dumps({
+        "ok": False,
+        "status": "zotero-required",
+        "reason": "local-api-unavailable",
+        "message": str(error),
+        "next": "启动 Zotero，并确认 PaperFlow 插件已连接 Local API；本命令不会写入 zotero.sqlite。",
+    }, ensure_ascii=False, indent=2))
+    raise typer.Exit(2)
 
 
 def attach_zotero_commands(zotero_app: typer.Typer) -> None:
@@ -57,10 +88,14 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         limit: int = typer.Option(100, "--limit", min=0, max=1000),
         q: str = typer.Option("", "--query"),
         vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
     ) -> None:
         """从 Local API 或脱敏 fixture 读取 Zotero 条目；只读。"""
-        root = _root(vault)
-        value = _items_from_input(root, items_json, limit=limit, q=q)
+        root = _command_root(vault, core_root)
+        try:
+            value = _items_from_input(root, items_json, limit=limit, q=q)
+        except ZoteroLocalApiError as error:
+            _emit_local_api_required(error)
         typer.echo(json.dumps({"ok": True, "count": len(value), "items": value}, ensure_ascii=False, indent=2))
 
     @zotero_app.command("scan")
@@ -69,10 +104,14 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         limit: int = typer.Option(100, "--limit", min=0, max=1000),
         q: str = typer.Option("", "--query"),
         vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
     ) -> None:
         """扫描 Zotero 条目，作为身份匹配和迁移计划输入。"""
-        root = _root(vault)
-        value = _items_from_input(root, items_json, limit=limit, q=q)
+        root = _command_root(vault, core_root)
+        try:
+            value = _items_from_input(root, items_json, limit=limit, q=q)
+        except ZoteroLocalApiError as error:
+            _emit_local_api_required(error)
         typer.echo(json.dumps({"ok": True, "count": len(value), "items": value}, ensure_ascii=False, indent=2))
 
     @zotero_app.command("data-root")
@@ -212,6 +251,190 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         ]
         typer.echo(json.dumps({"dry_run": False, "source_count": len(results), "results": results}, ensure_ascii=False, indent=2))
 
+    @zotero_app.command("create-collection")
+    def zotero_create_collection(
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    ) -> None:
+        """兼容别名：生成 Collection 创建/复用计划；实际写入只由 Zotero 插件完成。"""
+        if core_root is not None:
+            root = _command_root(vault, core_root)
+            config_path = root / "config.yaml"
+            collection = "PaperFlow"
+            if config_path.is_file():
+                from ruamel.yaml import YAML
+
+                loaded = YAML(typ="safe").load(config_path.read_text(encoding="utf-8")) or {}
+                if isinstance(loaded, dict):
+                    collection = str(((loaded.get("zotero") or {}).get("collection") or collection))
+        else:
+            root = _root(vault)
+            _, settings = load_workspace_settings(root)
+            collection = settings.zotero.collections.primary.name
+        result = {
+            "dry_run": not apply_changes,
+            "status": "plugin-required",
+            "collection": {"name": collection},
+            "database_access": False,
+            "reason": "PaperFlow Core never writes zotero.sqlite; the Zotero plugin must create/reuse the Collection.",
+        }
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        if apply_changes:
+            raise typer.Exit(2)
+
+    @zotero_app.command("analyze-pending")
+    def zotero_analyze_pending(
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """列出尚无有效 AI Raw 的论文；可选地排队分析，但不修改 Zotero。"""
+        root = _command_root(vault, core_root)
+        papers_dir = store_data_root(root) / "papers"
+        pending: list[str] = []
+        for source in sorted(papers_dir.glob("*.json")) if papers_dir.is_dir() else []:
+            try:
+                value = json.loads(source.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(value, dict) or not value.get("paper_uid"):
+                continue
+            uid = str(value["paper_uid"])
+            from paperflow.zotero.standalone_ai import load_current_analysis
+
+            if load_current_analysis(root, uid) is None:
+                pending.append(uid)
+        result: dict[str, Any] = {
+            "dry_run": not apply_changes,
+            "status": "would-analyze" if pending and not apply_changes else ("queued" if pending else "none"),
+            "pending": pending,
+            "count": len(pending),
+            "provider": "configured-in-config.yaml" if standalone(root) else "workspace-profile",
+        }
+        if apply_changes and pending:
+            from paperflow.zotero.standalone_ai import analyze_standalone
+
+            if not standalone(root):
+                result.update({"status": "manual-review-required", "reason": "standalone Core is required for direct batch analysis"})
+            else:
+                result["results"] = [analyze_standalone(root, uid) for uid in pending]
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+    @zotero_app.command("sync-status")
+    def zotero_sync_status(
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """报告订阅、作业和本地映射状态；只读。"""
+        root = _command_root(vault, core_root)
+        # Durable job records are stored under state/jobs for both Vault and
+        # standalone layouts; runtime is reserved for ephemeral staging.
+        jobs = state_root(root) / "jobs"
+        state = state_root(root)
+        job_files = sorted(jobs.glob("*.json")) if jobs.is_dir() else []
+        statuses: dict[str, int] = {}
+        for path in job_files:
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            status = str(value.get("status") or "unknown") if isinstance(value, dict) else "unknown"
+            statuses[status] = statuses.get(status, 0) + 1
+        typer.echo(json.dumps({
+            "ok": True,
+            "root_mode": "standalone" if standalone(root) else "vault",
+            "jobs": {"count": len(job_files), "by_status": statuses},
+            "session": (state / "zotero-core-session.json").is_file(),
+            "network_changes": 0,
+        }, ensure_ascii=False, indent=2))
+
+    @zotero_app.command("sync-annotations")
+    def zotero_sync_annotations(
+        paper_uid: str = typer.Option("", "--paper"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    ) -> None:
+        """生成标注镜像同步计划；真实 Zotero 读取由插件公共 API 执行。"""
+        root = _command_root(vault, core_root)
+        annotation_root = store_data_root(root) / "annotations" / "zotero"
+        existing = sorted(annotation_root.glob("**/*.json")) if annotation_root.is_dir() else []
+        result = {
+            "dry_run": not apply_changes,
+            "status": "plugin-required",
+            "paper_uid": paper_uid,
+            "existing_mirrors": len(existing),
+            "database_access": False,
+            "write_target": "SYSTEM_MANAGED annotation mirror",
+        }
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        if apply_changes:
+            raise typer.Exit(2)
+
+    @zotero_app.command("conflicts")
+    def zotero_conflicts(
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """列出同步冲突文件；不删除、不覆盖任何一方。"""
+        root = _command_root(vault, core_root)
+        conflicts = find_sync_conflicts(root) if not standalone(root) else [
+            path for folder in ("data", "documents", "state", "runtime")
+            for path in (root / folder).rglob("*") if (root / folder).is_dir()
+            if path.is_file() and any(marker in path.name for marker in ("-冲突", "-NSConflict"))
+        ]
+        typer.echo(json.dumps({
+            "ok": not conflicts,
+            "count": len(conflicts),
+            "conflicts": [path.relative_to(root).as_posix() for path in conflicts],
+            "action": "manual-review-required" if conflicts else "none",
+        }, ensure_ascii=False, indent=2))
+
+    @zotero_app.command("community")
+    def zotero_community(
+        paper_uid: str = typer.Option("", "--paper"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """查看社区 outbox/订阅记录；只读，不执行 Git 或网络操作。"""
+        root = _command_root(vault, core_root)
+        base = store_data_root(root) / "community"
+        files: list[Path] = []
+        if base.is_dir():
+            # Feed caches and the local outbox use different directory depths.
+            for pattern in (
+                "**/papers/*/community/*/*/r*.json",
+                "papers/*/community/*/*/r*.json",
+            ):
+                files.extend(base.glob(pattern))
+        records: list[dict[str, Any]] = []
+        for path in files:
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(value, dict) or (paper_uid and value.get("paper_uid") != paper_uid):
+                continue
+            records.append({
+                key: value.get(key)
+                for key in ("paper_uid", "contribution_id", "revision", "creator", "kind", "created_at", "license")
+                if key in value
+            })
+        unique = {
+            (str(item.get("creator") or ""), str(item.get("contribution_id") or ""), int(item.get("revision") or 0)): item
+            for item in records
+        }
+        records = sorted(unique.values(), key=lambda item: (str(item.get("created_at") or ""), str(item.get("contribution_id") or "")), reverse=True)
+        typer.echo(json.dumps({
+            "ok": True,
+            "paper_uid": paper_uid,
+            "count": len(records),
+            "records": records,
+            "network_changes": 0,
+            "git_actions": [],
+        }, ensure_ascii=False, indent=2))
+
     @zotero_app.command("attach-ai-markdown")
     def zotero_attach_ai_markdown(
         paper_uid: str = typer.Option(..., "--paper"),
@@ -276,13 +499,19 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run", help="计划命令始终不写 Zotero。"),
         limit: int = typer.Option(1000, "--limit", min=0, max=1000),
         q: str = typer.Option("", "--query"),
+        all_papers: bool = typer.Option(False, "--all", help="显式规划全部本地论文；与 --paper 互斥。"),
         vault: Path | None = typer.Option(None, "--vault"),
     ) -> None:
         """生成论文、Collection、PDF 和哈希迁移计划，不写 Zotero。"""
         if not dry_run:
             raise typer.BadParameter("migrate plan 只支持 dry-run；真实写入必须由 Zotero 插件执行")
+        if all_papers and paper_uid:
+            raise typer.BadParameter("--all cannot be combined with --paper")
         root = _root(vault)
-        items = _items_from_input(root, items_json, limit=limit, q=q)
+        try:
+            items = _items_from_input(root, items_json, limit=limit, q=q)
+        except ZoteroLocalApiError as error:
+            _emit_local_api_required(error)
         value = plan_migration(
             root,
             items,

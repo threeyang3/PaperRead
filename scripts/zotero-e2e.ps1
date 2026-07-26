@@ -36,18 +36,27 @@ if ($Reset -and (Test-Path -LiteralPath $profile)) {
   Remove-Item -LiteralPath $profile -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $profile "extensions") | Out-Null
+$dataDir = Join-Path $profile "zotero-data"
+# Zotero validates the configured data directory during first startup.
+# Create it before launching the disposable profile so Zotero never offers
+# to substitute the user's real/default data directory.
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+$dataDirEscaped = $dataDir.Replace("\", "\\")
 
 # These preferences only affect this disposable test profile.
-@'
+@"
 user_pref("extensions.autoDisableScopes", 0);
 user_pref("extensions.enabledScopes", 5);
 user_pref("app.update.disabledForTesting", true);
 user_pref("extensions.update.enabled", false);
 user_pref("extensions.getAddons.discovery.api_url", "data:, ");
+user_pref("extensions.zotero.dataDir", "$dataDirEscaped");
+user_pref("extensions.zotero.useDataDir", true);
+user_pref("extensions.zotero.firstRun.skipFirefoxProfileAccessCheck", true);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
 user_pref("browser.sessionstore.resume_from_crash", false);
-'@ | Set-Content -LiteralPath (Join-Path $profile "user.js") -Encoding UTF8
+"@ | Set-Content -LiteralPath (Join-Path $profile "user.js") -Encoding UTF8
 
 $id = "paperflow-zotero@threeyang"
 $statePath = Join-Path $profile "extensions.json"

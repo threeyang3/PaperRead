@@ -20,7 +20,7 @@ const Api = sandbox.PaperFlowZoteroApi;
 
 async function main() {
   assert.equal(manifest.applications.zotero.id, "paperflow-zotero@threeyang");
-  assert.equal(manifest.applications.zotero.strict_min_version, "7.0");
+  assert.equal(manifest.applications.zotero.strict_min_version, "9.0");
   assert.equal(manifest.applications.zotero.strict_max_version, "9.0.*");
   const saved = [];
   const collection = {
@@ -76,6 +76,7 @@ async function main() {
   const payload = await eventApi.eventPayload("ABCD1234");
   assert.equal(payload.paper_uid, "arxiv:2504.16054v2");
   assert.equal(payload.has_pdf, true);
+  assert.equal(payload.pdf_stable, false);
   assert.equal(payload.identity_resolved, true);
   assert.equal(await eventApi.hasPdfAttachment(item), true);
   const noPdf = { ...item, getAttachments: () => [22] };

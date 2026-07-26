@@ -250,8 +250,20 @@ def zotero_status(
         report["zotero"]["installed"]
         and any(item["data_dir"]["sqlite"] for item in report["profiles"])
     )
+    plugins = [item.get("paperflow_plugin", {}) for item in report.get("profiles", [])]
+    output["paperflow_plugin"] = {
+        "installed": any(bool(item.get("installed")) for item in plugins),
+        "active": any(bool(item.get("active")) for item in plugins),
+        "profile_count": sum(1 for item in plugins if item.get("installed")),
+    }
+    output["ready_for_plugin_integration"] = bool(
+        report.get("local_api", {}).get("reachable")
+        and output["paperflow_plugin"]["active"]
+    )
     output["note"] = (
-        "Local API will become reachable after Zotero is started; PaperFlow does not start or stop Zotero."
+        "Local API is reachable; PaperFlow does not start or stop Zotero."
+        if report.get("local_api", {}).get("reachable")
+        else "Local API will become reachable after Zotero is started; PaperFlow does not start or stop Zotero."
     )
     _echo_json(output)
 
@@ -276,6 +288,16 @@ def zotero_doctor(
     }
     output = redact_environment(report) if redacted else report
     output["checks"] = checks
+    plugins = [item.get("paperflow_plugin", {}) for item in report.get("profiles", [])]
+    output["paperflow_plugin"] = {
+        "installed": any(bool(item.get("installed")) for item in plugins),
+        "active": any(bool(item.get("active")) for item in plugins),
+        "profile_count": sum(1 for item in plugins if item.get("installed")),
+    }
+    output["ready_for_plugin_integration"] = bool(
+        report.get("local_api", {}).get("reachable")
+        and output["paperflow_plugin"]["active"]
+    )
     output["ok"] = all(checks.values())
     _echo_json(output)
     if not output["ok"]:
