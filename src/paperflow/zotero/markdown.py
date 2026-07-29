@@ -103,7 +103,7 @@ def build_ai_markdown(record: dict[str, Any], *, zotero_item_key: str = "") -> s
     frontmatter = {
         "type": "paper-ai-analysis",
         "schema_version": 2,
-        "artifact_permission": "SYSTEM_MANAGED",
+        "artifact_permission": "USER_EDITABLE_PROJECTION",
         "paper_uid": _field(record, "paper_uid"),
         "title": title,
         "authors": _authors(record),
@@ -166,7 +166,7 @@ def render_ai_projection(
         "dry_run": not apply_changes,
         "changed": bool(changed_paths),
         "content_sha256": content_hash,
-        "permission": "SYSTEM_MANAGED",
+        "permission": "USER_EDITABLE_PROJECTION",
     }
     if apply_changes:
         guard = PermissionGuard(root)
@@ -179,7 +179,11 @@ def render_ai_projection(
             })
             return result
         for path in targets:
-            guard.authorize(path, "SYSTEM_MANAGED")
+            # The Markdown file is a user-editable projection: Core may create
+            # it initially, but a later render must stop when a user changed
+            # the existing bytes.  The explicit permission keeps this target
+            # distinct from immutable Raw/AI records.
+            guard.authorize(path, "USER_EDITABLE_PROJECTION")
             atomic_write(path, body)
         state_path = _render_state_path(root, paper_uid)
         guard.authorize(state_path, "SYSTEM_MANAGED")

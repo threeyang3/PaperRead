@@ -442,9 +442,9 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         vault: Path | None = typer.Option(None, "--vault"),
         core_root: Path | None = typer.Option(None, "--data-root"),
     ) -> None:
-        """生成由 Zotero 插件执行附件导入的计划；Core 不直接写 Zotero。"""
+        """生成由 Zotero 插件执行附件导入的动作；Core 不直接写 Zotero。"""
         result = render_ai_projection(_command_root(vault, core_root), paper_uid, zotero_item_key=zotero_item_key, apply_changes=False)
-        result.update({"status": "plugin-required", "write_target": "Zotero Attachments API", "requires_user_confirmation": True})
+        result.update({"status": "plugin-action-ready", "write_target": "Zotero Attachments API", "requires_user_confirmation": True})
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
     feynman_app = typer.Typer(help="管理 AI 生成的问题与用户独立答案。", no_args_is_help=True)

@@ -17,3 +17,11 @@
 - Community snapshots reject local paths, email/credentials, active HTML,
   unsafe URI schemes, images/PDFs, payloads over 64 KiB, and source quotations
   over 500 characters.
+- Zotero integration binds only to loopback and requires authenticated bearer
+  sessions for data routes. Initial pairing stores a device secret only in
+  Zotero local preferences; Core stores its hash and can rotate the short-lived
+  session after restart. Session tokens, pairing secrets, and `auth.json` are
+  classified as `SECRET` even when located under runtime/state directories.
+- Zotero writes use public object APIs only. PaperFlow never reads or modifies
+  `zotero.sqlite`, and annotation mirrors are SYSTEM_MANAGED read-only copies
+  of Zotero Reader data.

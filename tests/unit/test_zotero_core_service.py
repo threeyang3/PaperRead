@@ -23,8 +23,16 @@ def _request(url: str, *, token: str = "", method: str = "GET", body: dict | Non
 def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
     paper_dir = tmp_path / ".paperflow/data/papers"
     paper_dir.mkdir(parents=True)
+    pdf = b"%PDF-1.7\nPaperFlow test PDF\n%%EOF\n"
+    pdf_path = tmp_path / "80 Attachments/Papers/2504.16054.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(pdf)
     (paper_dir / "arxiv_2504.16054.json").write_text(
-        json.dumps({"paper_uid": "arxiv:2504.16054", "paper_title": "π0.5"}),
+        json.dumps({
+            "paper_uid": "arxiv:2504.16054",
+            "paper_title": "π0.5",
+            "paper_pdf_path": "80 Attachments/Papers/2504.16054.pdf",
+        }),
         encoding="utf-8",
     )
     service = PaperFlowCoreService(tmp_path, port=0)
@@ -39,6 +47,26 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
     assert error.value.code == 401
     status, paper = _request(service.url + "/papers/arxiv%3A2504.16054", token=service.token)
     assert status == 200 and paper["paper_uid"] == "arxiv:2504.16054"
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(service.url + "/zotero/pdf/arxiv%3A2504.16054", timeout=3)
+    assert error.value.code == 401
+    pdf_request = urllib.request.Request(
+        service.url + "/zotero/pdf/arxiv%3A2504.16054",
+        headers={"Authorization": f"Bearer {service.token}"},
+    )
+    with urllib.request.urlopen(pdf_request, timeout=3) as response:
+        assert response.status == 200
+        assert response.headers["Content-Type"] == "application/pdf"
+        assert response.headers["X-PaperFlow-Sha256"] == hashlib.sha256(pdf).hexdigest()
+        assert response.read() == pdf
+    status, markdown = _request(
+        service.url + "/zotero/markdown/arxiv%3A2504.16054?item_key=ABCD1234",
+        token=service.token,
+    )
+    assert status == 200
+    assert markdown["artifact_permission"] == "USER_EDITABLE_PROJECTION"
+    assert markdown["content_sha256"] == hashlib.sha256(markdown["content"].encode("utf-8")).hexdigest()
+    assert "π0.5" in markdown["content"]
     status, queued = _request(
         service.url + "/analysis/jobs",
         token=service.token,
@@ -108,9 +136,25 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
         "status": "pending-confirmation",
         "updated_at": "2026-07-24T10:00:00+08:00",
     }, ensure_ascii=False), encoding="utf-8")
+    (inbox.parent / "arxiv_2607.00002.json").write_text(json.dumps({
+        "schema_version": 1,
+        "artifact_permission": "REMOTE_READ_ONLY",
+        "paper_uid": "arxiv:2607.00002",
+        "title": "Another paper",
+        "authors": ["Author"],
+        "abstract": "Another paper",
+        "url": "https://arxiv.org/abs/2607.00002",
+        "source_id": "arxiv_2607.00002",
+        "feed_id": "ArXiv-data",
+        "status": "imported",
+        "updated_at": "2026-07-24T11:00:00+08:00",
+    }), encoding="utf-8")
     status, listed = _request(service.url + "/subscriptions/inbox?status=pending-confirmation", token=service.token)
     assert status == 200 and listed["count"] == 1
     assert listed["items"][0]["paper"]["paper_title"] == "π0.5"
+    all_subscriptions = service.subscription_inbox(limit=500)
+    assert all_subscriptions["count"] == 2
+    assert all_subscriptions["counts"] == {"imported": 1, "pending-confirmation": 1}
     status, decision = _request(
         service.url + "/subscriptions/inbox/decision",
         token=service.token,
@@ -141,6 +185,50 @@ def test_standalone_core_service_does_not_require_vault(tmp_path: Path) -> None:
     assert (tmp_path / "state/zotero-core-session.json").is_file()
     assert not (tmp_path / ".paperflow").exists()
     service.stop()
+
+
+def test_zotero_pairing_refreshes_random_session_after_restart(tmp_path: Path) -> None:
+    (tmp_path / "data/papers").mkdir(parents=True)
+    first = PaperFlowCoreService(tmp_path, port=0)
+    first.start()
+    _, pairing = _request(
+        first.url + "/zotero/pairings",
+        token=first.token,
+        method="POST",
+        body={"client_name": "Test Zotero"},
+    )
+    first_token = first.token
+    first.stop()
+
+    second = PaperFlowCoreService(tmp_path, port=0)
+    second.start()
+    assert second.token != first_token
+    status, refreshed = _request(
+        second.url + "/zotero/session/refresh",
+        method="POST",
+        body={
+            "pairing_id": pairing["pairing_id"],
+            "pairing_secret": pairing["pairing_secret"],
+        },
+    )
+    assert status == 200
+    assert refreshed["session_token"] == second.token
+    status, jobs = _request(
+        second.url + "/jobs",
+        token=refreshed["session_token"],
+    )
+    assert status == 200 and jobs["ok"] is True
+    with pytest.raises(urllib.error.HTTPError) as error:
+        _request(
+            second.url + "/zotero/session/refresh",
+            method="POST",
+            body={
+                "pairing_id": pairing["pairing_id"],
+                "pairing_secret": "wrong-secret-value",
+            },
+        )
+    assert error.value.code == 401
+    second.stop()
 
 
 def test_subscription_paper_normalizes_bare_arxiv_source_id() -> None:
@@ -207,6 +295,41 @@ def test_enqueue_analysis_resolves_profile_to_provider(tmp_path: Path) -> None:
     assert record["analysis_profile"] == "configured"
     assert record["provider"] == "mock"
     assert record["model"] == "deterministic"
+
+
+def test_zotero_event_reuses_matching_canonical_analysis_for_render(tmp_path: Path) -> None:
+    digest = "a" * 64
+    papers = tmp_path / "data/papers"
+    papers.mkdir(parents=True)
+    (papers / "arxiv_1.json").write_text(
+        json.dumps({
+            "paper_uid": "arxiv:1",
+            "paper_title": "Analyzed",
+            "ai_analysis_status": "complete",
+            "ai_analysis_profile": "fallback_analysis",
+            "system_content_hash": digest,
+        }),
+        encoding="utf-8",
+    )
+    service = PaperFlowCoreService(tmp_path, port=0)
+    accepted = service.accept_event({
+        "item_key": "ABCD1234",
+        "event": "modify",
+        "item_type": "regular",
+        "is_regular": True,
+        "in_collection": True,
+        "has_pdf": True,
+        "pdf_stable": True,
+        "identity_resolved": True,
+        "pdf_sha256": digest,
+        "paper_uid": "arxiv:1",
+        "analysis_profile": "full_analysis",
+    })
+    assert accepted["pipeline"]["reuse_analysis"] is True
+    assert accepted["pipeline"]["queue_render"] is True
+    job = service.job(accepted["job"]["job_id"])
+    assert job["kind"] == "render"
+    assert job["target"] == "zotero"
 
 
 def test_zotero_public_snapshot_import_and_pdf_staging(tmp_path: Path) -> None:

@@ -57,7 +57,15 @@ class ZoteroEventProcessor:
         else:
             digest = str(body.get("pdf_sha256") or "")
             profile = str(body.get("analysis_profile") or "")
-            if digest and digest == previous.get("pdf_sha256") and profile and profile == previous.get("analysis_profile"):
+            if body.get("analysis_reusable") is True:
+                current = {
+                    **previous,
+                    "state": "complete",
+                    "reason": "canonical-analysis-reused",
+                    "pdf_sha256": digest,
+                    "analysis_profile": profile,
+                }
+            elif digest and digest == previous.get("pdf_sha256") and profile and profile == previous.get("analysis_profile"):
                 current = {**previous, "state": "complete", "reason": "same-hash-and-profile"}
             else:
                 current = {**previous, "state": "queued", "reason": "ready-for-analysis", "pdf_sha256": digest, "analysis_profile": profile, "debounce_seconds": self.debounce_seconds}
@@ -67,7 +75,26 @@ class ZoteroEventProcessor:
         items[item_key] = current
         state["updated_at"] = iso_beijing()
         atomic_json(self.path, state)
-        return {"ok": True, "item_key": item_key, "state": current["state"], "previous_state": previous.get("state", ""), "queue_analysis": current["state"] == "queued" and self.auto_queue, "state_path": self.path.relative_to(self.root).as_posix()}
+        queue_render = (
+            current.get("reason") == "canonical-analysis-reused"
+            and (
+                previous.get("state") != "complete"
+                or previous.get("reason") != "canonical-analysis-reused"
+                or previous.get("pdf_sha256") != current.get("pdf_sha256")
+                or previous.get("analysis_profile") != current.get("analysis_profile")
+            )
+        )
+        return {
+            "ok": True,
+            "item_key": item_key,
+            "state": current["state"],
+            "previous_state": previous.get("state", ""),
+            "queue_analysis": current["state"] == "queued" and self.auto_queue,
+            "queue_render": queue_render,
+            "reuse_analysis": current.get("reason") == "canonical-analysis-reused",
+            "reason": str(current.get("reason") or ""),
+            "state_path": self.path.relative_to(self.root).as_posix(),
+        }
 
 
 __all__ = ["STATES", "ZoteroEventProcessor"]

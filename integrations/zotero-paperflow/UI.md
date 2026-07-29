@@ -7,11 +7,14 @@
 - `Notifier` 的 item add/modify/delete 防抖队列，默认等待 10 秒合并事件；可通过 Zotero 偏好 `extensions.paperflow-zotero.eventDebounceMs` 调整，且事件只把 PDF 附件视为可分析输入。
 - 条目上下文菜单中的“将选中论文加入 Collection”。
 - 条目上下文菜单中的“同步身份与附件校验”：通过公开对象 API 生成 mapping 快照，Core 只写本地 mapping，不写 Zotero 数据库。
+- 条目上下文菜单中的“同步选中论文标注”：从选中的论文、PDF 或标注发现
+  Reader 标注并补发到 Core，只刷新 SYSTEM_MANAGED 镜像。
 - 条目上下文菜单中的“连接 Core”和“导入并分析选中论文”。该命令先通过 Zotero
   公开对象 API 读取元数据和 PDF 附件，分块发送到已认证的本机 Core staging，
   Core 校验 PDF 头和 SHA-256 后才写入 standalone canonical data，再排队分析。
-  Core 地址与会话令牌只保存于
-  Zotero 本机偏好设置；令牌来自被忽略的 `.paperflow/runtime` 配对命令。
+  Core 地址、设备配对信息和当前会话令牌只保存于 Zotero 本机偏好设置；初次令牌
+  来自被忽略的 `.paperflow/runtime` 配对命令。成功配对后，Core 重启会自动续期
+  session，不需要用户反复复制 token。
 - “同步订阅预览”和“预览选中标注的社区发布”菜单。前者只创建本机 Core 队列项；
   后者从选中的 Zotero 标注生成经过隐私/锚点校验的计划。另有独立的“确认发布选中
   标注”菜单，二次确认后只写入本机 outbox，不会自动 push GitHub，也不会写入 Zotero

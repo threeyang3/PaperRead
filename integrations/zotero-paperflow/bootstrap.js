@@ -4,12 +4,16 @@
 
 const observers = [];
 const annotationTimers = new Map();
+const projectionTimers = new Map();
 let menuItem = null;
 let collectionMenuItem = null;
 let migrateMenuItem = null;
 let migrationSnapshotMenuItem = null;
+let annotationSyncMenuItem = null;
+let importCorePaperMenuItem = null;
 let connectMenuItem = null;
 let analyzeMenuItem = null;
+let markdownMenuItem = null;
 let subscriptionMenuItem = null;
 let subscriptionInboxMenuItem = null;
 let subscriptionImportMenuItem = null;
@@ -21,6 +25,8 @@ let zoteroUi = null;
 let readerIntegration = null;
 let controlCenter = null;
 let services = null;
+let pluginRootURI = "";
+let zoteroApiLoaded = false;
 
 try {
   services = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs").Services;
@@ -30,10 +36,79 @@ try {
     services = ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
   } catch (_legacyError) {}
 }
+// Zotero 9 bootstrap sandboxes can expose Services as an injected global even
+// when direct module imports are unavailable.  Keep this fallback before any
+// dialog or script-loader call so menu actions never silently no-op.
+if (!services && typeof globalThis.Services !== "undefined") {
+  services = globalThis.Services;
+}
+if (!services && typeof Components !== "undefined") {
+  try {
+    // Zotero 9 can withhold Services.sys.mjs from a bootstrap sandbox while
+    // still exposing the supported XPCOM services. Build only the small
+    // service surface PaperFlow needs instead of falling back to the removed
+    // ChromeUtils.import().
+    services = {
+      io: Components.classes["@mozilla.org/network/io-service;1"]
+        .getService(Components.interfaces.nsIIOService),
+      scriptloader: Components.classes["@mozilla.org/moz/jssubscript-loader;1"]
+        .getService(Components.interfaces.mozIJSSubScriptLoader),
+      prompt: Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+        .getService(Components.interfaces.nsIPromptService),
+    };
+  } catch (_xpcomError) {
+    services = null;
+  }
+}
+
+function nativePromptService() {
+  if (services?.prompt) return services.prompt;
+  try {
+    if (typeof Components !== "undefined") {
+      return Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+        .getService(Components.interfaces.nsIPromptService);
+    }
+  } catch (error) {
+    try { Zotero.debug?.(`PaperFlow prompt service unavailable: ${error}`); } catch (_debugError) {}
+  }
+  return null;
+}
+
+function rememberPluginRoot(data = {}) {
+  const value = String(data?.rootURI || "").trim();
+  if (value) pluginRootURI = value.endsWith("/") ? value : `${value}/`;
+  return pluginRootURI;
+}
+
+function pluginScriptURI(relativePath) {
+  const relative = String(relativePath || "").replace(/^\/+/, "");
+  if (pluginRootURI) return `${pluginRootURI}${relative}`;
+  if (typeof __SCRIPT_URI_SPEC__ !== "undefined" && services?.io) {
+    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
+    uri.pathQueryRef = uri.pathQueryRef.replace(
+      /bootstrap\.js(?:\?.*)?$/,
+      relative
+    );
+    return uri.spec;
+  }
+  return "";
+}
 
 function notify(message) {
   if (typeof Zotero !== "undefined" && Zotero.alert) {
     Zotero.alert(null, "PaperFlow", message);
+    return;
+  }
+  const prompt = nativePromptService();
+  if (prompt && typeof prompt.alert === "function") {
+    prompt.alert(null, "PaperFlow", message);
+    return;
+  }
+  const win = typeof Zotero !== "undefined" && Zotero.getMainWindow
+    ? Zotero.getMainWindow()
+    : null;
+  if (win && typeof win.alert === "function") {
+    win.alert(`PaperFlow\n\n${message}`);
   }
 }
 
@@ -51,14 +126,21 @@ function prefSet(name, value) {
 }
 
 function loadCoreClient() {
-  if (typeof PaperFlowCoreClient !== "undefined") return PaperFlowCoreClient;
-  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
+  if (typeof globalThis.PaperFlowCoreClient === "function") {
+    return globalThis.PaperFlowCoreClient;
+  }
+  if (!services?.scriptloader) return null;
   try {
-    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
-    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/core-client.js");
-    services.scriptloader.loadSubScript(uri.spec, globalThis);
-    return typeof PaperFlowCoreClient === "undefined" ? null : PaperFlowCoreClient;
-  } catch (_error) { return null; }
+    const uri = pluginScriptURI("src/core-client.js");
+    if (!uri) return null;
+    services.scriptloader.loadSubScript(uri, globalThis);
+    return typeof globalThis.PaperFlowCoreClient === "function"
+      ? globalThis.PaperFlowCoreClient
+      : null;
+  } catch (error) {
+    try { Zotero.debug?.(`PaperFlow Core client load failed: ${error}`); } catch (_debugError) {}
+    return null;
+  }
 }
 
 function configuredCore() {
@@ -67,7 +149,14 @@ function configuredCore() {
   try {
     return new Client(
       prefGet("extensions.paperflow-zotero.coreBaseUrl", "http://127.0.0.1:23140"),
-      prefGet("extensions.paperflow-zotero.coreToken", "")
+      prefGet("extensions.paperflow-zotero.coreToken", ""),
+      {
+        pairingId: prefGet("extensions.paperflow-zotero.pairingId", ""),
+        pairingSecret: prefGet("extensions.paperflow-zotero.pairingSecret", ""),
+        onSession: (token) => {
+          prefSet("extensions.paperflow-zotero.coreToken", token);
+        },
+      }
     );
   } catch (_error) { return null; }
 }
@@ -75,7 +164,7 @@ function configuredCore() {
 async function coreStatus() {
   coreClient = configuredCore();
   if (!coreClient) {
-    notify("PaperFlow Core：尚未配置会话。请使用“连接 Core”输入本机地址和一次性令牌。");
+    notify("PaperFlow Core：尚未配对。请使用“连接 Core”完成一次本机配对。");
     return;
   }
   try {
@@ -101,10 +190,24 @@ async function coreStatus() {
 }
 
 function promptValue(title, message, initial = "") {
-  if (!services || !services.prompt || typeof services.prompt.prompt !== "function") return null;
-  const input = { value: initial };
-  const accepted = services.prompt.prompt(null, title, message, input, null, {});
-  return accepted ? String(input.value || "").trim() : null;
+  const prompt = nativePromptService();
+  if (prompt && typeof prompt.prompt === "function") {
+    const input = { value: initial };
+    const accepted = prompt.prompt(null, title, message, input, null, {});
+    return accepted ? String(input.value || "").trim() : null;
+  }
+  // A main-window prompt remains available in Zotero 9 bootstrap sandboxes
+  // where Services is not injected.  Returning null without this fallback
+  // made "连接 Core" appear to do nothing.
+  const win = typeof Zotero !== "undefined" && Zotero.getMainWindow
+    ? Zotero.getMainWindow()
+    : null;
+  if (win && typeof win.prompt === "function") {
+    const value = win.prompt(`${title}\n\n${message}`, initial);
+    return value === null ? null : String(value || "").trim();
+  }
+  notify("无法打开输入对话框。请在“帮助 → 调试输出日志”中查看插件错误。");
+  return null;
 }
 
 function confirmAction(title, message) {
@@ -120,11 +223,23 @@ async function configureCore() {
   if (token === null) return;
   try {
     const Client = loadCoreClient();
-    coreClient = new Client(baseUrl, token);
-    await coreClient.health();
+    if (typeof Client !== "function") {
+      throw new Error("Core client 模块加载失败；请重载 PaperFlow 插件");
+    }
+    coreClient = new Client(baseUrl, token, {
+      onSession: (value) => {
+        prefSet("extensions.paperflow-zotero.coreToken", value);
+      },
+    });
+    // /health is intentionally public and cannot validate a token. Read one
+    // protected endpoint before claiming the connection succeeded.
+    await coreClient.jobs(1);
+    const pairing = await coreClient.createPairing("PaperFlow for Zotero");
     prefSet("extensions.paperflow-zotero.coreBaseUrl", coreClient.baseUrl);
     prefSet("extensions.paperflow-zotero.coreToken", coreClient.token);
-    notify("PaperFlow Core：连接已保存到 Zotero 本机偏好设置。");
+    prefSet("extensions.paperflow-zotero.pairingId", pairing.pairing_id);
+    prefSet("extensions.paperflow-zotero.pairingSecret", pairing.pairing_secret);
+    notify("PaperFlow Core：配对已保存；以后 Core 重启会自动续期会话。");
   } catch (error) {
     coreClient = null;
     notify(`PaperFlow Core：连接失败：${error.message || error}`);
@@ -132,26 +247,33 @@ async function configureCore() {
 }
 
 function loadZoteroApi() {
-  if (typeof PaperFlowZoteroApi !== "undefined") return PaperFlowZoteroApi;
-  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
-  try {
-    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
-    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/zotero-api.js");
-    services.scriptloader.loadSubScript(uri.spec, globalThis);
-    return typeof PaperFlowZoteroApi === "undefined" ? null : PaperFlowZoteroApi;
-  } catch (_error) {
-    return null;
+  // A Zotero bootstrap reload can preserve globals from the previous
+  // sandbox. Load the adapter once per bootstrap startup even when a stale
+  // PaperFlowZoteroApi constructor is already present.
+  if (!zoteroApiLoaded && services?.scriptloader) {
+    try {
+      const uri = pluginScriptURI("src/zotero-api.js");
+      if (uri) services.scriptloader.loadSubScript(uri, globalThis);
+      zoteroApiLoaded = true;
+    } catch (_error) {}
   }
+  return typeof globalThis.PaperFlowZoteroApi === "function"
+    ? globalThis.PaperFlowZoteroApi
+    : null;
 }
 
 function loadZoteroUi() {
-  if (typeof PaperFlowZoteroUi !== "undefined") return PaperFlowZoteroUi;
-  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
+  if (typeof globalThis.PaperFlowZoteroUi === "function") {
+    return globalThis.PaperFlowZoteroUi;
+  }
+  if (!services?.scriptloader) return null;
   try {
-    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
-    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/ui.js");
-    services.scriptloader.loadSubScript(uri.spec, globalThis);
-    return typeof PaperFlowZoteroUi === "undefined" ? null : PaperFlowZoteroUi;
+    const uri = pluginScriptURI("src/ui.js");
+    if (!uri) return null;
+    services.scriptloader.loadSubScript(uri, globalThis);
+    return typeof globalThis.PaperFlowZoteroUi === "function"
+      ? globalThis.PaperFlowZoteroUi
+      : null;
   } catch (_error) {
     return null;
   }
@@ -196,7 +318,84 @@ async function publishZoteroEvent(itemKey, options = {}) {
   const Api = loadZoteroApi();
   if (!coreClient || !Api) return { ok: false, reason: "core-not-configured" };
   const payload = await new Api(Zotero).eventPayload(itemKey, "modify", options);
-  return coreClient.sendEvent(payload);
+  const response = await coreClient.sendEvent(payload);
+  scheduleProjectionJob(itemKey, response, {
+    notifyOnComplete: Boolean(options.notifyOnComplete),
+  });
+  return response;
+}
+
+async function syncAiMarkdownProjection(itemKey) {
+  if (!coreClient) coreClient = configuredCore();
+  const Api = loadZoteroApi();
+  if (!coreClient || !Api) throw new Error("Core is not configured");
+  const api = new Api(Zotero);
+  const item = await api.getItemByKey(itemKey);
+  if (!item || item.isAttachment?.() || item.isNote?.()) {
+    throw new Error("Zotero parent item is unavailable");
+  }
+  const paperUid = api.paperUid(item);
+  if (!paperUid) throw new Error("Zotero item has no resolved paper identity");
+  const rendered = await coreClient.aiMarkdown(paperUid, String(item.key || itemKey));
+  if (!rendered?.content) throw new Error("Core did not return AI Markdown");
+  const attached = await api.attachAiMarkdown(item, rendered.content, {
+    filename: rendered.filename,
+    sha256: rendered.content_sha256,
+  });
+  const snapshot = await api.migrationSnapshot([item], "PaperFlow");
+  const migration = await coreClient.migrationResults(snapshot);
+  if (!(migration.mappings || []).length) {
+    const rejected = (migration.rejected || []).find(
+      (value) => value?.paper_uid === paperUid
+    );
+    throw new Error(
+      `Core rejected the post-projection mapping${rejected?.reason ? `: ${rejected.reason}` : ""}`
+    );
+  }
+  return { attached, migration, paperUid };
+}
+
+function scheduleProjectionJob(itemKey, response, options = {}) {
+  const jobId = String(response?.job?.job_id || "");
+  if (!jobId || projectionTimers.has(jobId)) return false;
+  const deadline = Date.now() + 30 * 60 * 1000;
+  let delay = 750;
+  const poll = async () => {
+    projectionTimers.delete(jobId);
+    try {
+      if (!coreClient) coreClient = configuredCore();
+      if (!coreClient) return;
+      const job = await coreClient.job(jobId);
+      if (job?.status === "completed") {
+        const result = await syncAiMarkdownProjection(itemKey);
+        if (options.notifyOnComplete) {
+          notify(
+            `PaperFlow AI Markdown：${result.attached.status === "up-to-date" ? "已是最新" : "已附加到 Zotero"}；Obsidian 主投影已同步。`
+          );
+        }
+        return;
+      }
+      if (job?.status === "failed" || job?.status === "skipped") {
+        notify(`PaperFlow 分析/呈现失败：${job.error || job.status}`);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        notify("PaperFlow 分析仍在运行；可在控制中心继续查看状态。");
+        return;
+      }
+      delay = Math.min(5000, Math.round(delay * 1.5));
+      projectionTimers.set(jobId, setTimeout(poll, delay));
+    } catch (error) {
+      if (Date.now() >= deadline) {
+        Zotero.debug?.(`PaperFlow projection polling stopped: ${error}`);
+        return;
+      }
+      delay = Math.min(5000, Math.round(delay * 1.5));
+      projectionTimers.set(jobId, setTimeout(poll, delay));
+    }
+  };
+  projectionTimers.set(jobId, setTimeout(poll, delay));
+  return true;
 }
 
 async function publishAnnotation(itemKey, event = "modify") {
@@ -219,6 +418,33 @@ function scheduleAnnotationMirror(ids, event = "modify") {
       try { await publishAnnotation(key, event); } catch (error) { Zotero.debug?.(`PaperFlow annotation mirror failed: ${error}`); }
     }, 500);
     annotationTimers.set(key, timer);
+  }
+}
+
+async function syncSelectedAnnotations() {
+  if (!coreClient) coreClient = configuredCore();
+  const Api = loadZoteroApi();
+  if (!coreClient || !Api) {
+    notify("PaperFlow：请先连接 Core，再同步标注。");
+    return;
+  }
+  const win = Zotero.getMainWindow?.();
+  const selected = win?.ZoteroPane?.getSelectedItems?.() || [];
+  if (!selected.length) {
+    notify("PaperFlow：请先选择论文、PDF 或标注。");
+    return;
+  }
+  try {
+    const api = new Api(Zotero);
+    const annotations = await api.annotationsForItems(selected);
+    let mirrored = 0;
+    for (const annotation of annotations) {
+      const result = await publishAnnotation(String(annotation.key || annotation.id || ""));
+      if (result?.ok) mirrored += 1;
+    }
+    notify(`PaperFlow 标注同步：发现 ${annotations.length} 条，已镜像 ${mirrored} 条。`);
+  } catch (error) {
+    notify(`PaperFlow 标注同步失败：${error.message || error}`);
   }
 }
 
@@ -274,25 +500,55 @@ async function analyzeSelectedItems() {
   notify(`PaperFlow 导入并分析：已排队 ${queued} 篇${skipped ? `，跳过 ${skipped} 篇（缺少可验证 PDF 或身份）` : ""}`);
 }
 
+async function attachSelectedAiMarkdown() {
+  if (!coreClient) coreClient = configuredCore();
+  const Api = loadZoteroApi();
+  if (!coreClient || !Api) { notify("PaperFlow：请先连接 Core，再附加 AI Markdown。"); return; }
+  const api = new Api(Zotero);
+  const selected = api.selectedItems();
+  if (!selected.length) { notify("PaperFlow：请先选择一篇论文条目。"); return; }
+  let created = 0;
+  let current = 0;
+  for (const item of selected.slice(0, 20)) {
+    try {
+      const paperUid = api.paperUid(item);
+      if (!paperUid) throw new Error("缺少可验证 arXiv/DOI 身份");
+      const rendered = await coreClient.aiMarkdown(paperUid, String(item.key || ""));
+      if (!rendered?.content) throw new Error("Core 未返回 AI Markdown");
+      const result = await api.attachAiMarkdown(item, rendered.content, { filename: rendered.filename, sha256: rendered.content_sha256 });
+      if (result.status === "up-to-date") current += 1; else created += 1;
+    } catch (error) { Zotero.debug?.(`PaperFlow AI Markdown attachment failed: ${error}`); }
+  }
+  notify(`PaperFlow AI Markdown：${created ? `已新增 ${created} 个附件` : "没有新增附件"}${current ? `，${current} 个已是最新` : ""}。用户已有附件不会被覆盖。`);
+}
+
 function loadZoteroReader() {
-  if (typeof PaperFlowReaderIntegration !== "undefined") return PaperFlowReaderIntegration;
-  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
+  if (typeof globalThis.PaperFlowReaderIntegration === "function") {
+    return globalThis.PaperFlowReaderIntegration;
+  }
+  if (!services?.scriptloader) return null;
   try {
-    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
-    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/reader.js");
-    services.scriptloader.loadSubScript(uri.spec, globalThis);
-    return typeof PaperFlowReaderIntegration === "undefined" ? null : PaperFlowReaderIntegration;
+    const uri = pluginScriptURI("src/reader.js");
+    if (!uri) return null;
+    services.scriptloader.loadSubScript(uri, globalThis);
+    return typeof globalThis.PaperFlowReaderIntegration === "function"
+      ? globalThis.PaperFlowReaderIntegration
+      : null;
   } catch (_error) { return null; }
 }
 
 function loadControlCenter() {
-  if (typeof PaperFlowControlCenter !== "undefined") return PaperFlowControlCenter;
-  if (!services || typeof __SCRIPT_URI_SPEC__ === "undefined") return null;
+  if (typeof globalThis.PaperFlowControlCenter === "function") {
+    return globalThis.PaperFlowControlCenter;
+  }
+  if (!services?.scriptloader) return null;
   try {
-    const uri = services.io.newURI(__SCRIPT_URI_SPEC__);
-    uri.pathQueryRef = uri.pathQueryRef.replace(/bootstrap\.js(?:\?.*)?$/, "src/control-center.js");
-    services.scriptloader.loadSubScript(uri.spec, globalThis);
-    return typeof PaperFlowControlCenter === "undefined" ? null : PaperFlowControlCenter;
+    const uri = pluginScriptURI("src/control-center.js");
+    if (!uri) return null;
+    services.scriptloader.loadSubScript(uri, globalThis);
+    return typeof globalThis.PaperFlowControlCenter === "function"
+      ? globalThis.PaperFlowControlCenter
+      : null;
   } catch (_error) { return null; }
 }
 
@@ -306,14 +562,23 @@ function openControlCenter() {
       notify,
       actions: {
         configureCore,
+        importPaper: importPaperFromCore,
         analyze: analyzeSelectedItems,
+        attachAiMarkdown: attachSelectedAiMarkdown,
         syncSubscriptions,
         subscriptionInbox: () => subscriptionInboxAction({ importPaper: false }),
         communityPreview: () => previewCommunitySelected({ publish: false }),
       },
     });
   }
-  controlCenter.open();
+  try {
+    if (!controlCenter.open()) {
+      notify("PaperFlow 控制中心：Zotero 主窗口尚未就绪。");
+    }
+  } catch (error) {
+    try { Zotero.debug?.(`PaperFlow control center failed: ${error?.stack || error}`); } catch (_debugError) {}
+    notify(`PaperFlow 控制中心：打开失败：${error?.message || error}`);
+  }
 }
 
 async function syncSubscriptions() {
@@ -474,6 +739,79 @@ async function syncMigrationSnapshot() {
   }
 }
 
+async function importPaperFromCore() {
+  if (!coreClient) coreClient = configuredCore();
+  const Api = loadZoteroApi();
+  if (!coreClient || !Api) {
+    notify("PaperFlow：请先连接 Core，再从 PaperFlow 导入论文。");
+    return;
+  }
+  const paperUid = promptValue(
+    "PaperFlow 导入论文",
+    "请输入 PaperFlow paper_uid（例如 arxiv:2504.16054）：",
+    ""
+  );
+  if (!paperUid) return;
+  try {
+    const result = await coreClient.getPaper(paperUid);
+    const paper = result?.paper;
+    if (!result?.ok || !paper?.paper_uid || !paper?.paper_title) {
+      throw new Error("Core 中未找到可导入的 canonical paper");
+    }
+    const accepted = confirmAction(
+      "PaperFlow 导入论文",
+      `将通过 Zotero 公开对象 API 创建或复用条目、加入 PaperFlow Collection，并导入 Core 中经过校验的 PDF：\n${paper.paper_title}\n\n不会修改主库之外的文件，也不会删除原 PDF。确认吗？`
+    );
+    if (!accepted) {
+      notify("PaperFlow 导入论文：已取消。");
+      return;
+    }
+    const api = new Api(Zotero);
+    const created = await api.createBibliographicItem(paper, "PaperFlow");
+    const downloaded = await coreClient.paperPdf(paper.paper_uid);
+    const attached = await api.attachStoredPdf(created.item, downloaded.bytes, {
+      filename: downloaded.filename,
+      sha256: downloaded.sha256,
+    });
+    const snapshot = await api.migrationSnapshot([created.item], "PaperFlow");
+    const migration = await coreClient.migrationResults(snapshot);
+    const mapped = (migration.mappings || []).length > 0;
+    if (!mapped) {
+      const rejected = (migration.rejected || []).find(
+        (value) => value?.paper_uid === paper.paper_uid
+      );
+      throw new Error(
+        `Core 未接受 Zotero mapping${rejected?.reason ? `：${rejected.reason}` : ""}`
+      );
+    }
+    const pipeline = await publishZoteroEvent(
+      String(created.item?.key || ""),
+      {
+        collectionName: "PaperFlow",
+        analysisProfile: prefGet(
+          "extensions.paperflow-zotero.analysisProfile",
+          "full_analysis"
+        ),
+        notifyOnComplete: true,
+      }
+    );
+    try {
+      const win = Zotero.getMainWindow?.();
+      if (created.item?.id && win?.ZoteroPane?.selectItem) {
+        await win.ZoteroPane.selectItem(created.item.id);
+      }
+    } catch (_error) {}
+    notify(
+      `PaperFlow 导入论文：条目${created.status === "created" ? "已创建" : "已复用"}，` +
+      `PDF ${attached.status === "up-to-date" ? "已存在" : "已导入"}，` +
+      `映射 ${migration.mappings?.length || 0} 项；` +
+      `${pipeline?.pipeline?.reuse_analysis ? "已复用既有分析并开始双端呈现" : "分析已进入事件流水线"}。`
+    );
+  } catch (error) {
+    notify(`PaperFlow 导入论文失败：${error.message || error}`);
+  }
+}
+
 function addMenuItem() {
   if (typeof Zotero === "undefined" || !Zotero.getMainWindow) return;
   const win = Zotero.getMainWindow();
@@ -508,6 +846,20 @@ function addMenuItem() {
   migrationSnapshotMenuItem.setAttribute("label", "PaperFlow：同步身份与附件校验");
   migrationSnapshotMenuItem.addEventListener("command", syncMigrationSnapshot);
   menu.appendChild(migrationSnapshotMenuItem);
+  annotationSyncMenuItem = win.document.createXULElement
+    ? win.document.createXULElement("menuitem")
+    : win.document.createElement("menuitem");
+  annotationSyncMenuItem.id = "paperflow-zotero-sync-annotations";
+  annotationSyncMenuItem.setAttribute("label", "PaperFlow：同步选中论文标注");
+  annotationSyncMenuItem.addEventListener("command", syncSelectedAnnotations);
+  menu.appendChild(annotationSyncMenuItem);
+  importCorePaperMenuItem = win.document.createXULElement
+    ? win.document.createXULElement("menuitem")
+    : win.document.createElement("menuitem");
+  importCorePaperMenuItem.id = "paperflow-zotero-import-core-paper";
+  importCorePaperMenuItem.setAttribute("label", "PaperFlow：从 Core 导入论文及 PDF");
+  importCorePaperMenuItem.addEventListener("command", importPaperFromCore);
+  menu.appendChild(importCorePaperMenuItem);
   connectMenuItem = win.document.createXULElement
     ? win.document.createXULElement("menuitem")
     : win.document.createElement("menuitem");
@@ -522,6 +874,13 @@ function addMenuItem() {
   analyzeMenuItem.setAttribute("label", "PaperFlow：导入并分析选中论文");
   analyzeMenuItem.addEventListener("command", analyzeSelectedItems);
   menu.appendChild(analyzeMenuItem);
+  markdownMenuItem = win.document.createXULElement
+    ? win.document.createXULElement("menuitem")
+    : win.document.createElement("menuitem");
+  markdownMenuItem.id = "paperflow-zotero-attach-ai-markdown";
+  markdownMenuItem.setAttribute("label", "PaperFlow：附加 AI Markdown");
+  markdownMenuItem.addEventListener("command", attachSelectedAiMarkdown);
+  menu.appendChild(markdownMenuItem);
   subscriptionMenuItem = win.document.createXULElement
     ? win.document.createXULElement("menuitem")
     : win.document.createElement("menuitem");
@@ -571,8 +930,11 @@ function removeMenuItem() {
   if (collectionMenuItem && collectionMenuItem.parentNode) collectionMenuItem.parentNode.removeChild(collectionMenuItem);
   if (migrateMenuItem && migrateMenuItem.parentNode) migrateMenuItem.parentNode.removeChild(migrateMenuItem);
   if (migrationSnapshotMenuItem && migrationSnapshotMenuItem.parentNode) migrationSnapshotMenuItem.parentNode.removeChild(migrationSnapshotMenuItem);
+  if (annotationSyncMenuItem && annotationSyncMenuItem.parentNode) annotationSyncMenuItem.parentNode.removeChild(annotationSyncMenuItem);
+  if (importCorePaperMenuItem && importCorePaperMenuItem.parentNode) importCorePaperMenuItem.parentNode.removeChild(importCorePaperMenuItem);
   if (connectMenuItem && connectMenuItem.parentNode) connectMenuItem.parentNode.removeChild(connectMenuItem);
   if (analyzeMenuItem && analyzeMenuItem.parentNode) analyzeMenuItem.parentNode.removeChild(analyzeMenuItem);
+  if (markdownMenuItem && markdownMenuItem.parentNode) markdownMenuItem.parentNode.removeChild(markdownMenuItem);
   if (subscriptionMenuItem && subscriptionMenuItem.parentNode) subscriptionMenuItem.parentNode.removeChild(subscriptionMenuItem);
   if (subscriptionImportMenuItem && subscriptionImportMenuItem.parentNode) subscriptionImportMenuItem.parentNode.removeChild(subscriptionImportMenuItem);
   if (subscriptionInboxMenuItem && subscriptionInboxMenuItem.parentNode) subscriptionInboxMenuItem.parentNode.removeChild(subscriptionInboxMenuItem);
@@ -583,8 +945,11 @@ function removeMenuItem() {
   collectionMenuItem = null;
   migrateMenuItem = null;
   migrationSnapshotMenuItem = null;
+  annotationSyncMenuItem = null;
+  importCorePaperMenuItem = null;
   connectMenuItem = null;
   analyzeMenuItem = null;
+  markdownMenuItem = null;
   subscriptionMenuItem = null;
   subscriptionInboxMenuItem = null;
   subscriptionImportMenuItem = null;
@@ -593,8 +958,9 @@ function removeMenuItem() {
   controlCenterMenuItem = null;
 }
 
-function startup() {
+function startup(data = {}) {
   if (typeof Zotero === "undefined") return;
+  rememberPluginRoot(data);
   addMenuItem();
   coreClient = configuredCore();
   const Reader = loadZoteroReader();
@@ -607,8 +973,10 @@ function startup() {
   const Ui = loadZoteroUi();
   if (Ui) {
     zoteroUi = new Ui(Zotero, {
-      pluginID: "paperflow-zotero",
+      pluginID: "paperflow-zotero@threeyang",
+      rootURI: pluginRootURI,
       notify,
+      openControlCenter: () => openControlCenter(),
       statusProvider: (itemKey) => {
         if (!coreClient) coreClient = configuredCore();
         return coreClient ? coreClient.itemStatus(itemKey) : Promise.resolve({ linked: false, sync: "未连接 Core" });
@@ -645,11 +1013,14 @@ function startup() {
 function shutdown() {
   for (const timer of annotationTimers.values()) clearTimeout(timer);
   annotationTimers.clear();
+  for (const timer of projectionTimers.values()) clearTimeout(timer);
+  projectionTimers.clear();
   if (zoteroUi) zoteroUi.stop();
   zoteroUi = null;
   if (controlCenter) controlCenter.close();
   controlCenter = null;
   readerIntegration = null;
+  pluginRootURI = "";
   if (typeof Zotero !== "undefined" && Zotero.Notifier) {
     for (const id of observers.splice(0)) Zotero.Notifier.unregisterObserver(id);
   }

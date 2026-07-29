@@ -14,14 +14,19 @@ const source = fs.readFileSync(
   path.resolve(__dirname, "../../integrations/zotero-paperflow/src/zotero-api.js"),
   "utf8"
 );
-const sandbox = { console };
+const sandbox = {
+  console,
+  crypto: require("node:crypto").webcrypto,
+  IOUtils: { write: async () => {} },
+  TextEncoder,
+};
 vm.runInNewContext(source, sandbox, { filename: "zotero-api.js" });
 const Api = sandbox.PaperFlowZoteroApi;
 
 async function main() {
   assert.equal(manifest.applications.zotero.id, "paperflow-zotero@threeyang");
   assert.equal(manifest.applications.zotero.strict_min_version, "9.0");
-  assert.equal(manifest.applications.zotero.strict_max_version, "9.0.*");
+  assert.equal(manifest.applications.zotero.strict_max_version, "10.99.99");
   const saved = [];
   const collection = {
     key: "PFCOLL01",
@@ -74,7 +79,7 @@ async function main() {
     Collections: { get: () => null },
   });
   const payload = await eventApi.eventPayload("ABCD1234");
-  assert.equal(payload.paper_uid, "arxiv:2504.16054v2");
+  assert.equal(payload.paper_uid, "arxiv:2504.16054");
   assert.equal(payload.has_pdf, true);
   assert.equal(payload.pdf_stable, false);
   assert.equal(payload.identity_resolved, true);
@@ -90,43 +95,68 @@ async function main() {
     key: "ANN00001",
     parentID: 11,
     isAnnotation: () => true,
-    getField: (field) => ({
-      annotationType: "highlight",
-      annotationText: "A quoted result",
-      annotationComment: "Important",
-      annotationColor: "#ffff00",
-      annotationPageLabel: "4",
-      annotationPosition: '{"rects":[[1,2,3,4]]}',
-    }[field] || ""),
+    annotationType: "highlight",
+    annotationText: "A quoted result",
+    annotationComment: "Important",
+    annotationColor: "#ffff00",
+    annotationPageLabel: "4",
+    annotationPosition: '{"rects":[[1,2,3,4]]}',
+    // Zotero 9 does not expose annotation properties through getField().
+    getField: () => "",
     getTags: () => [{ tag: "evidence" }],
   };
+  const annotationPdf = {
+    id: 11,
+    key: "PDF00001",
+    parentID: 10,
+    isAttachment: () => true,
+    getAnnotations: () => [annotation],
+  };
+  item.id = 10;
   const migrationSnapshot = await eventApi.migrationSnapshot([item]);
   assert.equal(migrationSnapshot.items.length, 1);
-  assert.equal(migrationSnapshot.items[0].paper_uid, "arxiv:2504.16054v2");
+  assert.equal(migrationSnapshot.items[0].paper_uid, "arxiv:2504.16054");
   assert.equal(migrationSnapshot.items[0].attachments.length, 1);
   const annotationApi = new Api({
     Libraries: { userLibraryID: 1 },
     Items: {
       getByLibraryAndKey: (_library, key) => key === "ANN00001" ? annotation : null,
-      getAsync: async (id) => id === 11 ? item : annotation,
+      getAsync: async (id) => id === 11 ? annotationPdf : id === 10 ? item : annotation,
     },
     Collections: { get: () => null },
   });
   const annotationPayload = await annotationApi.annotationPayload("ANN00001");
-  assert.equal(annotationPayload.paper_uid, "arxiv:2504.16054v2");
+  assert.equal(annotationPayload.paper_uid, "arxiv:2504.16054");
+  assert.equal(annotationPayload.parent_item_key, "ABCD1234");
+  assert.equal(annotationPayload.annotation_type, "highlight");
   assert.equal(annotationPayload.text, "A quoted result");
+  assert.equal(annotationPayload.comment, "Important");
+  assert.equal(annotationPayload.page, "4");
   assert.equal(JSON.stringify(annotationPayload.position), JSON.stringify({ rects: [[1, 2, 3, 4]] }));
+  const annotationParent = { ...item, getAttachments: () => [11] };
+  const discoveredAnnotations = await annotationApi.annotationsForItems([annotationParent, annotation]);
+  assert.equal(JSON.stringify(discoveredAnnotations.map((value) => value.key)), JSON.stringify(["ANN00001"]));
   const selectedAnnotation = { isAnnotation: () => true, key: "ANN00001" };
   const selectedApi = new Api({
     getMainWindow: () => ({ ZoteroPane: { getSelectedItems: () => [selectedAnnotation] } }),
   });
   assert.deepEqual(selectedApi.selectedAnnotations(), [selectedAnnotation]);
   const createdCalls = [];
+  const imported = [];
   const createApi = new Api({
     Libraries: { userLibraryID: 1 },
-    Items: { getAll: () => [] },
+    DB: {
+      executeTransaction: async (callback) => {
+        createdCalls.push("transaction");
+        await callback();
+      },
+    },
+    Items: { getAll: async () => [] },
+    Attachments: {
+      importFromFile: async (file, options) => { imported.push({ file, options }); return { id: 88, key: "MD000001", setField: () => {}, saveTx: async () => {} }; },
+    },
     Collections: {
-      getByLibrary: () => [],
+      getByLibrary: async () => [],
     },
     Collection: function Collection() {
       this.key = "PFCOLL02";
@@ -158,11 +188,30 @@ async function main() {
   assert.equal(createdItem.status, "created");
   assert.equal(createdItem.item.fields.title, "π0.5");
   assert.ok(createdCalls.includes("item-save"));
+  assert.ok(createdCalls.includes("transaction"));
   assert.ok(createdCalls.some((value) => value.startsWith("collection-add:")));
+  const markdownApi = new Api({
+    Libraries: { userLibraryID: 1 },
+    Items: { getAsync: async () => null },
+    getTempDirectory: () => ({ clone: () => ({ path: "C:/tmp/paperflow", append: (name) => { imported.push({ name }); }, remove: () => {} }), append: () => {} }),
+    Attachments: { importFromFile: async (options) => { imported.push(options); return { id: 99, key: "MD000002", setField: () => {}, saveTx: async () => {} }; } },
+  });
+  const markdownResult = await markdownApi.attachAiMarkdown({ id: 77, getAttachments: () => [] }, "# AI", { filename: "paper.analysis.md", sha256: "a".repeat(64) });
+  assert.equal(markdownResult.status, "created");
+  assert.equal(imported.some((value) => value.parentItemID === 77 && value.contentType === "text/markdown"), true);
+  const pdfBytes = new TextEncoder().encode("%PDF-1.7\nPaperFlow\n%%EOF\n");
+  const pdfResult = await markdownApi.attachStoredPdf(
+    { id: 78, getAttachments: () => [] },
+    pdfBytes,
+    { filename: "pi0.5.pdf" }
+  );
+  assert.equal(pdfResult.status, "created");
+  assert.equal(pdfResult.sha256.length, 64);
+  assert.equal(imported.some((value) => value.parentItemID === 78 && value.contentType === "application/pdf"), true);
   const deletedPayload = await annotationApi.annotationPayload("ANN00001", "delete");
   assert.equal(JSON.stringify(deletedPayload), JSON.stringify({
     event: "delete",
-    paper_uid: "arxiv:2504.16054v2",
+    paper_uid: "arxiv:2504.16054",
     annotation_id: "ANN00001",
     item_key: "ANN00001",
     parent_item_key: "ABCD1234",

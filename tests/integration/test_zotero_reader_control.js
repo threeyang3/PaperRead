@@ -38,9 +38,19 @@ async function main() {
 
   const control = new controlSandbox.PaperFlowControlCenter(zotero, { reader });
   assert.equal(control.open(), false, "control center must safely no-op without a Zotero DOM");
+  const namespaces = [];
+  const namespaceDoc = {
+    createElementNS: (namespace, tag) => {
+      namespaces.push({ namespace, tag });
+      return { namespace, tag };
+    },
+  };
+  assert.equal(control._html(namespaceDoc, "aside").namespace, "http://www.w3.org/1999/xhtml");
+  assert.equal(reader._html(namespaceDoc, "div").namespace, "http://www.w3.org/1999/xhtml");
+  assert.deepEqual(namespaces.map((entry) => entry.tag), ["aside", "div"]);
   control.close();
   const source = fs.readFileSync(path.resolve(__dirname, "../../integrations/zotero-paperflow/src/control-center.js"), "utf8");
-  for (const label of ["论文与阅读", "订阅 Inbox", "社区与标注", "诊断", "当前阅读工作区"]) assert.ok(source.includes(label));
+  for (const label of ["收件箱", "分析", "阅读", "订阅", "社区", "更多", "从 Core 导入论文", "订阅 Inbox", "社区与标注", "诊断与设置", "当前阅读工作区", "Research Operations", "Core 已连接", "aria-selected"]) assert.ok(source.includes(label));
   console.log("PaperFlow Zotero Reader/control-center tests passed");
 }
 

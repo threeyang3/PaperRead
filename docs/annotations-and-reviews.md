@@ -5,6 +5,11 @@
 
 ## 标注
 
+Zotero 主阅读模式下，Zotero Reader 标注是 USER_OWNED 真源，Core 只在
+`.paperflow/data/annotations/zotero/<paper_uid>/` 保存 SYSTEM_MANAGED 的只读
+JSON 镜像。新 Zotero 标注不会生成新的 Obsidian Annotation Note；下面的 Markdown
+协议适用于 Obsidian/PDF++ 兼容模式和历史标注，两种来源不会互相覆盖。
+
 标注支持 highlight、passage-comment、question、critique、figure-comment、
 section-comment、paper-review 和 rating。每条记录保存：
 

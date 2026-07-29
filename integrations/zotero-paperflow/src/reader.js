@@ -74,13 +74,19 @@ class PaperFlowReaderIntegration {
     return text || fallback;
   }
 
+  _html(doc, tag) {
+    return typeof doc.createElementNS === "function"
+      ? doc.createElementNS("http://www.w3.org/1999/xhtml", tag)
+      : doc.createElement(tag);
+  }
+
   _row(doc, label, value) {
-    const row = doc.createElement("div");
+    const row = this._html(doc, "div");
     row.className = "paperflow-reader-row";
-    const labelNode = doc.createElement("span");
+    const labelNode = this._html(doc, "span");
     labelNode.className = "paperflow-reader-label";
     labelNode.textContent = label;
-    const valueNode = doc.createElement("span");
+    const valueNode = this._html(doc, "span");
     valueNode.className = "paperflow-reader-value";
     valueNode.textContent = this._text(value);
     row.append(labelNode, valueNode);
@@ -93,12 +99,12 @@ class PaperFlowReaderIntegration {
     while (this.container.firstChild) this.container.firstChild.remove();
     const state = this.state || {};
     const paper = state.paper || {};
-    const title = doc.createElement("h2");
+    const title = this._html(doc, "h2");
     title.className = "paperflow-reader-title";
     title.textContent = this._text(paper.paper_title_display || paper.paper_title, "PaperFlow 阅读工作区");
     this.container.appendChild(title);
     if (paper.paper_uid) {
-      const identity = doc.createElement("small");
+      const identity = this._html(doc, "small");
       identity.textContent = `${paper.paper_uid}${state.item_key ? ` · Zotero ${state.item_key}` : ""}`;
       this.container.appendChild(identity);
     }
@@ -114,13 +120,13 @@ class PaperFlowReaderIntegration {
     );
     const summary = analysis.summary?.ai_summary_short || analysis.summary?.ai_one_sentence_summary;
     if (summary) {
-      const block = doc.createElement("blockquote");
+      const block = this._html(doc, "blockquote");
       block.className = "paperflow-reader-summary";
       block.textContent = String(summary);
       this.container.appendChild(block);
     }
     if (state.error) {
-      const error = doc.createElement("div");
+      const error = this._html(doc, "div");
       error.className = "paperflow-reader-error";
       error.textContent = state.error;
       this.container.appendChild(error);
@@ -128,5 +134,4 @@ class PaperFlowReaderIntegration {
   }
 }
 
-this.PaperFlowReaderIntegration = PaperFlowReaderIntegration;
-
+globalThis.PaperFlowReaderIntegration = PaperFlowReaderIntegration;

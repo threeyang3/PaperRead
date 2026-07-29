@@ -15,6 +15,19 @@ from pathlib import Path
 from typing import Iterable
 
 
+ARTIFACT_PERMISSIONS = frozenset({
+    "IMMUTABLE_SOURCE",
+    "AI_VERSIONED",
+    "SYSTEM_MANAGED",
+    "USER_OWNED",
+    "USER_EDITABLE_PROJECTION",
+    "PUBLIC_IMMUTABLE",
+    "REMOTE_READ_ONLY",
+    "SECRET",
+    "EPHEMERAL",
+})
+
+
 class ArtifactPermissionError(PermissionError):
     """Raised when a writer crosses a user/system or publish boundary."""
 
@@ -61,10 +74,53 @@ class ArtifactPolicy:
         )
 
     def permission(self, root: Path, path: Path) -> str:
-        relative = self.relative(root, path)
-        if self._under(relative, self.user_roots):
+        permission = self.artifact_permission(root, path)
+        if permission in {"USER_OWNED", "USER_EDITABLE_PROJECTION"}:
             return "USER_MANAGED"
-        if self._under(relative, self.system_roots):
+        if permission in ARTIFACT_PERMISSIONS:
+            return "SYSTEM_MANAGED"
+        return "UNCLASSIFIED"
+
+    def artifact_permission(self, root: Path, path: Path) -> str:
+        """Return the explicit ownership class for an artifact path.
+
+        ``permission()`` remains the two-state compatibility API used by older
+        writers.  New code can use this method to distinguish versioned AI,
+        immutable source, user projections, remote read-only caches and
+        ephemeral runtime data.
+        """
+        relative = self.relative(root, path)
+        value = relative.casefold()
+        # Secrets can live below runtime/state roots. Classify by filename
+        # before broader directory rules so credentials never inherit the
+        # publish/write policy of ordinary ephemeral or system state.
+        if Path(relative).name.casefold() in {
+            ".env",
+            "auth.json",
+            "zotero-core-session.token",
+        }:
+            return "SECRET"
+        if value.endswith(".analysis.md") and self._under(value, ("20 ai analyses", "documents/zotero", ".paperflow/data/zotero/markdown")):
+            return "USER_EDITABLE_PROJECTION"
+        if self._under(value, (".paperflow/data/raw", "data/raw", "documents/zotero")):
+            return "IMMUTABLE_SOURCE"
+        if self._under(value, (".paperflow/data/ai", "data/ai")):
+            return "AI_VERSIONED"
+        if self._under(value, (".paperflow/data/annotations", "data/annotations", "templates")):
+            return "SYSTEM_MANAGED"
+        if self._under(value, (".paperflow/data/community/outbox", "data/community/outbox")):
+            return "PUBLIC_IMMUTABLE"
+        if self._under(value, (".paperflow/data/community/subscriptions", "data/community/subscriptions", "data/subscriptions")):
+            return "REMOTE_READ_ONLY"
+        if self._under(value, (".paperflow/runtime", "runtime", "cache", "logs")):
+            return "EPHEMERAL"
+        if self._under(value, (".paperflow/state", "state")):
+            return "SYSTEM_MANAGED"
+        if self._under(value, ("20 AI Analyses",)):
+            return "USER_EDITABLE_PROJECTION"
+        if self._under(value, self.user_roots):
+            return "USER_OWNED"
+        if self._under(value, self.system_roots):
             return "SYSTEM_MANAGED"
         return "UNCLASSIFIED"
 
@@ -74,6 +130,13 @@ class ArtifactPolicy:
         if expected in {"SYSTEM_MANAGED", "USER_MANAGED"} and actual != expected:
             raise ArtifactPermissionError(
                 f"{expected} writer may not write {actual} artifact: "
+                f"{self.relative(root, path)}"
+            )
+        if expected in {"SYSTEM_MANAGED", "USER_MANAGED"}:
+            return actual
+        if expected in ARTIFACT_PERMISSIONS and self.artifact_permission(root, path) != expected:
+            raise ArtifactPermissionError(
+                f"{expected} writer may not write {self.artifact_permission(root, path)} artifact: "
                 f"{self.relative(root, path)}"
             )
         return actual
@@ -120,8 +183,11 @@ class PublishScanner:
         for raw in paths:
             path = Path(raw)
             relative = self.policy.relative(self.root, path)
-            if self.policy.permission(self.root, path) == "USER_MANAGED":
+            artifact_permission = self.policy.artifact_permission(self.root, path)
+            if artifact_permission in {"USER_OWNED", "USER_EDITABLE_PROJECTION"}:
                 findings.append(PublishFinding(relative, "user-managed artifact"))
+            elif artifact_permission in {"SECRET", "EPHEMERAL", "REMOTE_READ_ONLY"}:
+                findings.append(PublishFinding(relative, f"{artifact_permission.casefold()} artifact"))
             if path.name.casefold() in forbidden_names:
                 findings.append(PublishFinding(relative, "private filename"))
             if path.suffix.casefold() in self.policy.publish_forbidden_suffixes:

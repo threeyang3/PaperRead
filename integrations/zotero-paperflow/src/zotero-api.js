@@ -25,9 +25,17 @@ class PaperFlowZoteroApi {
       if (keyed && !keyed.deleted) return { status: "reused", collection: keyed, libraryID };
     }
     if (typeof collections.getByLibrary === "function") {
-      const existing = collections
-        .getByLibrary(libraryID)
-        .find((value) => !value.deleted && String(value.name || "") === clean);
+      // Zotero 9 may return a Promise here even though older builds returned
+      // an Array directly. Awaiting both shapes keeps collection reuse safe.
+      const listed = await collections.getByLibrary(libraryID);
+      const values = Array.isArray(listed)
+        ? listed
+        : listed && typeof listed[Symbol.iterator] === "function"
+          ? Array.from(listed)
+          : [];
+      const existing = values.find(
+        (value) => !value.deleted && String(value.name || "") === clean
+      );
       if (existing) return { status: "reused", collection: existing, libraryID };
     }
     if (typeof this.Zotero.Collection !== "function") {
@@ -82,7 +90,10 @@ class PaperFlowZoteroApi {
     const candidates = [this._field(item, "url"), this._field(item, "extra"), this._field(item, "archiveLocation")];
     for (const value of candidates) {
       const match = value.match(/(?:arxiv(?:\.org)?\/(?:abs|pdf)\/|arXiv:)\s*([0-9]{4}\.[0-9]{4,5}(?:v[0-9]+)?)/i);
-      if (match) return `arxiv:${match[1]}`;
+      // paper_uid is the stable work identity. arXiv version suffixes belong
+      // in paper_arxiv_version and must never split mappings/jobs into a
+      // second canonical paper such as arxiv:2504.16054v1.
+      if (match) return `arxiv:${match[1].replace(/v[0-9]+$/i, "")}`;
     }
     const doi = this._field(item, "DOI") || this._field(item, "doi");
     if (doi) return `doi:${doi.toLowerCase()}`;
@@ -246,6 +257,151 @@ class PaperFlowZoteroApi {
     return result;
   }
 
+  async _markdownAttachments(item) {
+    const parent = item && typeof item === "object" ? item : await this.getItemByKey(item);
+    if (!parent) return [];
+    const result = [];
+    for (const rawKey of this._attachmentKeys(parent)) {
+      const attachment = await this.getItemById(rawKey);
+      if (!attachment) continue;
+      const contentType = (this._field(attachment, "contentType") || String(attachment.attachmentContentType || "")).toLowerCase();
+      const filename = this._field(attachment, "title") || this._field(attachment, "filename") || "";
+      if (contentType !== "text/markdown" && !filename.toLowerCase().endsWith(".analysis.md")) continue;
+      let filePath = "";
+      try {
+        if (typeof this.Zotero.Attachments?.getFilePath === "function") filePath = String(await this.Zotero.Attachments.getFilePath(attachment.id) || "");
+        else if (typeof attachment.getFilePath === "function") filePath = String(await attachment.getFilePath() || "");
+      } catch (_error) {}
+      const sha256 = await this._sha256File(filePath);
+      result.push({ attachment, filename, filePath, sha256 });
+    }
+    return result;
+  }
+
+  async _temporaryFile(bytes, filename) {
+    if (typeof IOUtils === "undefined" || typeof IOUtils.write !== "function") throw new Error("Zotero 9 IOUtils.write is unavailable");
+    const runtime = this.Zotero;
+    let file = null;
+    if (runtime && typeof runtime.getTempDirectory === "function") {
+      file = runtime.getTempDirectory();
+    } else if (typeof Services !== "undefined" && Services.dirsvc?.get) {
+      // Zotero 9 exposes the standard Firefox directory service rather than
+      // a Zotero-specific getTempDirectory helper.  Keep the file in the OS
+      // temp directory and import it through Zotero's public attachment API.
+      const iface = typeof Ci !== "undefined" ? Ci.nsIFile
+        : (typeof Components !== "undefined" ? Components.interfaces.nsIFile : null);
+      if (iface) file = Services.dirsvc.get("TmpD", iface);
+    }
+    if (!file) throw new Error("Zotero temporary directory API is unavailable");
+    if (!file || typeof file.clone !== "function" || typeof file.append !== "function") throw new Error("Zotero temporary file API is unavailable");
+    const target = file.clone();
+    target.append(`paperflow-${Date.now()}-${Math.random().toString(16).slice(2)}-${filename}`);
+    const value = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    await IOUtils.write(target.path, value);
+    return target;
+  }
+
+  async _temporaryMarkdownFile(content, filename) {
+    return this._temporaryFile(new TextEncoder().encode(String(content)), filename);
+  }
+
+  async attachStoredPdf(item, bytes, { filename = "paperflow-paper.pdf", sha256 = "" } = {}) {
+    const parent = item && typeof item === "object" ? item : await this.getItemByKey(item);
+    if (!parent || !parent.id) throw new Error("Zotero parent item is required");
+    const value = bytes instanceof Uint8Array
+      ? bytes
+      : bytes instanceof ArrayBuffer
+        ? new Uint8Array(bytes)
+        : ArrayBuffer.isView(bytes)
+          ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+          : null;
+    if (!value || value.length <= 5 || value.length > 100 * 1024 * 1024 ||
+        value[0] !== 0x25 || value[1] !== 0x50 || value[2] !== 0x44 ||
+        value[3] !== 0x46 || value[4] !== 0x2d) {
+      throw new Error("PaperFlow PDF is invalid or exceeds 100 MB");
+    }
+    if (typeof crypto === "undefined" || !crypto.subtle) {
+      throw new Error("WebCrypto is required for PDF checksum verification");
+    }
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
+    );
+    const actual = [...new Uint8Array(digest)]
+      .map((part) => part.toString(16).padStart(2, "0"))
+      .join("");
+    const expected = String(sha256 || "").trim().toLowerCase();
+    if (expected && actual !== expected) throw new Error("PaperFlow PDF SHA-256 mismatch");
+    const existing = await this.attachmentSnapshot(parent);
+    if (existing.some((attachment) => attachment.sha256 && attachment.sha256 === actual)) {
+      return { status: "up-to-date", attachment: null, sha256: actual };
+    }
+    if (!this.Zotero.Attachments || typeof this.Zotero.Attachments.importFromFile !== "function") {
+      throw new Error("Zotero Attachments.importFromFile API is unavailable");
+    }
+    const safeName = String(filename || "paperflow-paper.pdf")
+      .replace(/[^A-Za-z0-9._-]+/g, "_")
+      .replace(/\.pdf$/i, "") + ".pdf";
+    const temp = await this._temporaryFile(value, safeName);
+    try {
+      const attachment = await this.Zotero.Attachments.importFromFile({
+        file: temp,
+        parentItemID: parent.id,
+        title: safeName,
+        contentType: "application/pdf",
+      });
+      if (!attachment) throw new Error("Zotero did not return the imported PDF attachment");
+      if (typeof attachment.setField === "function") {
+        try { attachment.setField("title", safeName); } catch (_error) {}
+      }
+      if (typeof attachment.saveTx === "function") await attachment.saveTx();
+      return { status: existing.length ? "new-version" : "created", attachment, sha256: actual };
+    } finally {
+      try { if (temp && typeof temp.remove === "function") temp.remove(false); } catch (_error) {}
+    }
+  }
+
+  async attachAiMarkdown(item, content, { filename = "paperflow-ai.analysis.md", sha256 = "" } = {}) {
+    const parent = item && typeof item === "object" ? item : await this.getItemByKey(item);
+    if (!parent || !parent.id) throw new Error("Zotero parent item is required");
+    const expected = String(sha256 || "").toLowerCase();
+    const existing = await this._markdownAttachments(parent);
+    if (expected && existing.some((value) => value.sha256 === expected)) {
+      const match = existing.find((value) => value.sha256 === expected);
+      return { status: "up-to-date", attachment: match.attachment, filename: match.filename, sha256: expected };
+    }
+    if (!this.Zotero.Attachments || typeof this.Zotero.Attachments.importFromFile !== "function") {
+      throw new Error("Zotero Attachments.importFromFile API is unavailable");
+    }
+    const safeName = String(filename || "paperflow-ai.analysis.md").replace(/[^A-Za-z0-9._-]+/g, "_");
+    const temp = await this._temporaryMarkdownFile(content, safeName);
+    try {
+      // Zotero 9's public signature is the options object form.  Supplying
+      // content type/charset here avoids relying on filename sniffing for a
+      // Markdown attachment and lets Zotero create the managed child item.
+      const attachment = await this.Zotero.Attachments.importFromFile({
+        file: temp,
+        parentItemID: parent.id,
+        title: safeName,
+        contentType: "text/markdown",
+        charset: "utf-8",
+      });
+      if (!attachment) throw new Error("Zotero did not return the imported Markdown attachment");
+      if (typeof attachment.setField === "function") {
+        try { attachment.setField("title", safeName); } catch (_error) {}
+        // Zotero derives attachmentContentType from the imported file.  Some
+        // Zotero 9 builds expose contentType as read-only, so do not make a
+        // successful import fail merely because that optional field cannot be
+        // assigned.
+        try { attachment.setField("extra", `PaperFlow projection sha256=${expected}`); } catch (_error) {}
+      }
+      if (typeof attachment.saveTx === "function") await attachment.saveTx();
+      return { status: existing.length ? "new-version" : "created", attachment, filename: safeName, sha256: expected };
+    } finally {
+      try { if (typeof temp.remove === "function") temp.remove(false); } catch (_error) {}
+    }
+  }
+
   async pdfFingerprint(item) {
     const snapshots = await this.attachmentSnapshot(item);
     const pdf = snapshots.find((value) => {
@@ -281,6 +437,15 @@ class PaperFlowZoteroApi {
   }
 
   _annotationField(item, name) {
+    if (!item) return "";
+    // Zotero annotation data is exposed as direct Zotero.Item properties
+    // (annotationText, annotationComment, annotationPosition, ...), not as
+    // bibliographic fields accepted by getField(). Keep getField() only as a
+    // compatibility fallback for older/mocked runtimes.
+    try {
+      const value = item[name];
+      if (value !== undefined && value !== null) return String(value);
+    } catch (_error) {}
     return this._field(item, name);
   }
 
@@ -291,7 +456,16 @@ class PaperFlowZoteroApi {
     }
     if (typeof annotation.isAnnotation === "function" && !annotation.isAnnotation()) return null;
     const parentID = annotation.parentID || this._annotationField(annotation, "parentItem");
-    const parent = await this.getItemById(parentID);
+    const attachment = await this.getItemById(parentID);
+    let parent = attachment;
+    if (
+      attachment
+      && typeof attachment.isAttachment === "function"
+      && attachment.isAttachment()
+      && attachment.parentID
+    ) {
+      parent = await this.getItemById(attachment.parentID);
+    }
     const paperUid = this.paperUid(parent);
     if (event !== "delete" && !paperUid) return null;
     const position = this._annotationField(annotation, "annotationPosition");
@@ -316,6 +490,46 @@ class PaperFlowZoteroApi {
       updated_at: String(annotation.dateModified || this._annotationField(annotation, "dateModified") || ""),
       deleted: event === "delete" || Boolean(annotation.deleted),
     };
+  }
+
+  async annotationsForItems(items = []) {
+    const output = [];
+    const seen = new Set();
+    const add = async (value) => {
+      const item = value && typeof value === "object" ? value : await this.getItemById(value);
+      if (!item || typeof item.isAnnotation !== "function" || !item.isAnnotation()) return;
+      const key = String(item.key || item.id || "");
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      output.push(item);
+    };
+    for (const item of items || []) {
+      if (!item) continue;
+      if (typeof item.isAnnotation === "function" && item.isAnnotation()) {
+        await add(item);
+        continue;
+      }
+      const attachments = [];
+      if (typeof item.isAttachment === "function" && item.isAttachment()) {
+        attachments.push(item);
+      } else if (typeof item.getAttachments === "function") {
+        for (const id of item.getAttachments() || []) {
+          const attachment = await this.getItemById(id);
+          if (attachment) attachments.push(attachment);
+        }
+      }
+      for (const attachment of attachments) {
+        if (typeof attachment.getAnnotations !== "function") continue;
+        const annotations = await attachment.getAnnotations(false, false);
+        const values = Array.isArray(annotations)
+          ? annotations
+          : annotations && typeof annotations[Symbol.iterator] === "function"
+            ? Array.from(annotations)
+            : [];
+        for (const annotation of values) await add(annotation);
+      }
+    }
+    return output;
   }
 
   _inCollection(item, collectionName) {
@@ -371,7 +585,16 @@ class PaperFlowZoteroApi {
       return { status: "already-member", itemId: id };
     }
     if (typeof collection.addItem !== "function") throw new Error("Zotero Collection membership API is unavailable");
-    await collection.addItem(id);
+    const add = async () => collection.addItem(id);
+    if (typeof this.Zotero.DB?.executeTransaction === "function") {
+      // Zotero 9 enforces an active DB transaction for collection membership
+      // changes even though item/collection creation use saveTx().
+      await this.Zotero.DB.executeTransaction(add);
+    } else {
+      // Retain compatibility with test doubles and older Zotero builds whose
+      // public collection API manages its own transaction.
+      await add();
+    }
     return { status: "added", itemId: id };
   }
 
@@ -388,7 +611,15 @@ class PaperFlowZoteroApi {
     }
     let items;
     try {
-      items = this.Zotero.Items.getAll(libraryID) || [];
+      // Zotero 9's getAll() is asynchronous. A Promise is truthy but not
+      // iterable, which previously surfaced as "items is not iterable" during
+      // a confirmed Core import.
+      const listed = await this.Zotero.Items.getAll(libraryID);
+      items = Array.isArray(listed)
+        ? listed
+        : listed && typeof listed[Symbol.iterator] === "function"
+          ? Array.from(listed)
+          : [];
     } catch (error) {
       throw new Error(`Zotero item enumeration failed: ${error.message || error}`);
     }
@@ -412,10 +643,10 @@ class PaperFlowZoteroApi {
   }
 
   async createBibliographicItem(paper, collectionName = "PaperFlow") {
-    if (!paper || typeof paper !== "object") throw new Error("subscription paper snapshot is required");
+    if (!paper || typeof paper !== "object") throw new Error("PaperFlow paper snapshot is required");
     const paperUid = String(paper.paper_uid || "").trim();
     const title = String(paper.paper_title || paper.title || "").trim();
-    if (!paperUid || !title) throw new Error("subscription paper identity and title are required");
+    if (!paperUid || !title) throw new Error("PaperFlow paper identity and title are required");
     const existing = await this.findItemByPaperUid(paperUid);
     const ensured = await this.ensureCollection(collectionName);
     if (existing) {
@@ -469,4 +700,4 @@ class PaperFlowZoteroApi {
   }
 }
 
-this.PaperFlowZoteroApi = PaperFlowZoteroApi;
+globalThis.PaperFlowZoteroApi = PaperFlowZoteroApi;

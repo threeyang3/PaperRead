@@ -77,7 +77,7 @@ per-paper index path instead of assuming a year-based folder; legacy index
 files are retained and user-authored text is imported without duplication.
 Direct PDF editing remains disabled.
 
-## Zotero 主阅读前端（增量接入）
+## Zotero 主阅读前端
 
 PaperFlow 把 Zotero 作为论文管理和 PDF 阅读的主要前端，Obsidian PDF 功能保留为兼容模式。
 当前主线已经提供只读环境审计、loopback Core，以及“导入并分析选中论文”的完整入口：
@@ -88,7 +88,17 @@ paperflow zotero status --vault <vault>
 paperflow zotero doctor --vault <vault>
 ```
 
-检测会读取活动 Profile 和 `prefs.js` 来识别自定义 data directory，只探测 `127.0.0.1` Local API，绝不直接读写 `zotero.sqlite`。Zotero 插件位于 `integrations/zotero-paperflow`；选中论文后会通过公开对象 API 导出元数据并把 PDF 分块发送到已认证的 Core staging，Core 校验 SHA-256 后才写入 standalone canonical data。真实主 Profile 的安装/Reader E2E 仍只在用户明确选择的独立测试 Profile 中验证。
+检测会读取活动 Profile 和 `prefs.js` 来识别自定义 data directory，只探测
+`127.0.0.1` Local API，绝不直接读写 `zotero.sqlite`。Zotero 插件位于
+`integrations/zotero-paperflow`；选中论文后会通过公开对象 API 导出元数据并把
+PDF 分块发送到已认证的 Core staging，Core 校验 SHA-256 后才写入 canonical data。
+
+2026-07-28 已在隔离 Zotero 9.0.6 Profile 中用 π0.5
+（`arxiv:2504.16054`）完成真实闭环：创建/复用 `PaperFlow` Collection、创建条目、
+导入并校验 PDF、生成 mapping、分析或复用既有 AI、附加 Markdown、生成 Obsidian
+主投影，并把 Zotero Reader 高亮/评论镜像到 Core。首次用随机 session token 配对后，
+插件会用本机设备密钥自动续期；Core 重启不再要求反复复制 token。主 Profile 没有被
+用于该写入验收。
 
 Core 的 loopback 服务和安全身份映射也可先行使用：
 
@@ -232,6 +242,8 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 - [PaperFlow 1.4 维护者指南](docs/维护者指南-1.4.md)
 - [Zotero 本机环境审计](docs/audits/zotero-local-environment-audit.md)
 - [Zotero 主阅读工作流审计](docs/audits/zotero-primary-workflow-audit.md)
+- [Zotero 隔离 Profile 验收](docs/audits/zotero-test-profile.md)
+- [Zotero AI Markdown 投影](docs/zotero-ai-markdown.md)
 - [ChatGPT 网页分析与隐私](docs/ChatGPT网页分析与隐私.md)
 - [Nutstore Sync 兼容建议](docs/Nutstore兼容建议.md)
 - [1.4 迁移指南](docs/1.4迁移指南.md)

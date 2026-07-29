@@ -127,7 +127,7 @@ def test_zotero_xpi_is_valid_source_package() -> None:
     assert manifest["applications"]["zotero"]["id"] == "paperflow-zotero@threeyang"
     assert manifest["applications"]["zotero"]["update_url"].startswith("https://github.com/threeyang3/PaperRead/")
     assert manifest["applications"]["zotero"]["strict_min_version"] == "9.0"
-    assert manifest["applications"]["zotero"]["strict_max_version"] == "9.0.*"
+    assert manifest["applications"]["zotero"]["strict_max_version"] == "10.99.99"
     assert "bootstrap.js" in names and "prefs.js" in names and "src/zotero-api.js" in names
     assert "install.rdf" not in names
     assert not any("zotero.sqlite" in name or name.lower().endswith((".pdf", ".db")) for name in names)

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- 在隔离 Zotero 9.0.6 Profile 中以 π0.5（`arxiv:2504.16054`）完成
+  Collection、条目、PDF/SHA-256、mapping、分析、Zotero AI Markdown、Obsidian
+  主投影和 Reader 标注镜像的真实端到端验收；主 Profile 未用于写入测试。
+- Core 连接改为一次性 session token 引导的本机设备配对；配对密钥仅保存在
+  Zotero 本机偏好和 Core 的哈希状态中，Core 重启后可自动换取新 session，
+  无需反复复制 token。
+- 修复 Zotero 9 的异步条目枚举、Collection 事务要求、Annotation 直接属性读取、
+  bootstrap 重载残留旧 API 构造器，以及导入/分析/AI Markdown 的作业衔接。
+- 新增“同步选中论文标注”恢复入口，可从论文、PDF 或标注发现 Reader 标注并
+  重新镜像；镜像只写 SYSTEM_MANAGED JSON，不生成新的旧式 Obsidian
+  Annotation Note。
+- Zotero 控制中心改为高频标签布局，增加从 Core 导入论文/PDF、自动/手动附加
+  AI Markdown、订阅 Inbox 和更清晰的失败提示。
 - 将 Zotero 的“导入并分析选中论文”补成完整主链：插件仅通过公开对象 API
   发送元数据和分块 PDF，loopback Core 校验偏移、PDF 魔数和 SHA-256 后才写入
   standalone canonical data；不读取 `zotero.sqlite`，不覆盖不同哈希的既有 PDF。
@@ -246,15 +259,3 @@
 - added wheel, sdist, Windows portable, checksums, CI workflows, installation
   scripts, examples, and first-user documentation;
 - migrated the current Workspace without downloads, AI calls, or path moves.
-## Unreleased
-
-- 增加只读 Zotero 环境审计：识别真实安装、Profile、自定义 data directory 和 loopback Local API；不读取或修改 `zotero.sqlite`。
-- 增加 `paperflow zotero detect/status/doctor` 与 Zotero 7 插件安全骨架。
-- 增加 `entities-0002-display-labels` 迁移，统一生成实体的可读标题，同时保留 Topic/Method/Dataset 类型边界、别名和用户正文。
-- 增加 Zotero Workspace 配置、loopback Core 服务、精确身份映射 dry-run 和脱敏 Zotero JSON fixture；停止后台服务前会校验 PID 命令行，避免误终止无关进程。
-## Unreleased
-
-- 将 Zotero 主工作流继续前移：Core 可使用显式 standalone `data-root`，不依赖 Obsidian Vault。
-- 增加 `ArtifactPolicy`/`PermissionGuard`/`PublishScanner`，阻止系统写入覆盖用户笔记并在发布前扫描私有文件。
-- Zotero 插件新增身份与附件校验快照回传；Core 校验后保存 mapping 和附件 SHA-256 状态，不直接触碰 `zotero.sqlite`。
-- AI Markdown 支持 Zotero、Obsidian 或双目标投影，并保存 render state；费曼问题与用户答案分离。

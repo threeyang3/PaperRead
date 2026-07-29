@@ -41,19 +41,34 @@ Workspace v3 performs those updates atomically. Visual asset `path` values
 remain PNG paths and are never rewritten as PDF paths; visual manifest v1 binds
 to the source PDF by SHA-256 rather than by a mutable path.
 
-Because Derived is applied after the aggregate compatibility record, path
-migrations must update modeled rebuildable fields such as `paper_pdf_path`,
-`pdf_path`, and `source_pdf_path` in the Derived record before rendering.
-Workspace v3 performs those updates atomically. Visual asset `path` values
-remain PNG paths and are never rewritten as PDF paths; visual manifest v1 binds
-to the source PDF by SHA-256 rather than by a mutable path.
-
 Schema and application versions are independent. Data newer than the installed
 reader is rejected; older data requires an explicit migration.
 
 PDFs are version-addressed at
 `80 Attachments/Papers/<year>/<paper_id>/v<version>.pdf`; the Derived pdf-index
 records every hash and the preferred current version.
+
+## Zotero/Core boundary
+
+Zotero is the primary bibliographic, PDF, and Reader-annotation owner.
+PaperFlow's Zotero plugin uses only public object APIs to create or inspect
+Collections, items, attachments, and annotations. It never opens or modifies
+`zotero.sqlite`. PDF bytes cross only the authenticated loopback staging
+protocol; Core verifies offset, PDF magic, size, and SHA-256 before canonical
+storage or analysis.
+
+Core owns immutable AI records, mappings, jobs, and SYSTEM_MANAGED annotation
+mirror JSON. Obsidian receives the canonical AI projection; Zotero receives a
+secondary Markdown attachment through `Zotero.Attachments.importFromFile()`.
+Zotero Reader annotations remain the editable truth, while their Core JSON is
+read-only and rebuildable. Legacy Obsidian Annotation Notes are preserved but
+are not generated for new Zotero annotations.
+
+The loopback API uses short-lived bearer sessions. One valid session can
+create a device pairing: Zotero stores the device secret locally and Core
+stores only its hash. Later Core restarts issue a fresh session through that
+pairing, so long-lived bearer tokens are neither embedded in the plugin nor
+committed to a Workspace.
 
 ## Localized presentation layer
 

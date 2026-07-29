@@ -5,8 +5,10 @@
 class PaperFlowZoteroUi {
   constructor(zotero, options = {}) {
     this.Zotero = zotero;
-    this.pluginID = options.pluginID || "paperflow-zotero";
+    this.pluginID = options.pluginID || "paperflow-zotero@threeyang";
+    this.rootURI = String(options.rootURI || "");
     this.notify = options.notify || (() => {});
+    this.openControlCenter = options.openControlCenter || null;
     this.statusProvider = options.statusProvider || null;
     this.eventPublisher = options.eventPublisher || null;
     this.annotationProvider = options.annotationProvider || null;
@@ -22,6 +24,7 @@ class PaperFlowZoteroUi {
       ["paperflow-reading", "PaperFlow 阅读", "reading"],
       ["paperflow-review", "PaperFlow 复盘", "review"],
       ["paperflow-reproduction", "PaperFlow 复现", "reproduction"],
+      ["paperflow-community", "PaperFlow 社区", "community"],
       ["paperflow-sync", "PaperFlow 同步", "sync"],
     ];
     this.sections = [
@@ -39,6 +42,45 @@ class PaperFlowZoteroUi {
     return value[field] || "—";
   }
 
+  _html(doc, tag) {
+    return typeof doc.createElementNS === "function"
+      ? doc.createElementNS("http://www.w3.org/1999/xhtml", tag)
+      : doc.createElement(tag);
+  }
+
+  _ensureStyles(doc) {
+    if (doc.getElementById?.("paperflow-item-pane-style")) return;
+    const style = this._html(doc, "style");
+    style.id = "paperflow-item-pane-style";
+    style.textContent = `
+      .paperflow-pane-shell{--pf-accent:#65a6ff;--pf-line:color-mix(in srgb,currentColor 16%,transparent);display:grid;gap:14px;padding:4px 2px 12px;color:inherit;font:menu}
+      .paperflow-pane-intro{display:grid;gap:5px;padding:12px 13px;border:1px solid var(--pf-line);border-radius:10px;background:linear-gradient(145deg,color-mix(in srgb,var(--pf-accent) 11%,transparent),transparent 58%)}
+      .paperflow-pane-kicker{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--pf-accent)}
+      .paperflow-pane-title{font-family:"Noto Serif SC","Source Han Serif SC",serif;font-size:18px;font-weight:650;line-height:1.3}
+      .paperflow-pane-subtitle{font-size:11px;line-height:1.45;opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .paperflow-status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+      .paperflow-status-cell{min-width:0;padding:9px 8px;border:1px solid var(--pf-line);border-radius:8px;background:color-mix(in srgb,currentColor 3%,transparent)}
+      .paperflow-status-label{display:block;margin-bottom:3px;font-size:10px;letter-spacing:.08em;opacity:.55}
+      .paperflow-status-value{display:block;font-size:12px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .paperflow-pane-sections{display:grid;gap:6px}
+      .paperflow-pane-section{border:1px solid var(--pf-line);border-radius:8px;overflow:hidden}
+      .paperflow-pane-section summary{padding:8px 10px;cursor:pointer;font-size:12px;font-weight:650;list-style:none}
+      .paperflow-pane-section summary::-webkit-details-marker{display:none}
+      .paperflow-pane-section summary::after{content:"＋";float:right;opacity:.45}
+      .paperflow-pane-section[open] summary::after{content:"—"}
+      .paperflow-pane-section[open] summary{border-bottom:1px solid var(--pf-line)}
+      .paperflow-pane-row{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;font-size:11px}
+      .paperflow-pane-row-label{opacity:.55}
+      .paperflow-pane-row-value{text-align:right;font-weight:600}
+      .paperflow-pane-empty{padding:9px 10px;font-size:11px;opacity:.5}
+      .paperflow-pane-actions{display:flex;align-items:center;gap:8px}
+      .paperflow-pane-primary{appearance:none;border:0;border-radius:7px;padding:7px 11px;background:var(--pf-accent);color:#071426;font:inherit;font-size:11px;font-weight:750;cursor:pointer}
+      .paperflow-pane-primary:hover{filter:brightness(1.08)}
+      .paperflow-pane-hint{font-size:10px;line-height:1.4;opacity:.5}
+    `;
+    (doc.head || doc.documentElement).appendChild(style);
+  }
+
   registerColumns() {
     const manager = this.Zotero && this.Zotero.ItemTreeManager;
     if (!manager || typeof manager.registerColumn !== "function") return false;
@@ -48,6 +90,7 @@ class PaperFlowZoteroUi {
           dataKey,
           label,
           pluginID: this.pluginID,
+          enabledTreeIDs: ["main"],
           dataProvider: (item) => this._value(item && (item.key || item.id), field),
         });
       } catch (error) {
@@ -69,11 +112,27 @@ class PaperFlowZoteroUi {
     const manager = this.Zotero && this.Zotero.ItemPaneManager;
     if (!manager || typeof manager.registerSection !== "function") return false;
     try {
+      const win = this.Zotero?.getMainWindow?.();
+      win?.MozXULElement?.insertFTLIfNeeded?.("paperflow.ftl");
+      const icon = `${this.rootURI}icons/paperflow.svg`;
       manager.registerSection({
         paneID: "paperflow-item-pane",
         pluginID: this.pluginID,
-        header: "PaperFlow",
-        onRender: ({ body, item }) => this.renderPane(body, item),
+        header: {
+          l10nID: "paperflow-item-pane-header",
+          icon,
+        },
+        sidenav: {
+          l10nID: "paperflow-item-pane-header",
+          icon,
+        },
+        onRender: ({ body, item }) => {
+          this.renderPane(body, item);
+          const key = item && (item.key || item.id);
+          if (key) {
+            this.refreshItem(key).then(() => this.renderPane(body, item));
+          }
+        },
       });
       return true;
     } catch (error) {
@@ -86,40 +145,98 @@ class PaperFlowZoteroUi {
     if (!body || !body.ownerDocument) return;
     while (body.firstChild) body.firstChild.remove();
     const doc = body.ownerDocument;
+    this._ensureStyles(doc);
     const key = item && (item.key || item.id);
     const value = this.status.get(String(key)) || {};
-    const title = doc.createElement("div");
-    title.textContent = "PaperFlow";
+    const shell = this._html(doc, "div");
+    shell.className = "paperflow-pane-shell";
+    const intro = this._html(doc, "section");
+    intro.className = "paperflow-pane-intro";
+    const kicker = this._html(doc, "div");
+    kicker.className = "paperflow-pane-kicker";
+    kicker.textContent = "PaperFlow · Research Desk";
+    const title = this._html(doc, "div");
+    title.textContent = "论文工作台";
     title.className = "paperflow-pane-title";
-    body.appendChild(title);
-    for (const [, label, field] of this.columns) {
-      const row = doc.createElement("div");
-      row.className = "paperflow-pane-row";
-      row.textContent = `${label}：${value[field] || "—"}`;
-      body.appendChild(row);
+    const subtitle = this._html(doc, "div");
+    subtitle.className = "paperflow-pane-subtitle";
+    subtitle.textContent = String(item?.getField?.("title") || item?.getDisplayTitle?.() || `Zotero ${key || "未选择条目"}`);
+    intro.append(kicker, title, subtitle);
+    shell.appendChild(intro);
+
+    const grid = this._html(doc, "section");
+    grid.className = "paperflow-status-grid";
+    for (const [label, field, fallback] of [
+      ["AI 分析", "ai", "待分析"],
+      ["阅读", "reading", "未开始"],
+      ["同步", "sync", value.linked ? "已关联" : "待关联"],
+    ]) {
+      const cell = this._html(doc, "div");
+      cell.className = "paperflow-status-cell";
+      const cellLabel = this._html(doc, "span");
+      cellLabel.className = "paperflow-status-label";
+      cellLabel.textContent = label;
+      const cellValue = this._html(doc, "span");
+      cellValue.className = "paperflow-status-value";
+      cellValue.textContent = String(value[field] || fallback);
+      cell.append(cellLabel, cellValue);
+      grid.appendChild(cell);
     }
-    const annotationRow = doc.createElement("div");
-    annotationRow.className = "paperflow-pane-row";
-    annotationRow.textContent = `Zotero 标注镜像：${value.annotation_count ?? "—"}`;
-    body.appendChild(annotationRow);
+    shell.appendChild(grid);
+
+    const sections = this._html(doc, "div");
+    sections.className = "paperflow-pane-sections";
     for (const [label, fields, open] of this.sections) {
-      const details = doc.createElement("details");
+      const details = this._html(doc, "details");
       details.className = "paperflow-pane-section";
       details.open = Boolean(open);
-      const summary = doc.createElement("summary");
+      const summary = this._html(doc, "summary");
       summary.textContent = label;
       details.appendChild(summary);
+      let populated = 0;
       for (const [fieldLabel, field] of fields) {
-        const row = doc.createElement("div");
+        const fieldValue = value[field];
+        if (fieldValue === undefined || fieldValue === null || fieldValue === "") continue;
+        const row = this._html(doc, "div");
         row.className = "paperflow-pane-row";
-        row.textContent = `${fieldLabel}：${value[field] ?? "—"}`;
+        const rowLabel = this._html(doc, "span");
+        rowLabel.className = "paperflow-pane-row-label";
+        rowLabel.textContent = fieldLabel;
+        const rowValue = this._html(doc, "span");
+        rowValue.className = "paperflow-pane-row-value";
+        rowValue.textContent = String(fieldValue);
+        row.append(rowLabel, rowValue);
         details.appendChild(row);
+        populated += 1;
       }
-      body.appendChild(details);
+      if (!populated) {
+        const empty = this._html(doc, "div");
+        empty.className = "paperflow-pane-empty";
+        empty.textContent = "当前条目尚无此类记录";
+        details.appendChild(empty);
+      }
+      sections.appendChild(details);
     }
-    const hint = doc.createElement("small");
-    hint.textContent = value.updated_at ? `更新：${value.updated_at}` : "Core 未返回状态时显示缓存占位";
-    body.appendChild(hint);
+    shell.appendChild(sections);
+
+    const actions = this._html(doc, "div");
+    actions.className = "paperflow-pane-actions";
+    if (this.openControlCenter) {
+      const button = this._html(doc, "button");
+      button.type = "button";
+      button.className = "paperflow-pane-primary";
+      button.textContent = "打开控制中心";
+      button.addEventListener("click", () => this.openControlCenter());
+      actions.appendChild(button);
+    }
+    const hint = this._html(doc, "small");
+    hint.className = "paperflow-pane-hint";
+    hint.textContent = value.updated_at
+      ? `最近更新 ${value.updated_at}`
+      : `标注镜像 ${value.annotation_count ?? 0} · 等待 Core 返回条目状态`;
+    actions.appendChild(hint);
+    shell.appendChild(actions);
+    body.appendChild(shell);
   }
 
   unregisterPane() {
@@ -214,4 +331,4 @@ class PaperFlowZoteroUi {
   }
 }
 
-this.PaperFlowZoteroUi = PaperFlowZoteroUi;
+globalThis.PaperFlowZoteroUi = PaperFlowZoteroUi;

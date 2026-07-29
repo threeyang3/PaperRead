@@ -1,6 +1,6 @@
 # PaperFlow for Zotero
 
-这是 PaperFlow 的 Zotero 7/9 集成。它把 Zotero 条目、Collection 和 Reader 作为主要阅读
+这是 PaperFlow 的 Zotero 9+ 集成。它把 Zotero 条目、Collection 和 Reader 作为主要阅读
 入口，同时把分析任务交给本机 loopback Core，而不是替代 Zotero Reader：
 
 - 只使用 Zotero 公开的 bootstrap、Notifier 和菜单 API；
@@ -9,7 +9,7 @@
 - 事件观察器默认等待 10 秒（可在 Zotero 偏好中用 `extensions.paperflow-zotero.eventDebounceMs` 调整）再发送公开条目字段到已认证的 loopback Core；Core 再决定是否满足 Collection、真实 PDF 和身份条件，插件回调中不会运行 AI；
 - Item Tree 状态列、Item Pane、PaperFlow Collection 和“分析选中论文”菜单均已接入。
 
-插件的“PaperFlow：查看状态”菜单只探测 loopback Core 的 /health，不会把 Zotero 数据发送到公网。论文数据接口仍要求 PaperFlow 会话令牌；令牌只保存于 Zotero 本机偏好设置，不写入插件源码、Vault 或 Zotero 数据库。
+插件的“PaperFlow：查看状态”菜单先探测 loopback Core 的 `/health`，再访问受保护的 job 接口验证会话，不会把 Zotero 数据发送到公网。论文数据接口仍要求每次 Core 启动随机生成的 PaperFlow session token；首次连接还会建立一个本机设备配对。配对密钥只保存于 Zotero 本机偏好设置，Core 只在被忽略的本机 state 中保存其哈希。Core 重启后插件用设备配对自动换取新的 session token，不再要求用户反复复制粘贴。配对密钥和 session token都不写入插件源码或 Zotero 数据库。
 
 在 PaperFlow Core 中先运行：
 
@@ -21,7 +21,9 @@ paperflow zotero service token --vault <vault>
 paperflow zotero service status --vault <vault>
 ```
 
-首次连接：复制 service token 输出的令牌，在 Zotero 条目菜单选择“PaperFlow：连接 Core”，输入 http://127.0.0.1:23140 和令牌。令牌文件位于被忽略的 .paperflow/runtime，停止 Core 后自动删除；不要把令牌提交到 Git 或同步到其他设备。之后可在 Zotero 中选择“PaperFlow：分析选中论文”手动排队分析。自动事件仅携带条目键、附件键、Collection/PDF 存在性和 arXiv/DOI 身份提示，Core 仍会在真正分析前重新校验。
+首次连接：复制 service token 输出的令牌，在 Zotero 条目菜单选择“PaperFlow：连接 Core”，输入 http://127.0.0.1:23140 和令牌。插件会先访问受保护接口验证令牌，再建立设备配对；仅 `/health` 成功不再被视为连接成功。session token 文件位于被忽略的 `.paperflow/runtime`，停止 Core 后自动删除；不要把 token 或配对密钥提交到 Git 或同步到其他设备。完成一次配对后，正常的 Core 重启无需再次手工连接。之后可在 Zotero 中选择“PaperFlow：分析选中论文”手动排队分析。自动事件仅携带条目键、附件键、Collection/PDF 存在性和 arXiv/DOI 身份提示，Core 仍会在真正分析前重新校验。若 canonical paper 已有 `complete` 分析、PDF SHA-256 未变化，且 profile 的 `reanalyze_when` 不是 `always`，Core 会复用既有分析并只排队渲染。
+
+“从 Core 导入论文及 PDF”只负责创建/复用条目、加入 `PaperFlow` Collection、校验并导入 PDF、同步 SHA-256 mapping，然后发布分析事件；AI Markdown 不是导入成功的前置条件。分析或复用渲染作业完成后，插件自动从 Core 的认证 `/zotero/markdown/<paper_uid>` 接口读取 UTF-8 结果，再通过 Zotero 公开的 `Zotero.Attachments.importFromFile()` 创建 Markdown 子附件，并重新同步 mapping。条目菜单中的“附加 AI Markdown”保留为人工恢复动作。Core 不写 Zotero 数据库、不接触 storage 路径。已有同哈希附件会复用；已有不同内容的 Markdown 附件不会被覆盖，而是生成新版本，用户可自行保留或删除。临时文件只位于系统临时目录，导入后立即清理。
 
 如果只使用 Zotero、不启用 Obsidian，可先建立独立 Core 数据根并启动服务：
 
@@ -72,6 +74,11 @@ standalone 的 `data/annotations/zotero/<paper_uid>/`（Vault 模式为
 `SYSTEM_MANAGED` 权限；不要手动编辑这些 JSON。删除的 Zotero 标注只标记 deleted，不会
 删除旧 Obsidian 私有标注。
 
+正常情况下 Notifier 会自动镜像 Reader 标注。若 Core 当时未运行、刚完成配对或需要
+补同步，可选中论文、PDF 或标注并运行“PaperFlow：同步选中论文标注”。插件通过
+`getAttachments()` 与 `getAnnotations()` 公开 API 发现标注，按 key 去重后重新发送；
+不会创建新的旧式 Obsidian Annotation Note，也不会修改 Zotero 标注正文。
+
 可以先用脱敏 fixture 生成映射计划（不会访问 Zotero 数据库）：
 
 ```text
@@ -83,7 +90,7 @@ paperflow zotero link --items-json examples/zotero/items.example.json --vault <v
 
 “同步身份与附件校验”菜单会把选中条目的公开 API 快照发送到已认证的 loopback Core，包含附件键、存储模式和可用 SHA-256，不包含本机路径。Core 校验通过后才写入 mapping；文件复制/链接仍由 Zotero 插件公开附件 API 执行。
 
-发布构建会生成 `PaperFlow-Zotero-1.5.0.xpi`。XPI 使用 Zotero 7+ 的
+发布构建会生成 `PaperFlow-Zotero-1.5.0.xpi`。XPI 使用 Zotero 9+ 的
 `manifest.json`（不是 `install.rdf`），并且 ZIP 成员路径固定为 `/`。但是 Zotero 9
 要求 applications.zotero.update_url、插件 ID 和兼容版本字段完整；缺少 update_url
 时“从文件安装”会报告插件不兼容。当前 XPI 是未签名源码构建包，但在 Zotero 9.0.6
@@ -100,9 +107,11 @@ paperflow zotero link --items-json examples/zotero/items.example.json --vault <v
    `paperflow-zotero@threeyang`，再运行 `paperflow zotero doctor`。
 3. 生产安装可在 Zotero 的“工具 → 插件 → 从文件安装插件”中选择 XPI；若仍提示
    “不兼容”，先确认使用的是重新构建的包（包含 update_url）以及 Zotero 版本在
-   strict_min_version/strict_max_version 范围内。不要编辑 extensions.json、关闭签名
+    strict_min_version/strict_max_version 范围内（当前支持 Zotero 9+，上限为 10.99.99）。不要编辑 extensions.json、关闭签名
    校验或复制 XPI 到主 Profile。
 4. `scripts\zotero-e2e.ps1` 仍保留为人工 XPI/隔离 Profile 流程；它不会修改主
    Profile，并会把安装失败与插件运行时失败分开记录。
 
-本轮没有自动安装到真实主 Profile；真实库仍保持未写入。
+2026-07-28 已在隔离 Zotero 9.0.6 Profile 中以 π0.5 完成 Collection、条目、
+PDF/SHA-256、mapping、分析、AI Markdown、Obsidian 投影和 Reader 标注镜像的真实
+闭环。主 Profile 没有用于该写入验收。

@@ -32,6 +32,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 23140
 SESSION_FILE = "zotero-core-session.json"
 PAIRING_TOKEN_FILE = "zotero-core-session.token"
+PAIRINGS_FILE = "zotero-pairings.json"
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_PDF_CHUNK_BYTES = 768 * 1024
 MAX_PDF_BYTES = 100 * 1024 * 1024
@@ -178,6 +179,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_pdf(self, body: bytes, *, filename: str, sha256: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-PaperFlow-Sha256", sha256)
+        self.send_header("X-PaperFlow-Filename", filename)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(body)
+
     def _auth(self) -> bool:
         value = self.headers.get("Authorization", "")
         token = value.removeprefix("Bearer ").strip()
@@ -220,6 +232,20 @@ class _Handler(BaseHTTPRequestHandler):
             if path.startswith("/papers/"):
                 paper_uid = unquote(path.removeprefix("/papers/"))
                 self._send(200, self.core.paper(paper_uid))
+                return
+            if path.startswith("/zotero/pdf/"):
+                paper_uid = unquote(path.removeprefix("/zotero/pdf/"))
+                pdf = self.core.paper_pdf(paper_uid)
+                self._send_pdf(
+                    pdf["content"],
+                    filename=str(pdf["filename"]),
+                    sha256=str(pdf["sha256"]),
+                )
+                return
+            if path.startswith("/zotero/markdown/"):
+                paper_uid = unquote(path.removeprefix("/zotero/markdown/"))
+                item_key = parse_qs(parsed.query).get("item_key", [""])[0]
+                self._send(200, self.core.ai_markdown(paper_uid, item_key=item_key))
                 return
             if path.startswith("/zotero/items/") and path.endswith("/status"):
                 item_key = unquote(path.removeprefix("/zotero/items/").removesuffix("/status"))
@@ -274,10 +300,16 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(404, {"ok": False, "error": "endpoint not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if path == "/zotero/session/refresh":
+            try:
+                self._send(200, self.core.refresh_session(self._body()))
+            except (OSError, ValueError, json.JSONDecodeError):
+                self._send(401, {"ok": False, "error": "pairing authentication required"})
+            return
         if not self._auth():
             self._send(401, {"ok": False, "error": "authentication required"})
             return
-        path = urlparse(self.path).path.rstrip("/") or "/"
         try:
             if path.startswith("/zotero/staging/"):
                 paper_uid = unquote(path.removeprefix("/zotero/staging/"))
@@ -294,6 +326,9 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._body()
             if path == "/zotero/events":
                 self._send(202, self.core.accept_event(body))
+                return
+            if path == "/zotero/pairings":
+                self._send(201, self.core.create_pairing(body))
                 return
             if path == "/zotero/papers/import":
                 self._send(200, self.core.import_paper(body))
@@ -397,6 +432,85 @@ class PaperFlowCoreService:
 
     def _remove_pairing_token(self) -> None:
         runtime_root(self.root).joinpath(PAIRING_TOKEN_FILE).unlink(missing_ok=True)
+
+    @property
+    def pairings_path(self) -> Path:
+        return state_root(self.root) / PAIRINGS_FILE
+
+    def _read_pairings(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.pairings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"schema_version": 1, "pairings": {}}
+        if not isinstance(value, dict) or not isinstance(value.get("pairings"), dict):
+            return {"schema_version": 1, "pairings": {}}
+        return value
+
+    def _write_pairings(self, value: dict[str, Any]) -> None:
+        PermissionGuard(self.root).authorize(self.pairings_path, "SYSTEM_MANAGED")
+        atomic_json(self.pairings_path, value)
+
+    def create_pairing(self, body: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"client_name"}
+        unknown = sorted(set(body) - allowed)
+        if unknown:
+            raise ValueError(f"unsupported pairing fields: {', '.join(unknown)}")
+        client_name = str(body.get("client_name") or "PaperFlow for Zotero").strip()
+        if not client_name or len(client_name) > 120:
+            raise ValueError("invalid pairing client name")
+        pairing_id = secrets.token_hex(12)
+        pairing_secret = secrets.token_urlsafe(32)
+        value = self._read_pairings()
+        pairings = value.setdefault("pairings", {})
+        if len(pairings) >= 16:
+            oldest = min(
+                pairings,
+                key=lambda key: str(pairings[key].get("created_at") or ""),
+            )
+            pairings.pop(oldest, None)
+        now = iso_beijing()
+        pairings[pairing_id] = {
+            "client_name": client_name,
+            "secret_sha256": hashlib.sha256(pairing_secret.encode("utf-8")).hexdigest(),
+            "created_at": now,
+            "last_used_at": now,
+        }
+        value["updated_at"] = now
+        self._write_pairings(value)
+        return {
+            "ok": True,
+            "pairing_id": pairing_id,
+            "pairing_secret": pairing_secret,
+            "created_at": now,
+        }
+
+    def refresh_session(self, body: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"pairing_id", "pairing_secret"}
+        unknown = sorted(set(body) - allowed)
+        if unknown:
+            raise ValueError(f"unsupported session refresh fields: {', '.join(unknown)}")
+        pairing_id = str(body.get("pairing_id") or "").strip()
+        pairing_secret = str(body.get("pairing_secret") or "").strip()
+        if not pairing_id or not pairing_secret:
+            raise ValueError("pairing credentials are required")
+        value = self._read_pairings()
+        record = value.get("pairings", {}).get(pairing_id)
+        if not isinstance(record, dict):
+            raise ValueError("invalid pairing credentials")
+        actual = hashlib.sha256(pairing_secret.encode("utf-8")).hexdigest()
+        expected = str(record.get("secret_sha256") or "")
+        if not expected or not hmac.compare_digest(actual, expected):
+            raise ValueError("invalid pairing credentials")
+        now = iso_beijing()
+        record["last_used_at"] = now
+        value["updated_at"] = now
+        self._write_pairings(value)
+        return {
+            "ok": True,
+            "session_token": self.token,
+            "issued_at": now,
+            "network_scope": "loopback-only",
+        }
 
     def _start_worker(self) -> None:
         if self.worker and self.worker.is_alive():
@@ -579,11 +693,23 @@ class PaperFlowCoreService:
                 config = load_config(self.root)
                 ensure_layout(config)
                 with FileLock(self.root / ".paperflow/runtime/pipeline.lock"):
-                    value = analyze_uid(config, paper_uid, provider=job.get("provider")) if kind == "analysis" else render_uid(config, paper_uid)
+                    if kind == "analysis":
+                        analysis_value = analyze_uid(
+                            config,
+                            paper_uid,
+                            provider=job.get("provider"),
+                        )
+                        render_value = render_uid(config, paper_uid)
+                        value: Any = {
+                            "analysis": str(analysis_value),
+                            "obsidian_projection": str(render_value),
+                        }
+                    else:
+                        value = render_uid(config, paper_uid)
                     if job.get("target") in {"zotero", "obsidian", "both"}:
                         from paperflow.zotero.markdown import render_ai_projection
                         value = {
-                            "pipeline": str(value),
+                            "pipeline": value,
                             "ai_projection": render_ai_projection(
                                 self.root,
                                 paper_uid,
@@ -676,6 +802,50 @@ class PaperFlowCoreService:
             return {"ok": False, "paper_uid": paper_uid, "status": "not-found"}
         value = json.loads(path.read_text(encoding="utf-8"))
         return {"ok": True, "paper_uid": paper_uid, "paper": value}
+
+    def paper_pdf(self, paper_uid: str) -> dict[str, Any]:
+        """Return one canonical PDF without accepting a caller-supplied path."""
+        paper = self.paper(paper_uid)
+        if not paper.get("ok"):
+            raise FileNotFoundError(f"paper not found: {paper_uid}")
+        record = paper.get("paper") if isinstance(paper.get("paper"), dict) else {}
+        relative = str(record.get("paper_pdf_path") or "").strip()
+        if not relative:
+            raise FileNotFoundError(f"canonical PDF not found: {paper_uid}")
+        target = (self.root / relative).resolve()
+        if not target.is_relative_to(self.root) or target.suffix.casefold() != ".pdf":
+            raise ValueError("canonical PDF path is invalid")
+        if not target.is_file():
+            raise FileNotFoundError(f"canonical PDF not found: {paper_uid}")
+        size = target.stat().st_size
+        if size <= 5 or size > MAX_PDF_BYTES:
+            raise ValueError("canonical PDF is empty or exceeds 100 MB")
+        content = target.read_bytes()
+        if not content.startswith(b"%PDF-"):
+            raise ValueError("canonical document is not a PDF")
+        return {
+            "content": content,
+            "filename": f"{_paper_component(paper_uid)}.pdf",
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    def ai_markdown(self, paper_uid: str, *, item_key: str = "") -> dict[str, Any]:
+        """Return rendered AI Markdown without writing to Zotero or the Vault."""
+        from paperflow.zotero.markdown import _paper_record, build_ai_markdown
+
+        record = _paper_record(self.root, paper_uid)
+        body = build_ai_markdown(record, zotero_item_key=item_key)
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        return {
+            "ok": True,
+            "paper_uid": paper_uid,
+            "item_key": item_key,
+            "content": body,
+            "content_sha256": digest,
+            "filename": f"{_paper_component(paper_uid)}.analysis.md",
+            "artifact_permission": "USER_EDITABLE_PROJECTION",
+        }
 
     def import_paper(self, body: dict[str, Any]) -> dict[str, Any]:
         """Import a PaperMetadata snapshot supplied by the Zotero plugin.
@@ -1228,6 +1398,46 @@ class PaperFlowCoreService:
             raise ValueError(f"unsupported analysis provider: {provider}")
         return {"analysis_profile": profile, "provider": provider, "model": model}
 
+    def _canonical_analysis_reusable(
+        self,
+        paper_uid: str,
+        pdf_sha256: str,
+        analysis_profile: str,
+    ) -> bool:
+        digest = str(pdf_sha256 or "").strip().lower()
+        if not digest:
+            return False
+        target = _paper_path(self.root, paper_uid)
+        try:
+            record = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(record, dict):
+            return False
+        if str(record.get("ai_analysis_status") or "").casefold() != "complete":
+            return False
+        if str(record.get("system_content_hash") or "").strip().lower() != digest:
+            return False
+        policy = "identity-changed"
+        try:
+            from paperflow.workspace import load_workspace_settings
+
+            _, settings = load_workspace_settings(self.root)
+            profile = settings.ai.profiles.get(analysis_profile)
+            if profile is not None:
+                policy = profile.reanalyze_when
+        except (OSError, ValueError, KeyError):
+            pass
+        if policy == "always":
+            return False
+        if policy == "never":
+            return True
+        # A matching PDF digest is the stable content identity used by the
+        # Zotero event contract. Under identity-changed policy, an existing
+        # complete analysis remains authoritative even if it was produced by a
+        # fallback profile.
+        return True
+
     def accept_event(self, body: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "item_key", "event", "item_type", "attachment_keys", "timestamp",
@@ -1241,7 +1451,14 @@ class PaperFlowCoreService:
         if not body.get("event") or not body.get("item_key"):
             raise ValueError("item_key and event are required")
         request = self._resolve_analysis_request(body)
-        pipeline_body = {**body, **request}
+        reusable = False
+        if body.get("paper_uid"):
+            reusable = self._canonical_analysis_reusable(
+                str(body["paper_uid"]),
+                str(body.get("pdf_sha256") or ""),
+                str(request["analysis_profile"]),
+            )
+        pipeline_body = {**body, **request, "analysis_reusable": reusable}
         processor_kwargs: dict[str, Any] = {}
         try:
             from paperflow.workspace import load_workspace_settings
@@ -1260,7 +1477,19 @@ class PaperFlowCoreService:
         pipeline = ZoteroEventProcessor(self.root, **processor_kwargs).handle(pipeline_body)
         _append_event(self.root, "events", {key: body[key] for key in body if key in allowed})
         queued_job = None
-        if pipeline.get("queue_analysis") and body.get("paper_uid"):
+        if pipeline.get("queue_render") and body.get("paper_uid"):
+            queued_job = self.enqueue_job(
+                "render",
+                {
+                    "paper_uid": body["paper_uid"],
+                    "zotero_item_key": body.get("item_key"),
+                    # Vault render_uid is always the canonical Obsidian
+                    # projection. The explicit target requests only the
+                    # secondary Zotero Markdown artifact.
+                    "target": "zotero",
+                },
+            )
+        elif pipeline.get("queue_analysis") and body.get("paper_uid"):
             queued_job = self.enqueue_job(
                 "analysis",
                 {
@@ -1270,6 +1499,7 @@ class PaperFlowCoreService:
                     "model": request["model"],
                     "zotero_item_key": body.get("item_key"),
                     "trigger": "zotero-event",
+                    "target": "zotero",
                 },
             )
         return {"ok": True, "accepted": True, "status": "observed", "pipeline": pipeline, "job": queued_job}
@@ -1488,4 +1718,5 @@ __all__ = [
     "read_pairing_token",
     "SESSION_FILE",
     "PAIRING_TOKEN_FILE",
+    "PAIRINGS_FILE",
 ]
