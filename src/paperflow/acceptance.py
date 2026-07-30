@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,22 @@ def _audit_project_root() -> Path | None:
         direct = metadata.distribution("paperflow").read_text("direct_url.json")
         if direct:
             value = json.loads(direct).get("url", "")
-            if value.startswith("file://"):
-                raw_path = unquote(value.removeprefix("file:///"))
+            parsed = urlparse(value)
+            if parsed.scheme == "file":
+                raw_path = url2pathname(unquote(parsed.path))
+                if os.name == "nt" and parsed.netloc:
+                    raw_path = f"//{parsed.netloc}{raw_path}"
+                elif (
+                    os.name == "nt"
+                    and len(raw_path) >= 3
+                    and raw_path[0] in {"/", "\\"}
+                    and raw_path[2] == ":"
+                ):
+                    raw_path = raw_path[1:]
                 candidate = Path(raw_path).resolve()
-                if (candidate / "pyproject.toml").is_file() and (candidate / "src/paperflow/cli.py").is_file():
+                if (candidate / "pyproject.toml").is_file() and (
+                    candidate / "src/paperflow/cli.py"
+                ).is_file():
                     return candidate
     except Exception:
         pass
