@@ -1,5 +1,8 @@
 # PaperFlow 1.4 用户指南
 
+> 历史文档：不代表 PaperFlow 1.5 当前界面或工作流。当前用户指南见
+> [PaperFlow 用户与维护者指南](../../维护者与用户指南.md)。
+
 PaperFlow 是运行在 Obsidian Vault 中的论文采集、分析、阅读和关系整理工具。定时任务由 `PaperFlow Automation` 插件在 Obsidian 内执行，不依赖 Windows 计划任务。抓取论文、分析论文、配置 Agent、订阅同步、图片修复和维护是彼此独立的功能入口，不是线性流程。
 
 ## 首次使用

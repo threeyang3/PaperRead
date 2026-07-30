@@ -1,4 +1,4 @@
-# Zotero 主阅读工作流差距审计
+# Zotero 主阅读工作流审计
 
 ## 已有能力
 
@@ -23,17 +23,17 @@
   配对密钥保存在 Zotero 本机偏好，Core 只保存其哈希。Core 重启后插件自动换取新
   session token；没有有效配对或 session 时只显示“未连接”，不会降级为公网请求。
 - Zotero-only Core 已可通过 standalone `data-root` 启动，状态、令牌、运行日志和数据不需要 Vault；默认安全 Mock Provider，以及显式配置的 Claude、Codex 和 ChatGPT Web Provider，均通过独立 staged 输入生成 AI Raw/current pointer、Zotero AI Markdown、标注镜像和 Feynman 用户数据，不会误写 Obsidian。ChatGPT Web 仍要求用户显式开启 PDF 上传许可，并复用 Vault 外的专用浏览器配置。
-- Core 任务已持久化到 `state/jobs/*.json`，Zotero UI 可读取最近任务；服务重启会恢复 `queued` 任务。Provider 不可用、登录、验证码或模型菜单异常会以失败/人工接管状态返回，不会静默降级。
+- Core 任务已持久化到 `state/jobs/*.json`，Zotero UI 可读取最新任务；服务重启会恢复 `queued` 任务。Provider 不可用、登录、验证码或模型菜单异常会以失败/人工接管状态返回，不会静默降级。
 - standalone Core 已能把订阅 Feed 的 Raw、AI 和 Community 缓存写入独立数据根，并通过 `/community/publish-plan` 与显式确认的 `/community/publish` 生成经过隐私/哈希校验的本地 outbox；GitHub push 仍不自动执行。
 - standalone 订阅同步已补齐 `Subscription Inbox`：未发现本地 Zotero mapping 的论文进入
   `data/subscriptions/inbox` 并标记 `pending-confirmation`；已关联论文标记 `linked`；
   用户确认导入或拒绝后，`imported`/`dismissed` 状态跨重复刷新保留。Zotero UI 只显示
   脱敏元数据，导入动作由插件公共对象 API 完成，不会自动下载 PDF 或覆盖 Zotero 元数据。
 - Zotero UI 已提供选中标注的社区预览和二次确认发布入口；发布只生成 Core outbox，真实 GitHub push 仍由维护者/用户在独立发布流程中执行。
-- 插件新增 Reader 适配和控制中心：控制中心默认以“收件箱、分析、阅读、订阅、社区”标签呈现高频操作，将连接、刷新和诊断放入“更多”；当前条目的 Reader 工作区聚合 AI 状态、标注、费曼、订阅、社区和最近任务。Core 通过只读 `/zotero/items/{item_key}/workspace`、`/subscriptions/status` 与 `/community/papers/{paper_uid}` 提供摘要，不暴露原始提示、密钥或本地路径。Item Tree 状态列覆盖 AI、阅读、复盘、复现、社区和同步。
+- 插件新增 Reader 适配和控制中心：控制中心默认以“收件箱、分析、阅读、订阅、社区”标签呈现高频操作，将连接、刷新和诊断放入“更多”；当前条目的 Reader 工作区聚合 AI 状态、标注、费曼、订阅、社区和最新任务。Core 通过只读 `/zotero/items/{item_key}/workspace`、`/subscriptions/status` 与 `/community/papers/{paper_uid}` 提供摘要，不暴露原始提示、密钥或本地路径。Item Tree 状态列覆盖 AI、阅读、复盘、复现、社区和同步。
 - Connector 事件现在对 PDF 做两次公开对象快照；只有大小和 SHA-256 一致时才标记 `pdf_stable`，否则保持 `stabilizing`，避免下载尚未完成就排队分析。事件中的 `analysis_profile` 会由 Core 解析为真实 provider，作业同时保留 profile/provider/model provenance。
 
-## 独立 Core CLI 入口（本轮新增）
+## 独立 Core CLI 入口
 
 ### AI Markdown 附件链路
 
@@ -54,7 +54,7 @@ paperflow zotero community --data-root <core-root>
 
 其中 Collection 创建、标注读取和真实 Zotero 写入始终返回 `plugin-required`，必须由 Zotero 插件通过公开对象 API 执行；Core 不打开 `zotero.sqlite`。`analyze-pending --apply` 仅在 standalone Core 中运行已配置 Provider，并写入版本化 AI Raw。
 
-## 本轮审计证据（2026-07-28）
+## 验收证据（2026-07-28）
 
 - 本机 Zotero 9.0.6、单一活动 Profile 和自定义数据目录已被只读探测；Zotero 启动后 Local API 可达，已完成 20 条目只读扫描和 33 篇本地论文 migration plan/dry-run，没有读取或修改 `zotero.sqlite`。
 - 本机 Edge Zotero Connector 已被环境检测识别；PaperFlow 不读取浏览器凭据，Connector 到 Zotero 的导入仍由 Zotero 官方公开对象 API 接收。
@@ -84,8 +84,8 @@ paperflow zotero community --data-root <core-root>
 - 2026-07-27 的无持久化脱敏检测确认主 Profile 已安装并启用
   `paperflow-zotero@threeyang` 1.5.0；Zotero 当时未运行，因此 Local API 不可达，
   未对主 Library 执行 Collection、条目、附件或 Reader 写入。Edge Connector 已安装，
-  但尚未作为 PaperFlow 端到端证据。真实 Collection 与 Reader 回归仍应在独立测试
-  Profile 完成后再做。
+  但尚未作为 PaperFlow 端到端证据。Collection 与 Reader 回归已于 2026-07-28
+  在隔离 Profile 完成，主 Profile 继续保持未写入。
 
 ## 设计决策
 

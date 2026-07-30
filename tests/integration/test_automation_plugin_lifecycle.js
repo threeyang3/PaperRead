@@ -1,9 +1,20 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
+
+const fixtureVaultRoot = fs.mkdtempSync(
+  path.join(os.tmpdir(), "paperflow-automation-vault-")
+);
+fs.mkdirSync(path.join(fixtureVaultRoot, ".paperflow"), { recursive: true });
+fs.writeFileSync(
+  path.join(fixtureVaultRoot, ".paperflow", "workspace.yaml"),
+  "workspace_name: Lifecycle Test\ntimezone: Asia/Shanghai\n",
+  "utf8"
+);
 
 let layoutReady;
 const vaultEvents = [];
@@ -107,7 +118,7 @@ class Plugin {
       vault: {
         adapter: {
           getBasePath() {
-            return process.cwd();
+            return fixtureVaultRoot;
           }
         },
         on(name, callback) {
@@ -243,6 +254,18 @@ async function main() {
   }
   assert.deepEqual(relativeModuleRequests, []);
   assert.equal(typeof AutomationPlugin.__test.openReadingWorkspace, "function");
+  assert.equal(
+    AutomationPlugin.__test.workspaceTimezoneFromYaml(
+      "workspace_name: Test\ntimezone: \"Asia/Tokyo\"\nlanguage: auto\n"
+    ),
+    "Asia/Tokyo"
+  );
+  assert.throws(
+    () => AutomationPlugin.__test.workspaceTimezoneFromYaml(
+      "workspace_name: Test\ntimezone: Mars/Olympus\n"
+    ),
+    /Invalid Workspace timezone/
+  );
 
   const paper = { path: "10 Papers/2025/pi05.md", extension: "md" };
   const pdf = { path: "80 Attachments/Papers/2025/2504.16054/v1.pdf", extension: "pdf" };
@@ -585,6 +608,18 @@ async function main() {
   plugin.runJob = async () => {};
 
   await plugin.onload();
+  assert.equal(plugin.activeChild, null);
+  assert.equal(plugin.activeJob, null);
+  assert.equal(plugin.activeJobStartedAt, "");
+  assert.equal(plugin.activeJobAbortReason, "");
+  assert.equal(typeof plugin.cancelActiveJob, "function");
+  assert.deepEqual(
+    AutomationPlugin.__test.windowsProcessTreeCommand(4321),
+    {
+      command: "taskkill",
+      args: ["/PID", "4321", "/T", "/F"]
+    }
+  );
   const currentPaper = { path: "10 Papers/2607.00001.md", extension: "md" };
   plugin.app.workspace.getActiveFile = () => currentPaper;
   plugin.app.metadataCache.getFileCache = () => ({
@@ -643,6 +678,77 @@ async function main() {
   assert.equal(revealedLeaf.state.active, true);
   assert.equal(plugin.started, true);
   assert.equal(AutomationPlugin.__test.intervalDue("", 60), true);
+
+  const childRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "paperflow-automation-child-")
+  );
+  plugin.runningJob = "timeout-test";
+  const timeoutStarted = Date.now();
+  const timedOut = await plugin.spawnPaperFlow(
+    process.execPath,
+    "",
+    childRoot,
+    ["-e", "setTimeout(() => {}, 60000)"],
+    { action: "timeout-test", timeoutSeconds: 0.1, gracefulMs: 50 }
+  );
+  assert.equal(timedOut.code, 124);
+  assert.equal(timedOut.timedOut, true);
+  assert.ok(Date.now() - timeoutStarted < 5000);
+  assert.equal(plugin.activeChild, null);
+  assert.equal(plugin.settings.runtime.activeJob, null);
+
+  const bounded = await plugin.spawnPaperFlow(
+    process.execPath,
+    "",
+    childRoot,
+    [
+      "-e",
+      "process.stdout.write('token=abcdefghijklmnop\\n' + 'x'.repeat(24000))"
+    ],
+    { action: "bounded-output", timeoutSeconds: 5 }
+  );
+  assert.ok(bounded.stdout.length <= 16000);
+  const fullLog = fs.readFileSync(bounded.logPath, "utf8");
+  assert.match(fullLog, /token=\[REDACTED\]/);
+  assert.ok(fullLog.length > 16000);
+
+  const activePromise = plugin.spawnPaperFlow(
+    process.execPath,
+    "",
+    childRoot,
+    ["-e", "setTimeout(() => {}, 60000)"],
+    { action: "cancel-test", timeoutSeconds: 5, gracefulMs: 50 }
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await assert.rejects(
+    plugin.spawnPaperFlow(
+      process.execPath,
+      "",
+      childRoot,
+      ["-e", "process.exit(0)"],
+      { action: "overlap", timeoutSeconds: 5 }
+    ),
+    /already running/
+  );
+  assert.equal(await plugin.cancelActiveJob("user"), true);
+  const cancelled = await activePromise;
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(cancelled.code, 130);
+  assert.equal(plugin.activeChild, null);
+
+  const unloadPromise = plugin.spawnPaperFlow(
+    process.execPath,
+    "",
+    childRoot,
+    ["-e", "setTimeout(() => {}, 60000)"],
+    { action: "unload-test", timeoutSeconds: 5, gracefulMs: 50 }
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  plugin.onunload();
+  const unloaded = await unloadPromise;
+  assert.equal(unloaded.abortReason, "unload");
+  assert.equal(plugin.activeChild, null);
+
   console.log("PaperFlow Automation lifecycle tests passed");
 }
 

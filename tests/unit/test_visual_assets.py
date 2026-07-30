@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import fitz
 import httpx
+import pytest
 from jsonschema import validate
 
 from paperflow.pipeline.visuals import (
@@ -80,6 +81,107 @@ def test_extract_visual_assets_prefers_architecture_and_writes_manifest(
         ).read_text(encoding="utf-8")
     )
     validate(manifest, schema)
+
+
+def test_visual_extraction_reuses_content_identity_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    kwargs = {
+        "root": tmp_path,
+        "paper_uid": "arxiv:cache-test",
+        "max_assets": 1,
+    }
+    first = extract_visual_assets(
+        pdf,
+        tmp_path / "paper.assets",
+        **kwargs,
+    )
+    assert first
+
+    def unexpected_open(*_args, **_kwargs):
+        raise AssertionError("cached extraction reopened the PDF")
+
+    monkeypatch.setattr("paperflow.pipeline.visuals.fitz.open", unexpected_open)
+    second = extract_visual_assets(
+        pdf,
+        tmp_path / "paper.assets",
+        **kwargs,
+    )
+
+    assert second == first
+    assert list((tmp_path / ".paperflow/cache/visuals").glob("*.json"))
+
+
+def test_visual_cache_repairs_missing_asset(tmp_path: Path) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    asset_dir = tmp_path / "paper.assets"
+    first = extract_visual_assets(
+        pdf,
+        asset_dir,
+        root=tmp_path,
+        paper_uid="arxiv:repair-test",
+        max_assets=1,
+    )
+    missing = tmp_path / first[0]["path"]
+    missing.unlink()
+
+    second = extract_visual_assets(
+        pdf,
+        asset_dir,
+        root=tmp_path,
+        paper_uid="arxiv:repair-test",
+        max_assets=1,
+    )
+
+    assert second == first
+    assert missing.is_file()
+
+
+def test_failed_visual_rebuild_preserves_previous_assets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    asset_dir = tmp_path / "paper.assets"
+    extract_visual_assets(
+        pdf,
+        asset_dir,
+        root=tmp_path,
+        paper_uid="arxiv:preserve-test",
+        max_assets=1,
+    )
+    before = {
+        path.name: path.read_bytes()
+        for path in asset_dir.iterdir()
+        if path.is_file()
+    }
+
+    def fail_selection(*_args, **_kwargs):
+        raise RuntimeError("simulated extractor failure")
+
+    monkeypatch.setattr(
+        "paperflow.pipeline.visuals._select_candidates",
+        fail_selection,
+    )
+    with pytest.raises(RuntimeError, match="simulated extractor failure"):
+        extract_visual_assets(
+            pdf,
+            asset_dir,
+            root=tmp_path,
+            paper_uid="arxiv:preserve-test",
+            max_assets=2,
+        )
+
+    after = {
+        path.name: path.read_bytes()
+        for path in asset_dir.iterdir()
+        if path.is_file()
+    }
+    assert after == before
+    assert not list(tmp_path.glob(".paper.assets.staging-*"))
 
 
 def test_arxiv_html_original_image_is_preferred_over_pdf_crop(tmp_path: Path) -> None:

@@ -1,5 +1,8 @@
 # PaperFlow 1.4 迁移指南
 
+> 历史文档：仅用于维护仍停留在 PaperFlow 1.4 的旧 Workspace。当前安装、
+> 升级和迁移流程请从 [文档导航](../../README.md) 进入。
+
 1. 关闭正在执行的 PaperFlow 作业，等待同步软件稳定。
 2. 检查冲突：`paperflow health`。
 3. 预览：`paperflow migrate workspace-v2 --dry-run`。

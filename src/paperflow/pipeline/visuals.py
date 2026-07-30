@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
+import tempfile
+import uuid
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -12,6 +16,32 @@ import fitz
 import httpx
 
 from paperflow.utils import atomic_json
+from paperflow.utils import sha256_file
+
+
+VISUAL_EXTRACTOR_VERSION = "visuals-v1"
+
+
+def _cached_visual_assets(
+    root: Path,
+    cache_path: Path,
+    identity: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if cached.get("identity") != identity or not isinstance(cached.get("assets"), list):
+        return None
+    for asset in cached["assets"]:
+        try:
+            candidate = (root / str(asset["path"])).resolve()
+            candidate.relative_to(root.resolve())
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not candidate.is_file() or sha256_file(candidate) != asset.get("sha256"):
+            return None
+    return cached["assets"]
 
 
 CAPTION_RE = re.compile(
@@ -460,8 +490,42 @@ def extract_visual_assets(
     if max_assets < 0:
         raise ValueError("max_assets must be non-negative")
     asset_dir = _safe_asset_directory(root, asset_dir)
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    pdf_sha256 = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    asset_dir.parent.mkdir(parents=True, exist_ok=True)
+    pdf_sha256 = sha256_file(pdf_path)
+    identity = {
+        "extractor_version": VISUAL_EXTRACTOR_VERSION,
+        "paper_uid": paper_uid,
+        "pdf_sha256": pdf_sha256,
+        "asset_dir": asset_dir.relative_to(root.resolve()).as_posix(),
+        "max_assets": max_assets,
+        "quality_threshold": quality_threshold,
+        "dpi": dpi,
+        "arxiv_id": arxiv_id,
+        "arxiv_version": arxiv_version,
+    }
+    cache_key = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cache_path = root / ".paperflow/cache/visuals" / f"{cache_key}.json"
+    cached_assets = _cached_visual_assets(root, cache_path, identity)
+    if cached_assets is not None:
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        atomic_json(
+            asset_dir / "manifest.json",
+            {
+                "schema_version": 1,
+                "paper_uid": paper_uid,
+                "pdf_sha256": pdf_sha256,
+                "assets": cached_assets,
+            },
+        )
+        return cached_assets
+    staging_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{asset_dir.name}.staging-",
+            dir=str(asset_dir.parent),
+        )
+    )
     assets: list[dict[str, Any]] = []
     generated_names: set[str] = set()
     html_figures: dict[str, HtmlFigure] = {}
@@ -483,7 +547,7 @@ def extract_visual_assets(
                 page = document[candidate.page_index]
                 safe_number = re.sub(r"[^0-9a-z]+", "-", candidate.figure_number)
                 filename = f"figure-{safe_number}-p{candidate.page_index + 1}.png"
-                target = asset_dir / filename
+                target = staging_dir / filename
                 temporary = target.with_name(f".{target.name}.tmp.png")
                 html_figure = html_figures.get(candidate.figure_number)
                 downloaded = (
@@ -517,37 +581,48 @@ def extract_visual_assets(
                     "kind": candidate.kind,
                     "caption": candidate.caption,
                     "page": candidate.page_index + 1,
-                    "path": target.relative_to(root.resolve()).as_posix(),
+                    "path": (asset_dir / filename)
+                    .relative_to(root.resolve())
+                    .as_posix(),
                     "width": width,
                     "height": height,
-                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                    "sha256": sha256_file(target),
                     "score": round(candidate.score, 2),
                     "source_type": source_type,
                 }
                 if source_url:
                     asset["source_url"] = source_url
                 assets.append(asset)
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
     finally:
         if html_client is not None:
             html_client.close()
-    manifest_path = asset_dir / "manifest.json"
-    if manifest_path.exists():
-        for child in asset_dir.iterdir():
-            if (
-                child.is_file()
-                and GENERATED_IMAGE_RE.fullmatch(child.name)
-                and child.name not in generated_names
-            ):
-                child.unlink()
-    atomic_json(
-        manifest_path,
-        {
-            "schema_version": 1,
-            "paper_uid": paper_uid,
-            "pdf_sha256": pdf_sha256,
-            "assets": assets,
-        },
-    )
+    manifest = {
+        "schema_version": 1,
+        "paper_uid": paper_uid,
+        "pdf_sha256": pdf_sha256,
+        "assets": assets,
+    }
+    try:
+        atomic_json(staging_dir / "manifest.json", manifest)
+        previous = asset_dir.with_name(
+            f".{asset_dir.name}.previous-{uuid.uuid4().hex}"
+        )
+        if asset_dir.exists():
+            asset_dir.replace(previous)
+        try:
+            staging_dir.replace(asset_dir)
+        except Exception:
+            if previous.exists() and not asset_dir.exists():
+                previous.replace(asset_dir)
+            raise
+        shutil.rmtree(previous, ignore_errors=True)
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    atomic_json(cache_path, {"identity": identity, "assets": assets})
     return assets
 
 

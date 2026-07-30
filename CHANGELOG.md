@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- 加固 Public Feed：只枚举 canonical Raw，使用公开正向白名单模型，隔离未知
+  legacy 字段，先在干净 staging 中完成 schema/SHA/身份/隐私验证，并在同步时
+  清理已停用或删除的管理文件而保留 Git 与用户文件。
+- 新增统一版本化 PDF resolver；ChatGPT Web、PDF index 与关键哈希路径不再
+  递归猜测文件名，并对路径、版本、PDF header、大小和 SHA-256 做一致校验。
+- Core job 增加持久化状态、幂等、恢复、取消和诚实停止语义；Obsidian
+  Automation 增加子进程超时、用户取消、卸载清理、Windows 进程树终止及脱敏
+  完整日志。
+- Windows 发布物更名为 `PaperFlow-Offline-Installer`，安装脚本检查 pipx/uv/pip
+  并验证 console script；CI 增加干净环境安装、Ruff、Mypy、覆盖率、依赖审计和
+  locked/latest-compatible 双轨。
+- 新增 Workspace-aware Clock，时间戳接受任意带 offset/Z 的 RFC3339；Feed、
+  每日简报与 Obsidian 调度使用 Workspace 时区。PDF 下载改为流式写入，视觉
+  提取增加内容身份缓存和失败保留，Zotero item status 改用可重建派生索引。
+- 重组项目文档：新增唯一的有序导航入口，将 1.4 文档、阶段性实现快照和已完成
+  审计移入 `docs/archive`；合并重复的安全、Feed、模板集、社区发布和故障排查
+  页面，并把当前 Zotero/Obsidian 双前端边界收敛到唯一主指南。
 - 在隔离 Zotero 9.0.6 Profile 中以 π0.5（`arxiv:2504.16054`）完成
   Collection、条目、PDF/SHA-256、mapping、分析、Zotero AI Markdown、Obsidian
   主投影和 Reader 标注镜像的真实端到端验收；主 Profile 未用于写入测试。

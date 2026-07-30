@@ -14,6 +14,89 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+function windowsProcessTreeCommand(pid) {
+  const value = Number(pid);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("Refusing to terminate an invalid child PID");
+  }
+  return {
+    command: "taskkill",
+    args: ["/PID", String(value), "/T", "/F"]
+  };
+}
+
+function redactAutomationLog(value) {
+  return String(value || "")
+    .replace(
+      /((?:authorization|api[_-]?key|token|cookie|password)\s*[:=]\s*)[^\s"']+/gi,
+      "$1[REDACTED]"
+    );
+}
+
+async function terminateProcessTree(
+  child,
+  {
+    gracefulMs = 1500,
+    force = true,
+    platform = process.platform,
+    spawnImpl = spawn
+  } = {}
+) {
+  if (!child || !Number.isSafeInteger(Number(child.pid)) || Number(child.pid) <= 0) {
+    return { status: "not-running" };
+  }
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { status: "already-exited", pid: Number(child.pid) };
+  }
+  const pid = Number(child.pid);
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // The process may have exited between the state check and signal.
+  }
+  await new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, Math.max(0, Number(gracefulMs) || 0));
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  if (
+    !force ||
+    child.exitCode !== null ||
+    child.signalCode !== null
+  ) {
+    return { status: "terminated", pid };
+  }
+  if (platform === "win32") {
+    const command = windowsProcessTreeCommand(pid);
+    await new Promise((resolve) => {
+      const killer = spawnImpl(command.command, command.args, {
+        shell: false,
+        windowsHide: true,
+        stdio: "ignore"
+      });
+      killer.once("error", resolve);
+      killer.once("close", resolve);
+    });
+  } else {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The child is already gone.
+      }
+    }
+  }
+  return { status: "forced", pid };
+}
+
 function safePaperId(value) {
   const result = String(value || "").replace(":", "_");
   if (!/^[A-Za-z0-9._-]+$/.test(result)) {
@@ -87,7 +170,7 @@ async function openReadingWorkspace(app, options = {}) {
   };
 }
 
-const TIME_ZONE = "Asia/Shanghai";
+const DEFAULT_TIME_ZONE = "Asia/Shanghai";
 const CONTROL_VIEW_TYPE = "paperflow-control-center";
 const PROPERTY_LABEL_STYLE_ID = "paperflow-property-labels-zh";
 const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
@@ -178,17 +261,22 @@ const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
   user_next_review_at: "下次复习时间"
 });
 
-function beijingClock(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(now);
+function workspaceClock(now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(now);
+  } catch (error) {
+    throw new Error(`Invalid Workspace timezone: ${timeZone}`, { cause: error });
+  }
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return {
     date: `${values.year}-${values.month}-${values.day}`,
@@ -204,7 +292,7 @@ function parseLocalTime(value) {
 }
 
 function shouldRunDaily(settings, now = new Date()) {
-  const clock = beijingClock(now);
+  const clock = workspaceClock(now, settings.timezone || DEFAULT_TIME_ZONE);
   return {
     due:
       Boolean(settings.catchUpDailyAfterStartup) &&
@@ -253,6 +341,20 @@ function cleanText(value, label, maximum = 300) {
     throw new Error(`${label}包含无效字符或过长。`);
   }
   return result;
+}
+
+function beijingClock(now = new Date()) {
+  return workspaceClock(now, DEFAULT_TIME_ZONE);
+}
+
+function workspaceTimezoneFromYaml(content) {
+  const match = /^timezone:\s*([^#\r\n]+?)\s*(?:#.*)?$/m.exec(String(content || ""));
+  if (!match) {
+    throw new Error("`.paperflow/workspace.yaml` is missing the top-level timezone");
+  }
+  const timeZone = match[1].trim().replace(/^(["'])(.*)\1$/, "$2");
+  workspaceClock(new Date(0), timeZone);
+  return timeZone;
 }
 
 function boundedMultiline(value, label, maximum = 12000) {
@@ -721,6 +823,18 @@ const DEFAULT_SETTINGS = {
   autoPublishIntervalMinutes: 60,
   updateCheckEnabled: true,
   updateCheckIntervalMinutes: 360,
+  processTerminationGraceMs: 1500,
+  jobTimeoutSeconds: {
+    default: 1800,
+    inbox: 900,
+    daily: 3600,
+    "source-sync": 1800,
+    "publish-auto": 1800,
+    "update-auto": 900,
+    migration: 3600,
+    "visual-extraction": 3600,
+    analysis: 14400
+  },
   pythonExecutable: "python",
   preferVaultPython: true,
   pythonRelativePath: ".paperflow/.venv/Scripts/python.exe",
@@ -770,7 +884,10 @@ const DEFAULT_SETTINGS = {
     lastControlAt: "",
     lastControlAction: "",
     lastControlExitCode: null,
-    lastControlOutput: ""
+    lastControlOutput: "",
+    activeJob: null,
+    lastAbortReason: "",
+    lastAutomationLog: ""
   }
 };
 
@@ -844,6 +961,10 @@ function mergedSettings(value) {
       ...DEFAULT_SETTINGS.runtime,
       ...((value || {}).runtime || {})
     },
+    jobTimeoutSeconds: {
+      ...DEFAULT_SETTINGS.jobTimeoutSeconds,
+      ...((value || {}).jobTimeoutSeconds || {})
+    },
     controlCenter: {
       ...DEFAULT_SETTINGS.controlCenter,
       ...((value || {}).controlCenter || {})
@@ -855,8 +976,19 @@ class PaperFlowAutomationPlugin extends Plugin {
   async onload() {
     this.settings = mergedSettings(await this.loadData());
     await this.loadRuntimeState();
+    await this.loadWorkspaceTimezone();
     this.lastStaticSettings = this.staticSettingsJson();
+    const orphanedJob = this.settings.runtime.activeJob;
     this.runningJob = null;
+    this.activeChild = null;
+    this.activeJob = null;
+    this.activeJobStartedAt = "";
+    this.activeJobAbortReason = "";
+    this.unloading = false;
+    if (orphanedJob) {
+      this.settings.runtime.lastAbortReason = `orphan-recovered:${orphanedJob.action || "unknown"}`;
+      this.settings.runtime.activeJob = null;
+    }
     this.inboxEventTimer = null;
     this.controlSaveTimer = null;
     this.started = false;
@@ -933,6 +1065,15 @@ class PaperFlowAutomationPlugin extends Plugin {
       name: text("显示自动化状态", "Show automation status"),
       callback: () => new Notice(this.statusSummary(), 10000)
     });
+    this.addCommand({
+      id: "cancel-current-job",
+      name: text("取消当前 PaperFlow 任务", "Cancel current PaperFlow job"),
+      checkCallback: (checking) => {
+        const available = Boolean(this.activeChild);
+        if (!checking && available) void this.cancelActiveJob("user");
+        return available;
+      }
+    });
     this.addSettingTab(new PaperFlowAutomationSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(async () => {
@@ -954,6 +1095,7 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   onunload() {
+    this.unloading = true;
     this.started = false;
     this.propertyLabelStyle?.remove();
     this.propertyLabelStyle = null;
@@ -965,8 +1107,13 @@ class PaperFlowAutomationPlugin extends Plugin {
       window.clearTimeout(this.controlSaveTimer);
       this.controlSaveTimer = null;
     }
+    if (this.activeChild) {
+      void this.cancelActiveJob("unload");
+    }
     this.app.workspace.detachLeavesOfType?.(CONTROL_VIEW_TYPE);
-    this.updateStatus(text("PaperFlow 自动化：已停止", "PaperFlow automation: stopped"));
+    if (!this.activeChild) {
+      this.updateStatus(text("PaperFlow 自动化：已停止", "PaperFlow automation: stopped"));
+    }
   }
 
   async openAnnotationModal({ preferSelection = false, requestedFile = null } = {}) {
@@ -1117,7 +1264,8 @@ class PaperFlowAutomationPlugin extends Plugin {
       text("PaperFlow 自动化", "PaperFlow automation"),
       `${text("状态", "Status")}: ${this.settings.enabled ? text("已启用", "enabled") : text("已停用", "disabled")}`,
       `${text("当前作业", "Running")}: ${this.runningJob || text("无", "none")}`,
-      `${text("每日时间", "Daily time")}: ${this.settings.dailyLocalTime} Asia/Shanghai`,
+      `${text("每日时间", "Daily time")}: ${this.settings.dailyLocalTime} ${this.settings.timezone}`,
+      `${text("调度配置", "Scheduler config")}: ${this.schedulerConfigurationError || "OK"}`,
       `${text("Inbox 间隔", "Inbox interval")}: ${this.settings.inboxIntervalMinutes} min`,
       `${text("最近每日运行", "Last daily")}: ${runtime.lastDailyAt || "-"}`,
       `${text("最近 Inbox 运行", "Last Inbox")}: ${runtime.lastInboxAt || "-"}`,
@@ -1137,6 +1285,15 @@ class PaperFlowAutomationPlugin extends Plugin {
     }
     if (!this.settings.enabled) {
       this.updateStatus(text("PaperFlow 自动化：已停用", "PaperFlow automation: disabled"));
+      return;
+    }
+    if (this.schedulerConfigurationError) {
+      const message = text(
+        `PaperFlow 自动化：时区配置错误：${this.schedulerConfigurationError}`,
+        `PaperFlow automation: timezone configuration error: ${this.schedulerConfigurationError}`
+      );
+      this.updateStatus(message);
+      new Notice(message, 12000);
       return;
     }
     await this.writeLocaleMarker();
@@ -1285,8 +1442,9 @@ class PaperFlowAutomationPlugin extends Plugin {
 
     try {
       const result = await this.spawnPaperFlow(python, source, root, jobArguments(kind));
+      if (this.unloading) return;
       const now = new Date();
-      const clock = beijingClock(now);
+      const clock = workspaceClock(now, this.settings.timezone);
       const timestamp = now.toISOString();
       if (kind === "daily") {
         this.settings.runtime.lastDailyDate = clock.date;
@@ -1342,7 +1500,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       if (trigger === "manual") new Notice(message, 12000);
     } finally {
       this.runningJob = null;
-      await this.saveSettings();
+      if (!this.unloading) await this.saveSettings();
     }
   }
 
@@ -1394,6 +1552,7 @@ class PaperFlowAutomationPlugin extends Plugin {
           root,
           ["-m", "paperflow.cli", ...argumentsList]
         );
+        if (this.unloading) return result;
         const detail = (result.stdout || result.stderr || "").trim();
         if (detail) output.push(detail);
         if (result.code !== 0) break;
@@ -1423,17 +1582,78 @@ class PaperFlowAutomationPlugin extends Plugin {
       return { code: -1, stdout: "", stderr: message };
     } finally {
       this.runningJob = null;
-      await this.saveSettings();
-      this.refreshControlCenter();
+      if (!this.unloading) {
+        await this.saveSettings();
+        this.refreshControlCenter();
+      }
     }
   }
 
-  spawnPaperFlow(python, source, root, args) {
+  timeoutForJob(kind = "") {
+    const configured = this.settings.jobTimeoutSeconds || {};
+    const key = String(kind || "default");
+    const value = Number(configured[key] ?? configured.default ?? 1800);
+    return Math.min(24 * 60 * 60, Math.max(1, value));
+  }
+
+  async loadWorkspaceTimezone() {
+    const target = path.resolve(
+      this.vaultRoot(),
+      ".paperflow",
+      "workspace.yaml"
+    );
+    try {
+      this.settings.timezone = workspaceTimezoneFromYaml(
+        await fs.promises.readFile(target, "utf8")
+      );
+      this.schedulerConfigurationError = "";
+    } catch (error) {
+      this.schedulerConfigurationError = String(error?.message || error);
+    }
+  }
+
+  async cancelActiveJob(reason = "user") {
+    const child = this.activeChild;
+    if (!child) return false;
+    this.activeJobAbortReason = String(reason || "user");
+    this.settings.runtime.lastAbortReason = this.activeJobAbortReason;
+    await terminateProcessTree(child, {
+      gracefulMs: this.settings.processTerminationGraceMs,
+      force: true
+    });
+    return true;
+  }
+
+  spawnPaperFlow(python, source, root, args, options = {}) {
     return new Promise((resolve, reject) => {
-      const child = spawn(python, args, {
+      if (
+        this.activeChild &&
+        this.activeChild.exitCode === null &&
+        this.activeChild.signalCode === null
+      ) {
+        reject(new Error("A PaperFlow child process is already running"));
+        return;
+      }
+      const action = String(options.action || this.runningJob || "paperflow");
+      const timeoutSeconds = Number(
+        options.timeoutSeconds ?? this.timeoutForJob(action)
+      );
+      const logDirectory = path.resolve(root, ".paperflow", "logs", "automation");
+      fs.mkdirSync(logDirectory, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const safeAction = action.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const logPath = path.resolve(logDirectory, `${stamp}-${safeAction}.log`);
+      const log = fs.createWriteStream(logPath, {
+        encoding: "utf8",
+        flags: "a"
+      });
+      let child;
+      try {
+        child = spawn(python, args, {
         cwd: root,
         shell: false,
         windowsHide: true,
+        detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
@@ -1441,13 +1661,83 @@ class PaperFlowAutomationPlugin extends Plugin {
           PYTHONUTF8: "1"
         }
       });
+      } catch (error) {
+        log.end();
+        reject(error);
+        return;
+      }
+      this.activeChild = child;
+      this.activeJob = action;
+      this.activeJobStartedAt = new Date().toISOString();
+      this.activeJobAbortReason = "";
+      this.settings.runtime.activeJob = {
+        action,
+        pid: Number(child.pid),
+        started_at: this.activeJobStartedAt,
+        log: path.relative(root, logPath).replaceAll("\\", "/")
+      };
+      this.settings.runtime.lastAutomationLog =
+        path.relative(root, logPath).replaceAll("\\", "/");
       let stdout = "";
       let stderr = "";
       const append = (current, chunk) => (current + chunk.toString("utf8")).slice(-16000);
-      child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk); });
-      child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk); });
-      child.once("error", reject);
-      child.once("close", (code) => resolve({ code: Number(code ?? -1), stdout, stderr }));
+      const writeLog = (streamName, chunk) => {
+        log.write(`[${streamName}] ${redactAutomationLog(chunk.toString("utf8"))}`);
+      };
+      child.stdout.on("data", (chunk) => {
+        stdout = append(stdout, chunk);
+        writeLog("stdout", chunk);
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr = append(stderr, chunk);
+        writeLog("stderr", chunk);
+      });
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled || this.activeChild !== child) return;
+        this.activeJobAbortReason = "timeout";
+        this.settings.runtime.lastAbortReason = "timeout";
+        void terminateProcessTree(child, {
+          gracefulMs: options.gracefulMs ?? this.settings.processTerminationGraceMs,
+          force: true
+        });
+      }, Math.max(1, timeoutSeconds * 1000));
+      const clearActive = () => {
+        clearTimeout(timeout);
+        log.end();
+        if (this.activeChild === child) {
+          this.activeChild = null;
+          this.activeJob = null;
+          this.settings.runtime.activeJob = null;
+        }
+      };
+      child.once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearActive();
+        reject(error);
+      });
+      child.once("close", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        const abortReason = this.activeJobAbortReason;
+        clearActive();
+        const exitCode = abortReason === "timeout"
+          ? 124
+          : abortReason
+            ? 130
+            : Number(code ?? -1);
+        resolve({
+          code: exitCode,
+          stdout,
+          stderr,
+          signal: signal || "",
+          timedOut: abortReason === "timeout",
+          cancelled: Boolean(abortReason) && abortReason !== "timeout",
+          abortReason,
+          logPath
+        });
+      });
     });
   }
 }
@@ -2639,6 +2929,14 @@ class PaperFlowControlCenterView extends ItemView {
     this.runtimeEls.output = body.createEl("pre", {
       cls: "paperflow-output"
     });
+    this.runtimeEls.cancel = body.createEl("button", {
+      text: text("取消当前任务", "Cancel current job"),
+      cls: "paperflow-action"
+    });
+    this.runtimeEls.cancel.addEventListener(
+      "click",
+      () => void this.plugin.cancelActiveJob("user")
+    );
   }
 
   updateRuntime() {
@@ -2660,6 +2958,9 @@ class PaperFlowControlCenterView extends ItemView {
       runtime.lastControlOutput ||
       text("操作输出将在这里显示。", "Command output will appear here.")
     );
+    if (this.runtimeEls.cancel) {
+      this.runtimeEls.cancel.hidden = !this.plugin.activeChild;
+    }
   }
 }
 
@@ -2758,7 +3059,7 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName(text("每日运行时间", "Daily local time"))
-      .setDesc("Asia/Shanghai, HH:mm")
+      .setDesc(`${this.plugin.settings.timezone}, HH:mm（时区来自 Workspace）`)
       .addText((input) => input
         .setValue(this.plugin.settings.dailyLocalTime)
         .onChange(async (value) => {
@@ -2802,5 +3103,10 @@ module.exports.__test = {
   parsePdfAnnotationLink,
   PDF_PLUS_SELECTION_COMMAND,
   safePaperId,
-  text
+  text,
+  workspaceClock,
+  workspaceTimezoneFromYaml,
+  terminateProcessTree,
+  windowsProcessTreeCommand,
+  redactAutomationLog
 };

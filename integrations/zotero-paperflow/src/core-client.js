@@ -254,6 +254,14 @@ class PaperFlowCoreClient {
   job(jobId) {
     return this._request("GET", `/jobs/${encodeURIComponent(String(jobId || ""))}`);
   }
+
+  cancelJob(jobId) {
+    return this._request(
+      "POST",
+      `/jobs/${encodeURIComponent(String(jobId || ""))}/cancel`,
+      {}
+    );
+  }
 }
 
 // Zotero 9 loads plugin sub-scripts in a strict bootstrap sandbox. Export

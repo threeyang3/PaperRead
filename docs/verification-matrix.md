@@ -45,7 +45,7 @@ embeds.
 | Workspace v3 migration and rollback | Pass | Regression coverage includes stale `layer_paths.derived` PDF paths and visual assets. ArxivLearn `migrate verify-workspace-v3` reports `ok=true`, zero missing files, hash mismatches, note-link mismatches, Derived path mismatches, Base errors, and zero modified user-note sections. |
 | Community contribution integrity | Pass | Publisher and subscriber share one canonical JSON `content_sha256` rule. Subscription ingestion rejects a revision whose body or any other hashed payload field was altered, before writing the read-only cache. Privacy/copyright gates remain fail-closed. |
 | Path and Workspace validation | Pass | `paths validate`, `workspace validate`, `health`, migration verification, paper validation, and audit passed in ArxivLearn. Health found no mojibake, missing visual embeds, broken assets, pending reanalysis, or sync conflicts. |
-| Release packaging | Pass | The final build creates wheel, sdist, curated `PaperFlow-portable-1.5.0.zip`, `PaperFlow-Template-Vault-1.5.0.zip`, schema/template ZIPs, checksums, and migration notes. Positive-whitelist audits and four packaging tests exclude papers, PDFs, user notes, runtime state, caches, logs, databases, browser state, and arbitrary `.obsidian` state. |
+| Release packaging | Pass | The final build creates wheel, sdist, `PaperFlow-Offline-Installer-1.5.0.zip`, `PaperFlow-Template-Vault-1.5.0.zip`, schema/template ZIPs, checksums, and migration notes. The Offline Installer contains no Python runtime and does not claim self-contained portability. Positive-whitelist audits exclude papers, PDFs, user notes, runtime state, caches, logs, databases, browser state, and arbitrary `.obsidian` state. |
 | Clean installation | Pass | The fixed 1.5.0 wheel and sdist build successfully; wheel SHA256 is `e745fadac0160ab2e5c2def7ab1c8a791adff92f42c6859155ee54d36f15b8eb`. The wheel was force-reinstalled into ArxivLearn's `.paperflow/.venv`, and Workspace repair installed integration v10. |
 | Automated regression | Pass | All 202 tests in the authoritative repository `tests/` tree and all Zotero JavaScript integration suites pass. Coverage includes four unique reading leaves, PDF focus, PDF++ selection success/fallback, canonical annotation indexing, Zotero pairing/session refresh, PDF staging/import, AI Markdown attachment, direct Zotero 9 annotation properties, manual annotation resync, Workspace v3 repair, rollback, Community tamper rejection, Feed privacy, lifecycle, and scheduling. |
 | Doctor and product audit | Pass | ArxivLearn `doctor --no-network` and `audit` passed. Doctor reports zh-CN, PDF++ 0.40.31, Form Flow, PaperFlow Automation, Obsidian-native scheduling, no sync conflicts, and Windows scheduler independence. Audit passed all listed product, migration, privacy, and packaging gates. |
@@ -54,7 +54,7 @@ embeds.
 ## Portability assessment
 
 PaperFlow's Python application is distributed as a wheel and sdist, while the
-current turnkey portable bundle and Obsidian runtime bootstrap target Windows
+current Offline Installer Bundle and Obsidian runtime bootstrap target Windows
 x64. Moving the Workspace to another Windows machine is supported through the
 documented installer, versioned resources, migration checks, and
 `workspace export-user-data` / `workspace import-user-data`.
@@ -68,7 +68,7 @@ optional when Mock or non-AI workflows are used.
 
 ## Reproduction sequence
 
-1. Install the 1.5.0 wheel or use the PaperFlow portable archive.
+1. Install the 1.5.0 wheel or use the PaperFlow Offline Installer Bundle.
 2. Initialize or import a PaperFlow Workspace and open it in Obsidian Desktop.
 3. Install/enable the versioned Form Flow and PaperFlow Automation resources.
 4. Run `paperflow migrate workspace-v3 --dry-run`, review and apply it, then run
@@ -80,4 +80,3 @@ optional when Mock or non-AI workflows are used.
 No Windows Task Scheduler registration or user `PATH` mutation is required for
 normal automation. Scheduled work runs only while Obsidian Desktop is open and
 catches up after the next launch when configured.
-# PaperFlow 验证矩阵

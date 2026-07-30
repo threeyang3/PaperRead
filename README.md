@@ -227,37 +227,15 @@ CC BY 4.0 and retains source-paper attribution and licence metadata.
 
 ## Documentation
 
-- [用户与维护者中文总指南](docs/维护者与用户指南.md)
-- [PaperFlow 1.5 用户与维护者指南](docs/PaperFlow-1.5-用户与维护者指南.md)
-- [私有标注与评审](docs/annotations-and-reviews.md)
-- [PDF 版本](docs/pdf-versioning.md)
-- [PDF++ 集成](docs/pdf-plus-integration.md)
-- [社区贡献](docs/community-contributions.md)
-- [社区订阅](docs/community-subscriptions.md)
-- [Feed v2](docs/feed-v2.md)
-- [社区隐私与版权](docs/community-privacy-copyright.md)
-- [阅读工作区](docs/reading-workspace.md)
-- [1.5 迁移指南](docs/1.5-migration-guide.md)
-- [PaperFlow 1.4 用户指南](docs/用户指南-1.4.md)
-- [PaperFlow 1.4 维护者指南](docs/维护者指南-1.4.md)
-- [Zotero 本机环境审计](docs/audits/zotero-local-environment-audit.md)
-- [Zotero 主阅读工作流审计](docs/audits/zotero-primary-workflow-audit.md)
-- [Zotero 隔离 Profile 验收](docs/audits/zotero-test-profile.md)
-- [Zotero AI Markdown 投影](docs/zotero-ai-markdown.md)
-- [ChatGPT 网页分析与隐私](docs/ChatGPT网页分析与隐私.md)
-- [Nutstore Sync 兼容建议](docs/Nutstore兼容建议.md)
-- [1.4 迁移指南](docs/1.4迁移指南.md)
-- [Installation](docs/installation/windows.md)
-- [Configuration](docs/configuration.md)
-- [Architecture and data layers](docs/architecture.md)
-- [Migrations](docs/migrations.md)
-- [AI providers](docs/ai-providers.md)
-- [Obsidian integration](docs/obsidian-integration.md)
-- [中文属性显示说明](docs/中文属性显示说明.md)
-- [论文图片处理说明](docs/论文图片处理说明.md)
-- [Obsidian Control Center](docs/control-center.md)
-- [Public Feed](docs/public-feed.md)
-- [Repository separation](docs/repository-separation.md)
-- [Obsidian-native automation](docs/automation.md)
-- [Security and privacy](docs/security.md)
-- [Troubleshooting](docs/troubleshooting.md)
+Start with the ordered [documentation map](docs/README.md). The main current
+documents are:
+
+1. [Getting started](docs/getting-started.md)
+2. [用户与维护者指南](docs/维护者与用户指南.md)
+3. [Zotero 9+ integration](integrations/zotero-paperflow/README.md) or
+   [Obsidian integration](docs/obsidian-integration.md)
+4. [Troubleshooting](docs/troubleshooting.md)
+5. [Verification matrix](docs/verification-matrix.md)
+
+Old-version guides and completed design audits are kept under
+[`docs/archive`](docs/archive/README.md) for historical reference only.

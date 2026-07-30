@@ -14,6 +14,7 @@ from typing import Any, Iterable
 
 from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json, iso_beijing
+from paperflow.zotero.mapping_index import rebuild_mapping_index
 from paperflow.zotero.mapping import match_record
 from paperflow.zotero.store import data_root
 
@@ -152,6 +153,8 @@ def ingest_plugin_results(root: Path, results: dict[str, Any]) -> dict[str, Any]
         path = mapping_root / f"{safe_component(paper_uid.replace(':', '_'))}.json"
         atomic_json(path, mapping)
         written.append(path.relative_to(root).as_posix())
+    if written:
+        rebuild_mapping_index(root)
     return {
         "schema_version": 1,
         "dry_run": False,

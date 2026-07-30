@@ -14,6 +14,7 @@ import os
 import queue
 import secrets
 import threading
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json, iso_beijing
 from paperflow.utils import atomic_write
 from paperflow.zotero.store import data_root, runtime_root, state_root, standalone
+from paperflow.zotero.mapping_index import mapping_for_item
 from paperflow.zotero.events import ZoteroEventProcessor
 from paperflow.security.artifacts import PermissionGuard
 
@@ -38,6 +40,20 @@ MAX_PDF_CHUNK_BYTES = 768 * 1024
 MAX_PDF_BYTES = 100 * 1024 * 1024
 JOB_SCHEMA_VERSION = 1
 JOB_ID_MAX_LENGTH = 160
+
+
+@dataclass(frozen=True)
+class StopResult:
+    status: str
+    active_job: str | None = None
+    process_exit_required: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "active_job": self.active_job,
+            "process_exit_required": self.process_exit_required,
+        }
 
 
 def _json_bytes(value: object) -> bytes:
@@ -311,6 +327,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(401, {"ok": False, "error": "authentication required"})
             return
         try:
+            if path.startswith("/jobs/") and path.endswith("/cancel"):
+                job_id = unquote(
+                    path.removeprefix("/jobs/").removesuffix("/cancel").rstrip("/")
+                )
+                self._send(200, self.core.cancel_job(job_id))
+                return
             if path.startswith("/zotero/staging/"):
                 paper_uid = unquote(path.removeprefix("/zotero/staging/"))
                 self._send(200, self.core.stage_pdf_chunk(
@@ -377,10 +399,14 @@ class PaperFlowCoreService:
         self.thread: threading.Thread | None = None
         self.worker: threading.Thread | None = None
         self.worker_stop = threading.Event()
+        self.active_job_cancel = threading.Event()
         self.jobs: queue.Queue[dict[str, Any]] = queue.Queue()
         self.job_state_lock = threading.RLock()
         self.stage_lock = threading.RLock()
         self.pending_jobs_loaded = False
+        self.active_job_id: str | None = None
+        self.lifecycle_state = "stopped"
+        self.accepting_jobs = True
 
     @property
     def port(self) -> int:
@@ -399,6 +425,8 @@ class PaperFlowCoreService:
             "base_url": self.url,
             "auth": "bearer-token-required-except-health",
             "network_scope": "loopback-only",
+            "status": self.lifecycle_state,
+            "active_job": self.active_job_id,
         }
 
     def _write_session(self) -> Path:
@@ -536,7 +564,20 @@ class PaperFlowCoreService:
                     value = json.loads(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError, json.JSONDecodeError):
                     continue
-                if isinstance(value, dict) and value.get("status") == "queued":
+                if not isinstance(value, dict):
+                    continue
+                if value.get("status") == "running":
+                    value.update(
+                        {
+                            "status": "interrupted",
+                            "finished_at": iso_beijing(),
+                            "updated_at": iso_beijing(),
+                            "error": "Core stopped while this job was running",
+                        }
+                    )
+                    _write_job_state(self.root, value)
+                    continue
+                if value.get("status") == "queued":
                     self.jobs.put({
                         key: value.get(key)
                         for key in (
@@ -561,7 +602,21 @@ class PaperFlowCoreService:
             except queue.Empty:
                 continue
             try:
-                self._run_job(job)
+                try:
+                    state = _read_job_state(
+                        self.root, str(job.get("job_id") or "")
+                    )
+                except FileNotFoundError:
+                    continue
+                if state.get("status") != "queued":
+                    continue
+                self.active_job_id = str(job.get("job_id") or "")
+                self.active_job_cancel.clear()
+                try:
+                    self._run_job(job)
+                finally:
+                    self.active_job_id = None
+                    self.active_job_cancel.clear()
             finally:
                 self.jobs.task_done()
 
@@ -569,6 +624,8 @@ class PaperFlowCoreService:
         job_id = str(job.get("job_id") or "")
         kind = str(job.get("kind") or "")
         paper_uid = str(job.get("paper_uid") or "")
+        self.active_job_id = job_id
+        self.active_job_cancel.clear()
         self._update_job_state(
             job_id,
             status="running",
@@ -723,6 +780,14 @@ class PaperFlowCoreService:
                 result.update({"status": "skipped", "reason": "worker-not-implemented"})
         except Exception as exc:  # worker failures remain observable and do not kill Core
             result.update({"status": "failed", "error": str(exc)})
+        if self.active_job_cancel.is_set():
+            result = {
+                "job_id": job_id,
+                "kind": kind,
+                "paper_uid": paper_uid,
+                "status": "cancelled",
+                "reason": "cancel-requested",
+            }
         persisted_result = result.get("result")
         if persisted_result is None:
             persisted_result = {
@@ -737,10 +802,14 @@ class PaperFlowCoreService:
             result=persisted_result,
         )
         _append_event(self.root, "jobs", result)
+        self.active_job_id = None
+        self.active_job_cancel.clear()
 
     def start(self, *, background: bool = True) -> dict[str, Any]:
         if self.httpd is not None:
             return {**self.health(), "started": False, "status": "already-running"}
+        self.lifecycle_state = "starting"
+        self.accepting_jobs = True
         self.httpd = ThreadingHTTPServer((self.host, self.requested_port), _Handler)
         self.httpd.core = self  # type: ignore[attr-defined]
         session = self._write_session()
@@ -749,6 +818,7 @@ class PaperFlowCoreService:
             self.thread = threading.Thread(target=self.httpd.serve_forever, name="paperflow-core", daemon=True)
             self.thread.start()
         self._start_worker()
+        self.lifecycle_state = "ready"
         return {**self.health(), "started": True, "session_state": session.relative_to(self.root).as_posix()}
 
     def serve_forever(self) -> None:
@@ -758,6 +828,7 @@ class PaperFlowCoreService:
             self._write_session()
             self._write_pairing_token()
             self._start_worker()
+            self.lifecycle_state = "ready"
         try:
             self.httpd.serve_forever()
         finally:
@@ -776,12 +847,33 @@ class PaperFlowCoreService:
                 if value.get("pid") == os.getpid():
                     session.unlink(missing_ok=True)
 
-    def stop(self) -> None:
+    def stop(
+        self,
+        *,
+        wait: bool = True,
+        timeout_seconds: float = 30,
+        force: bool = False,
+    ) -> dict[str, Any]:
         if self.httpd is None:
-            return
+            self.lifecycle_state = "stopped"
+            return StopResult(status="stopped").as_dict()
+        self.lifecycle_state = "stopping"
+        self.accepting_jobs = False
         self.worker_stop.set()
-        if self.worker and self.worker is not threading.current_thread():
-            self.worker.join(timeout=1)
+        if self.active_job_id:
+            self.active_job_cancel.set()
+        if wait and self.worker and self.worker is not threading.current_thread():
+            self.worker.join(timeout=max(0.0, float(timeout_seconds)))
+        if self.worker and self.worker.is_alive():
+            # Python threads cannot be force-killed safely. `force` is kept in
+            # the API so callers can explicitly learn that process exit is
+            # required without the service claiming a false stopped state.
+            self.lifecycle_state = "stopping"
+            return StopResult(
+                status="stopping",
+                active_job=self.active_job_id,
+                process_exit_required=True,
+            ).as_dict()
         self.worker = None
         self.httpd.shutdown()
         self.httpd.server_close()
@@ -795,6 +887,10 @@ class PaperFlowCoreService:
                 value = {}
             if value.get("pid") == os.getpid():
                 session.unlink(missing_ok=True)
+        self.jobs = queue.Queue()
+        self.pending_jobs_loaded = False
+        self.lifecycle_state = "stopped"
+        return StopResult(status="stopped").as_dict()
 
     def paper(self, paper_uid: str) -> dict[str, Any]:
         path = _paper_path(self.root, paper_uid)
@@ -984,26 +1080,13 @@ class PaperFlowCoreService:
     def item_status(self, item_key: str) -> dict[str, Any]:
         if not item_key or len(item_key) > 80 or not item_key.replace("-", "").isalnum():
             raise ValueError("invalid Zotero item key")
-        directory = data_root(self.root) / "connectors/zotero/mappings"
-        for path in sorted(directory.glob("*.json")) if directory.exists() else []:
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if value.get("zotero", {}).get("item_key") == item_key:
-                return {"ok": True, "item_key": item_key, "linked": True, "mapping": value}
+        value = mapping_for_item(self.root, item_key)
+        if value is not None:
+            return {"ok": True, "item_key": item_key, "linked": True, "mapping": value}
         return {"ok": True, "item_key": item_key, "linked": False, "status": "unlinked"}
 
     def _mapping_for_item(self, item_key: str) -> dict[str, Any] | None:
-        directory = data_root(self.root) / "connectors/zotero/mappings"
-        for path in sorted(directory.glob("*.json")) if directory.exists() else []:
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(value, dict) and value.get("zotero", {}).get("item_key") == item_key:
-                return value
-        return None
+        return mapping_for_item(self.root, item_key)
 
     def _analysis_summary(self, paper_uid: str) -> dict[str, Any]:
         """Return a bounded analysis summary without exposing raw prompts or paths."""
@@ -1505,12 +1588,22 @@ class PaperFlowCoreService:
         return {"ok": True, "accepted": True, "status": "observed", "pipeline": pipeline, "job": queued_job}
 
     def enqueue_job(self, kind: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.accepting_jobs:
+            raise ValueError("Core is stopping and does not accept new jobs")
         paper_uid = str(body.get("paper_uid") or "").strip()
         if not paper_uid:
             raise ValueError("paper_uid is required")
         _paper_path(self.root, paper_uid)
-        job_id = f"zotero-{kind}-{secrets.token_hex(8)}"
-        allowed = {"paper_uid", "provider", "model", "analysis_profile", "zotero_item_key", "trigger", "target"}
+        allowed = {
+            "paper_uid",
+            "provider",
+            "model",
+            "analysis_profile",
+            "zotero_item_key",
+            "trigger",
+            "target",
+            "source_content_hash",
+        }
         unknown = sorted(set(body) - allowed)
         if unknown:
             raise ValueError(f"unsupported job fields: {', '.join(unknown)}")
@@ -1521,6 +1614,41 @@ class PaperFlowCoreService:
         provider = str(body.get("provider") or request["provider"] or "")
         model = str(body.get("model") or request["model"] or "")
         analysis_profile = str(body.get("analysis_profile") or request["analysis_profile"] or "full_analysis")
+        source_content_hash = str(body.get("source_content_hash") or "")
+        idempotency_payload = {
+            "kind": kind,
+            "paper_uid": paper_uid,
+            "provider": provider,
+            "model": model,
+            "analysis_profile": analysis_profile,
+            "source_content_hash": source_content_hash,
+            "target": target,
+        }
+        idempotency_key = hashlib.sha256(
+            json.dumps(
+                idempotency_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        with self.job_state_lock:
+            for path in _job_root(self.root).glob("*.json"):
+                try:
+                    existing = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+                if (
+                    existing.get("idempotency_key") == idempotency_key
+                    and existing.get("status") in {"queued", "running"}
+                ):
+                    return {
+                        "ok": True,
+                        "job_id": existing["job_id"],
+                        "status": existing["status"],
+                        "reused": True,
+                    }
+        job_id = f"zotero-{kind}-{secrets.token_hex(8)}"
         job = {
             "schema_version": JOB_SCHEMA_VERSION,
             "job_id": job_id,
@@ -1531,10 +1659,16 @@ class PaperFlowCoreService:
             "analysis_profile": analysis_profile,
             "zotero_item_key": body.get("zotero_item_key"),
             "target": target,
+            "source_content_hash": source_content_hash,
+            "idempotency_key": idempotency_key,
             "created_at": iso_beijing(),
             "updated_at": iso_beijing(),
             "status": "queued",
             "trigger": body.get("trigger", ""),
+            "attempt": 0,
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
         }
         _write_job_state(self.root, job)
         _append_event(self.root, "jobs", {**job, "status": "queued", "trigger": body.get("trigger", "")})
@@ -1543,12 +1677,56 @@ class PaperFlowCoreService:
         # requests can be placed directly on the live queue.
         if self.pending_jobs_loaded:
             self.jobs.put(job)
-        return {"ok": True, "job_id": job_id, "status": "queued"}
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "status": "queued",
+            "reused": False,
+        }
 
     def job(self, job_id: str) -> dict[str, Any]:
         """Return one durable job record for Zotero UI polling."""
 
         return {"ok": True, **_read_job_state(self.root, job_id)}
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel a queued job or request cooperative cancellation of a runner."""
+
+        value = _read_job_state(self.root, job_id)
+        status = str(value.get("status") or "")
+        if status == "queued":
+            updated = self._update_job_state(
+                job_id,
+                status="cancelled",
+                finished_at=iso_beijing(),
+                cancelled_at=iso_beijing(),
+                error=None,
+            )
+            _append_event(
+                self.root,
+                "jobs",
+                {
+                    "job_id": job_id,
+                    "kind": updated.get("kind"),
+                    "paper_uid": updated.get("paper_uid"),
+                    "status": "cancelled",
+                },
+            )
+            return {"ok": True, "job_id": job_id, "status": "cancelled", "cancelled": True}
+        if status == "running":
+            if self.active_job_id == job_id:
+                self.active_job_cancel.set()
+            self._update_job_state(
+                job_id,
+                cancellation_requested_at=iso_beijing(),
+            )
+            return {"ok": True, "job_id": job_id, "status": "running", "cancelled": False}
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "status": status,
+            "cancelled": status == "cancelled",
+        }
 
     def list_jobs(self, *, limit: int = 50) -> dict[str, Any]:
         """Return recent durable jobs without exposing raw paths or prompts."""

@@ -12,7 +12,7 @@ Legacy mixed records are preserved. Known properties are separated into Raw,
 AI, User, and Derived records; unknown properties are retained in
 `extensions`. The migration performs no downloads and makes no AI calls.
 
-# Visual asset migration
+## Visual asset migration
 
 Template bundle v6 removes duplicated metadata and empty generated sections,
 compresses generated whitespace while preserving the user-notes boundary, and
@@ -39,7 +39,7 @@ The legacy `paperflow migrate visual-assets` command remains available when
 only Derived images need to be re-extracted. Customized templates are emitted
 as `.new` merge candidates and are never overwritten.
 
-# Workspace schema 3
+## Workspace schema 3
 
 ```powershell
 paperflow migrate workspace-v3 --dry-run

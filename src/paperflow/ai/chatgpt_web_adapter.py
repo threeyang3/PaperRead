@@ -13,8 +13,9 @@ from paperflow.ai.schema_validation import validate_analysis
 from paperflow.models import Analysis, PaperMetadata
 from paperflow.text_quality import validate_text_quality
 from paperflow.utils import atomic_json, atomic_write, iso_beijing
-from paperflow.zotero.store import runtime_root, state_root, standalone
+from paperflow.zotero.store import runtime_root, state_root
 from paperflow.paths.templates import safe_component
+from paperflow.pdf_resolver import resolve_current_pdf
 from .paths import ai_log_path, prompt_path, schema_path
 
 
@@ -89,14 +90,23 @@ class ChatGPTWebAdapter:
         )
 
     def _paper_pdf(self, metadata: PaperMetadata) -> Path:
-        paper_id = metadata.paper_arxiv_id or safe_component(metadata.paper_uid.replace(":", "_"))
-        roots = [self.root / "80 Attachments/Papers"]
-        if standalone(self.root):
-            roots = [self.root / "documents/zotero"]
-        candidates = [path for root in roots if root.exists() for path in root.rglob(f"{paper_id}.pdf")]
-        if not candidates:
-            raise FileNotFoundError(f"No local PDF found for {metadata.paper_uid}")
-        return candidates[0]
+        record = metadata.model_dump(mode="json")
+        paper_id = metadata.paper_arxiv_id or safe_component(
+            metadata.paper_uid.replace(":", "_")
+        )
+        canonical = self.root / ".paperflow/data/papers" / f"{paper_id}.json"
+        if canonical.is_file():
+            try:
+                record.update(json.loads(canonical.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    f"Canonical paper record is invalid for {metadata.paper_uid}"
+                ) from exc
+        return resolve_current_pdf(
+            self.root,
+            metadata.paper_uid,
+            record=record,
+        ).path
 
     def analyze(self, metadata: PaperMetadata, text_path: Path) -> Analysis:
         if not self.allow_pdf_upload:

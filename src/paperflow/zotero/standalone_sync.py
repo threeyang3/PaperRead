@@ -27,6 +27,7 @@ from paperflow.feed.subscriber import _acquire, _sha256
 from paperflow.security.artifacts import PermissionGuard
 from paperflow.versioning import check_reader_version
 from paperflow.zotero.store import data_root
+from paperflow.zotero.mapping_index import mapping_for_paper
 from paperflow.utils import atomic_json, iso_beijing
 
 
@@ -91,15 +92,8 @@ def _download_pdf(root: Path, item: dict[str, Any]) -> bool:
 
 
 def _zotero_mapping_exists(root: Path, paper_uid: str) -> bool:
-    mapping_root = data_root(root) / "connectors/zotero/mappings"
-    for path in sorted(mapping_root.glob("*.json")) if mapping_root.is_dir() else []:
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(value, dict) and value.get("paper_uid") == paper_uid:
-            return bool((value.get("zotero") or {}).get("item_key"))
-    return False
+    value = mapping_for_paper(root, paper_uid)
+    return bool(value and (value.get("zotero") or {}).get("item_key"))
 
 
 def _update_subscription_inbox(

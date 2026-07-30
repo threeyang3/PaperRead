@@ -4,6 +4,8 @@ from datetime import date, datetime
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from paperflow.clock import parse_aware_datetime
+
 
 class PaperMetadata(BaseModel):
     paper_uid: str
@@ -99,9 +101,10 @@ class ImportRequest(BaseModel):
             return value.isoformat()
         return value
 
-    @field_validator("created_at")
+    @field_validator("created_at", "processed_at")
     @classmethod
-    def timezone_required(cls, value: str) -> str:
-        if not value.endswith("+08:00"):
-            raise ValueError("created_at must include +08:00")
+    def timezone_required(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parse_aware_datetime(value)
         return value

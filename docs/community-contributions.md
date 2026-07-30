@@ -36,3 +36,17 @@ Feed 订阅启用 `community` capability 后，会把通过哈希和隐私校验
 `.paperflow/data/ai`，社区贡献只读取显式 outbox。用户随后编辑论文 Markdown、
 私有标注或 Review，都不会改变已经生成的公开快照；要发布修改必须显式创建
 新 revision。
+
+## GitHub 提交流程
+
+默认远程流程是 fork → 专用 branch → pull request，不向上游 `main`
+force-push，也不在 Workspace 保存 PAT。提交前必须依次完成：
+
+1. 显式选择私有内容并生成不可变快照；
+2. 展示发布预览；
+3. 校验隐私、版权、Schema、内容哈希和目标 PDF hash；
+4. 写入本地 outbox 并生成 PR tree/diff；
+5. 用户再次授权后才允许网络提交。
+
+`paperflow community publish submit-pr` 当前只生成计划；ArXiv-data CI 会再次
+验证身份目录、Schema、哈希、HTML/URI、文件类型、大小和引用上限。

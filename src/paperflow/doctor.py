@@ -9,9 +9,13 @@ import subprocess
 import sys
 from pathlib import Path
 from paperflow.config import Config
-from paperflow.utils import iso_beijing
+from paperflow.clock import WorkspaceClock
+from paperflow._version import __version__
 from paperflow.ai.providers import make_provider
 from paperflow.sync_safety import find_sync_conflicts
+from paperflow.pdf_resolver import resolve_current_pdf
+from paperflow.zotero.mapping_index import diagnose_mapping_index
+from paperflow.zotero.store import runtime_root, state_root
 
 
 def _command(
@@ -45,11 +49,24 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             ".paperflow/workspace.yaml",
         )
     )
-    try:
-        probe = root / ".paperflow/runtime/.doctor-write"; probe.parent.mkdir(parents=True, exist_ok=True); probe.write_text("ok"); probe.unlink(); writable = True
-    except Exception: writable = False
+    writable = os.access(root, os.W_OK)
     checks.append(("Write permission", writable, str(root)))
     checks.append(("Python", sys.version_info >= (3, 11), sys.version.split()[0]))
+    checks.append(("PaperFlow module", True, str(Path(__file__).resolve().parent)))
+    checks.append(
+        (
+            "Console script",
+            bool(shutil.which("paperflow")),
+            shutil.which("paperflow") or "not found on PATH",
+        )
+    )
+    checks.append(
+        (
+            "Virtual environment",
+            sys.prefix != sys.base_prefix,
+            f"prefix={sys.prefix}; base={sys.base_prefix}",
+        )
+    )
     private_python = next(
         (
             candidate
@@ -69,7 +86,32 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             runtime or sys.prefix,
         )
     )
-    checks.append(("Configuration", cfg.data["vault"]["timezone"] == "Asia/Shanghai", f"timezone={cfg.data['vault']['timezone']}"))
+    orphan_job = None
+    try:
+        clock = WorkspaceClock(cfg.timezone.key)
+        current_time = clock.iso_now()
+        timezone_ok = True
+    except Exception as exc:
+        current_time = str(exc)
+        timezone_ok = False
+    checks.append(("Configuration", timezone_ok, f"timezone={cfg.data['vault']['timezone']}"))
+    checks.append(("Workspace time", timezone_ok, current_time))
+    if cfg.workspace:
+        checks.append(
+            (
+                "Workspace schema",
+                cfg.workspace.versions.workspace == 3,
+                f"version={cfg.workspace.versions.workspace}",
+            )
+        )
+    pipeline_lock = root / ".paperflow/runtime/pipeline.lock"
+    checks.append(
+        (
+            "Pipeline lock",
+            not pipeline_lock.exists(),
+            str(pipeline_lock) if pipeline_lock.exists() else "not held",
+        )
+    )
     checks.append(("UI locale", cfg.ui_locale.locale in {"zh-CN", "en"}, f"{cfg.ui_locale.locale} ({cfg.ui_locale.source})"))
     try: sqlite3.connect(root / ".paperflow/state/paperflow.db").execute("select 1"); sqlite_ok = True
     except Exception: sqlite_ok = False
@@ -177,6 +219,7 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             automation.get("enabled") is True
             and automation.get("dailyLocalTime") == expected_daily
             and automation.get("inboxIntervalMinutes") == expected_interval
+            and automation.get("timezone", cfg.timezone.key) == cfg.timezone.key
         )
         runtime_path = root / ".paperflow/runtime/plugin-state.json"
         runtime = (
@@ -185,13 +228,27 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             else {}
         )
         inbox_ok = runtime.get("lastInboxExitCode") == 0
-        automation_detail = f"daily={automation.get('dailyLocalTime')}; inbox={automation.get('inboxIntervalMinutes')}m"
+        automation_detail = (
+            f"daily={automation.get('dailyLocalTime')}; "
+            f"timezone={automation.get('timezone')}; "
+            f"inbox={automation.get('inboxIntervalMinutes')}m"
+        )
         inbox_detail = f"{runtime.get('lastInboxAt')}; exit={runtime.get('lastInboxExitCode')}"
+        orphan_job = runtime.get("activeJob")
     except Exception as exc:
         automation_ok = inbox_ok = False
         automation_detail = inbox_detail = str(exc)
     checks.append(("Obsidian automation schedule", automation_ok, automation_detail))
     checks.append(("Obsidian automation last Inbox", inbox_ok, inbox_detail))
+    checks.append(
+        (
+            "Obsidian orphan job",
+            not bool(orphan_job),
+            json.dumps(orphan_job, ensure_ascii=False)
+            if orphan_job
+            else "none",
+        )
+    )
     checks.append(
         (
             "Windows scheduler independence",
@@ -218,7 +275,50 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
     checks.append(("Latest daily status", True, briefs[0].name if briefs else "no daily run recorded"))
     inbox_logs = sorted((root / ".paperflow/logs").glob("inbox-*.log"), reverse=True)
     checks.append(("Latest inbox status", True, inbox_logs[0].name if inbox_logs else "no inbox run recorded"))
-    checks.append(("Current Beijing time", iso_beijing().endswith("+08:00"), iso_beijing()))
+    pdf_indexes = sorted(
+        (root / ".paperflow/data/derived/pdf-index").glob("*.json")
+    )
+    pdf_issues: list[str] = []
+    for index in pdf_indexes:
+        try:
+            value = json.loads(index.read_text(encoding="utf-8"))
+            resolve_current_pdf(root, str(value["paper_uid"]))
+        except Exception as exc:
+            pdf_issues.append(f"{index.name}: {exc}")
+    checks.append(
+        (
+            "PDF indexes",
+            not pdf_issues,
+            f"count={len(pdf_indexes)}; issues={len(pdf_issues)}"
+            + (f"; first={pdf_issues[0]}" if pdf_issues else ""),
+        )
+    )
+    mapping_index = diagnose_mapping_index(root)
+    checks.append(
+        (
+            "Zotero mapping index",
+            bool(mapping_index.get("ok")),
+            json.dumps(mapping_index, ensure_ascii=False, sort_keys=True),
+        )
+    )
+    session_path = state_root(root) / "zotero-core-session.json"
+    pairing_path = runtime_root(root) / "zotero-core-session.token"
+    try:
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        session_pid = int(session.get("pid") or 0)
+        session_detail = f"pid={session_pid}; port={session.get('port')}"
+        session_ok = session_pid > 0
+    except Exception as exc:
+        session_ok = False
+        session_detail = f"not active: {exc}"
+    checks.append(("Zotero Core session", session_ok, session_detail))
+    checks.append(
+        (
+            "Zotero pairing token",
+            pairing_path.is_file(),
+            str(pairing_path) if pairing_path.is_file() else "not present",
+        )
+    )
     conflicts = find_sync_conflicts(root)
     checks.append(
         (

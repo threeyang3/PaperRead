@@ -12,7 +12,10 @@ Contributions, per-paper manifests, profiles, and retractions. Feed v1 remains
 readable as a source without community capability.
 
 Annotation schema 1 and Review schema 1 are private User protocols. Community
-schema 1 is separate and never reuses private JSON directly.
+schema 1 is separate and never reuses private JSON directly. Zotero Reader
+annotations do not use Annotation schema 1 as their editable store; Core
+projects them into separate SYSTEM_MANAGED mirror JSON keyed by paper UID and
+Zotero annotation key.
 
 Visual assets are Derived data nested under `extraction.visual_assets` in the
 legacy projection and in the Derived record. Each PDF has an adjacent

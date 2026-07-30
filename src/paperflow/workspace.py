@@ -9,7 +9,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from ruamel.yaml import YAML
@@ -375,7 +375,10 @@ class WorkspaceSettings(StrictModel):
     @field_validator("timezone")
     @classmethod
     def timezone_required(cls, value: str) -> str:
-        ZoneInfo(value)
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA timezone: {value}") from exc
         return value
 
 
@@ -831,6 +834,7 @@ def _install_automation_plugin(
             (bundle / "default-data.json").read_text(encoding="utf-8")
         )
         default_data["dailyLocalTime"] = settings.obsidian.daily_local_time
+        default_data["timezone"] = settings.timezone
         default_data[
             "inboxIntervalMinutes"
         ] = settings.obsidian.inbox_interval_minutes

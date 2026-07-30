@@ -2,7 +2,8 @@
 
 Five operations are deliberately separate:
 
-1. **Upgrade the application** with pipx, uv, pip, or a new portable package.
+1. **Upgrade the application** with pipx, uv, pip, or the wheel inside a new
+   Offline Installer Bundle.
 2. **Upgrade the Workspace** with `paperflow update workspace` after reviewing
    `paperflow migrate plan`.
 3. **Sync public paper data** with `paperflow source sync`.

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
-from paperflow.utils import atomic_json, iso_beijing
+from paperflow.utils import atomic_json, iso_beijing, sha256_file
 
 
 def build_pdf_index(vault: Path, paper_uid: str, versions: list[dict[str, Any]],
@@ -18,7 +17,7 @@ def build_pdf_index(vault: Path, paper_uid: str, versions: list[dict[str, Any]],
         normalized.append({
             "version": int(item["version"]),
             "path": path.relative_to(vault).as_posix(),
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "sha256": sha256_file(path),
             "size": path.stat().st_size,
         })
     if current_version not in {item["version"] for item in normalized}:

@@ -1216,6 +1216,21 @@ def ai_test(
     provider = make_provider(
         selected.provider, root, settings.ai.providers[selected.provider]
     )
+    provider.validate_config()
+    typer.echo(
+        json.dumps(
+            {
+                "selection": explain_profile(
+                    profile, settings.ai.profiles, settings.ai.providers
+                ),
+                "capability": provider.check_available().__dict__,
+                "credentials_read": False,
+                "paper_content_sent": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 @ai_app.command("configure")
@@ -1273,23 +1288,6 @@ def ai_configure(
             ensure_ascii=False,
         )
     )
-    provider.validate_config()
-    typer.echo(
-        json.dumps(
-            {
-                "selection": explain_profile(
-                    profile, settings.ai.profiles, settings.ai.providers
-                ),
-                "capability": provider.check_available().__dict__,
-                "credentials_read": False,
-                "paper_content_sent": False,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-
-
 @ai_app.command("explain-selection")
 def ai_explain_selection(
     paper_uid: str,
@@ -1802,9 +1800,13 @@ def publish_snapshot(
     vault: Path | None = typer.Option(None, "--vault"),
 ):
     root = _root(vault)
+    _, settings = load_workspace_settings(root)
     typer.echo(
         json.dumps(
-            create_snapshot(_feed_output(root, output)),
+            create_snapshot(
+                _feed_output(root, output),
+                timezone_name=settings.timezone,
+            ),
             ensure_ascii=False,
             indent=2,
         )

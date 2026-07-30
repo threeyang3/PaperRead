@@ -2,11 +2,12 @@ from __future__ import annotations
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from paperflow.config import Config
-from paperflow.utils import atomic_write, now_beijing
+from paperflow.clock import WorkspaceClock
+from paperflow.utils import atomic_write
 
 
 def write_daily_brief(cfg: Config, run_id: str, stats: dict, papers: list[dict], errors: list[str]) -> Path:
-    now = now_beijing()
+    now = WorkspaceClock(cfg.timezone.key).now()
     env = Environment(loader=FileSystemLoader(cfg.root / "90 System/Templates"), autoescape=False)
     defaults = {"candidates": 0, "rule_filtered": 0, "ai_filtered": 0, "imported": 0, "existing": 0, "updated": 0, "manual": 0, "failed": 0, "manual_review": 0}
     defaults.update(stats)

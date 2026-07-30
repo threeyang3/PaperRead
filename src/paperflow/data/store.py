@@ -92,6 +92,21 @@ def persist_layer_records(
     derived_path = root / ".paperflow/data/derived" / f"{paper_id}.json"
     raw_value = raw.model_dump(mode="json")
     validate_text_quality(raw_value, label="raw")
+    if raw.extensions:
+        quarantine_path = (
+            root
+            / ".paperflow/data/quarantine/legacy-fields"
+            / f"{paper_id}.json"
+        )
+        atomic_json(
+            quarantine_path,
+            {
+                "schema_version": 1,
+                "paper_uid": raw.paper_uid,
+                "reason": "unknown legacy fields require classification",
+                "fields": raw.extensions,
+            },
+        )
     if ai is not None:
         validate_text_quality(ai.model_dump(mode="json"), label="ai")
     selected_raw_path = raw_path

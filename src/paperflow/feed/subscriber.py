@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,10 +12,13 @@ from urllib.parse import unquote, urlparse
 
 from ruamel.yaml import YAML
 import httpx
+import fitz
 
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
 from paperflow.versioning import check_reader_version
 from paperflow.sync_safety import assert_no_sync_conflicts
+
+MAX_LINKED_PDF_BYTES = 100 * 1024 * 1024
 
 
 def _sha256(path: Path) -> str:
@@ -244,24 +248,56 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".tmp")
+    temporary.unlink(missing_ok=True)
     digest = hashlib.sha256()
     size = 0
+    header = bytearray()
+    maximum_size = MAX_LINKED_PDF_BYTES
+    expected_size = pdf.get("expected_size")
+    if expected_size is not None and int(expected_size) > maximum_size:
+        raise ValueError(
+            f"Refusing PDF larger than {maximum_size} bytes: {source_url}"
+        )
     with httpx.stream(
         "GET", source_url, timeout=60, follow_redirects=True
     ) as response:
         response.raise_for_status()
-        with temporary.open("wb") as output:
-            for chunk in response.iter_bytes():
-                digest.update(chunk)
-                size += len(chunk)
-                output.write(chunk)
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > maximum_size:
+            raise ValueError(
+                f"Refusing PDF larger than {maximum_size} bytes: {source_url}"
+            )
+        try:
+            with temporary.open("xb") as output:
+                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    if len(header) < 5:
+                        header.extend(chunk[: 5 - len(header)])
+                    digest.update(chunk)
+                    size += len(chunk)
+                    if size > maximum_size:
+                        raise ValueError(
+                            f"Downloaded PDF exceeds {maximum_size} bytes: {source_url}"
+                        )
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
     try:
-        if temporary.read_bytes()[:5] != b"%PDF-":
+        if bytes(header) != b"%PDF-":
             raise ValueError(f"Downloaded file is not a PDF: {source_url}")
+        try:
+            with fitz.open(filename=temporary, filetype="pdf") as document:
+                if document.page_count < 1:
+                    raise ValueError("PDF has no pages")
+        except Exception as exc:
+            raise ValueError(f"Downloaded PDF is structurally invalid: {source_url}") from exc
         expected = str(pdf.get("expected_sha256") or "")
         if expected and digest.hexdigest() != expected:
             raise ValueError(f"Downloaded PDF checksum mismatch: {source_url}")
-        expected_size = pdf.get("expected_size")
         if expected_size is not None and size != int(expected_size):
             raise ValueError(f"Downloaded PDF size mismatch: {source_url}")
         temporary.replace(target)

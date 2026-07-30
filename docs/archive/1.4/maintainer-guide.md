@@ -1,5 +1,8 @@
 # PaperFlow 1.4 维护者指南
 
+> 历史文档：保留用于旧版本维护。当前开发、测试与发布契约见
+> [PaperFlow 用户与维护者指南](../../维护者与用户指南.md#维护者指南)。
+
 ## 仓库边界
 
 - `PaperRead`：MIT 许可的软件源码、测试、schemas、migrations、prompts、模板、Obsidian 集成和文档。

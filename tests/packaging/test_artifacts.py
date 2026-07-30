@@ -22,7 +22,7 @@ def test_fixed_release_artifacts_and_checksums() -> None:
     required = {
         f"paperflow-{VERSION}-py3-none-any.whl",
         f"paperflow-{VERSION}.tar.gz",
-        f"PaperFlow-portable-{VERSION}.zip",
+        f"PaperFlow-Offline-Installer-{VERSION}.zip",
         f"PaperFlow-Template-Vault-{VERSION}.zip",
         f"schemas-{VERSION}.zip",
         f"templates-{VERSION}.zip",
@@ -81,9 +81,9 @@ def test_archives_have_product_resources_and_no_current_vault_data() -> None:
     ]
 
 
-def test_portable_contains_installer_examples_and_no_user_data() -> None:
-    portable = DIST / f"PaperFlow-portable-{VERSION}.zip"
-    with zipfile.ZipFile(portable) as archive:
+def test_offline_installer_contains_resources_and_no_user_data() -> None:
+    offline = DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip"
+    with zipfile.ZipFile(offline) as archive:
         names = archive.namelist()
     assert any(name.endswith("/install.ps1") for name in names)
     assert any(name.endswith("/uninstall.ps1") for name in names)

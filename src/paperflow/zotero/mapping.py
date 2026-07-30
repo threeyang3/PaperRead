@@ -17,6 +17,7 @@ from typing import Any, Iterable
 from paperflow.paths.templates import safe_component
 from paperflow.utils import atomic_json, iso_beijing
 from paperflow.zotero.store import data_root
+from paperflow.zotero.mapping_index import rebuild_mapping_index
 
 
 ARXIV_RE = re.compile(r"(?:arxiv\s*:\s*)?(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
@@ -195,6 +196,8 @@ def apply_links(root: Path, plan: dict[str, Any]) -> dict[str, Any]:
             },
         )
         mappings.append(path.relative_to(root).as_posix())
+    if mappings:
+        rebuild_mapping_index(root)
     return {
         **plan,
         "dry_run": False,

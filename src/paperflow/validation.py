@@ -7,6 +7,7 @@ from ruamel.yaml import YAML
 from paperflow.obsidian.bases import validate_bases
 from paperflow.obsidian.artifacts import has_external_user_note
 from paperflow.obsidian.frontmatter import read_note
+from paperflow.clock import parse_aware_datetime
 
 READING = {"inbox", "queued", "skimming", "reading", "read", "archived", "rejected"}
 LEARNING = {"none", "understanding", "reviewing", "reproducing", "mastered"}
@@ -139,7 +140,11 @@ def validate_all(root: Path) -> list[str]:
                 if not isinstance(frontmatter.get(field), (int, float)) or isinstance(frontmatter.get(field), bool): errors.append(f"{path}: {field} must be numeric")
             for field in ["ai_analyzed_at", "system_imported_at", "system_last_synced_at"]:
                 value = frontmatter.get(field)
-                if value is not None and value != "" and not str(value).endswith("+08:00"): errors.append(f"{path}: {field} must include +08:00")
+                if value is not None and value != "":
+                    try:
+                        parse_aware_datetime(value, field=field)
+                    except ValueError as exc:
+                        errors.append(f"{path}: {exc}")
         except Exception as exc: errors.append(f"{path}: {exc}")
     request_folders = [root / "50 Inbox/Paper Requests", root / "50 Inbox/Processed Requests", root / "50 Inbox/Failed Imports"]
     for folder in request_folders:

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import respx
 import httpx
+import fitz
 import zstandard
 
 from paperflow.data.records import (
@@ -512,7 +513,10 @@ def test_tampered_feed_and_malicious_manifest_path_are_rejected(
 
 @respx.mock
 def test_linked_pdf_download_validates_header_and_hash(tmp_path: Path) -> None:
-    content = b"%PDF-1.7\nsynthetic"
+    document = fitz.open()
+    document.new_page()
+    content = document.tobytes()
+    document.close()
     digest = __import__("hashlib").sha256(content).hexdigest()
     respx.get("https://example.test/paper.pdf").mock(
         return_value=httpx.Response(200, content=content)

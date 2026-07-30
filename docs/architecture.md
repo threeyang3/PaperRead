@@ -17,9 +17,11 @@ Vault projections, Public Feed, and local User Data.
 - **Subscription Cache**: validated read-only remote revisions and retractions;
   it never writes User Annotation, Review, `user_*`, or AI.
 
-User data separates paper state, Annotation, and Review. Annotation Markdown is
-the editable truth; JSON is rebuildable. Anchors bind to an immutable PDF
-version/hash and retain revision history during reanchoring.
+User data separates paper state, Annotation, and Review. In Obsidian/PDF++
+compatibility mode, Annotation Markdown is the editable truth and its JSON is
+rebuildable. In Zotero primary mode, the Zotero Reader object is the editable
+truth and Core stores only a SYSTEM_MANAGED mirror. Anchors bind to an
+immutable PDF version/hash and retain revision history during reanchoring.
 
 Caption-backed visual assets are also Derived. The extractor ranks
 architecture/framework/overview/pipeline figures, renders bounded PDF page
