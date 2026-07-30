@@ -3,12 +3,18 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
 VERSION = "1.5.0"
 
 
+@pytest.mark.skipif(
+    not DIST.is_dir(),
+    reason="release artifacts are audited after scripts/build_release.py",
+)
 def test_offline_bundle_does_not_claim_true_portability() -> None:
     offline = DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip"
     assert offline.is_file()
