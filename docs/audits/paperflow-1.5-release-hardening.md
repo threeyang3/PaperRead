@@ -71,9 +71,9 @@
 
 ## Final local verification
 
-- Python 3.13.11: 252 pytest tests passed; 3 pre-existing resource warnings;
+- Python 3.13.11: 255 pytest tests passed; 3 pre-existing resource warnings;
   no failures or skips.
-- Coverage: 70% overall. Critical thresholds passed: data store 90%+, Feed
+- Coverage: 70.11% overall. Critical thresholds passed: data store 90%+, Feed
   publisher 80%+, PDF resolver 70%+, privacy scanner 85%+, Workspace v3 80%+,
   Zotero Core 65%+.
 - Node.js 22.15.0: all five requested integration scripts passed.
@@ -94,6 +94,9 @@
 - Final Offline Installer root script completed with `-Method pip` from a path
   containing spaces. Separate isolated pipx and uv tool installs both reported
   PaperFlow 1.5.0.
+- GitHub-hosted checks passed on release-candidate commit `9fa4c5a`: Windows,
+  macOS and Linux with Python 3.11, 3.12 and 3.13; locked and latest-compatible
+  dependency tracks; Quality, Build, Feed validation and Migration workflows.
 
 ## Performance result
 
@@ -117,8 +120,6 @@
   inventory before doing any new work. Publishers that require zero observation
   window should publish a versioned directory and switch a server-side pointer
   after validation.
-- GitHub-hosted Windows/macOS/Linux workflows were updated but cannot be observed
-  until this branch is pushed; only the local Windows execution is evidenced here.
 - Ruff formatting is deliberately gradual and scoped to new release-hardening
   files. Historical modules retain formatting debt to avoid a large unrelated
   rewrite; lint still checks release-critical runtime-error rules.
@@ -127,6 +128,6 @@
 
 **A. The candidate can enter PaperFlow 1.5 release-candidate validation.** All
 local code, data, lifecycle, install and artifact gates are green, including
-recoverable hard-interruption handling for Feed publication. Do not promote the
-candidate to a stable release until the branch is pushed and the updated hosted
-Windows/macOS/Linux CI matrix has completed successfully.
+recoverable hard-interruption handling for Feed publication, and the hosted
+Windows/macOS/Linux CI matrix is green. Stable promotion still requires review,
+merge and explicit release approval; this audit does not create or move a tag.
