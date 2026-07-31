@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import tracemalloc
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -456,6 +457,216 @@ def test_core_community_publish_requires_confirmation_and_writes_outbox(tmp_path
     )
     assert status == 200 and routed["status"] == "reused"
     service.stop()
+
+
+def _core_community_request() -> dict:
+    return {
+        "paper_uid": "arxiv:1",
+        "contribution": {
+            "contribution_id": "core-layout-1",
+            "paper_uid": "arxiv:1",
+            "kind": "passage-comment",
+            "body": "A reviewed public comment.",
+            "tags": ["evidence"],
+            "anchor": {
+                "pdf_version": 1,
+                "pdf_sha256": "a" * 64,
+                "page": 1,
+                "exact_quote": "A verified quote.",
+            },
+            "created_at": "2026-07-24T10:00:00+08:00",
+        },
+        "creator": "reader",
+        "license": "CC-BY-4.0",
+        "confirm": True,
+    }
+
+
+def test_community_publish_uses_vault_data_root(tmp_path: Path) -> None:
+    workspace = tmp_path / ".paperflow/workspace.yaml"
+    workspace.parent.mkdir(parents=True)
+    workspace.write_text("workspace_schema_version: 3\ntimezone: UTC\n", encoding="utf-8")
+    service = PaperFlowCoreService(tmp_path, port=0)
+
+    result = service.community_publish(_core_community_request())
+
+    assert result["path"].startswith(".paperflow/data/community/outbox/")
+    assert (tmp_path / result["path"]).is_file()
+    assert not (tmp_path / "data/community/outbox").exists()
+
+
+def test_community_publish_uses_standalone_data_root(tmp_path: Path) -> None:
+    (tmp_path / "data").mkdir()
+    service = PaperFlowCoreService(tmp_path, port=0)
+
+    result = service.community_publish(_core_community_request())
+
+    assert result["path"].startswith("data/community/outbox/")
+    assert (tmp_path / result["path"]).is_file()
+    assert not (tmp_path / ".paperflow/data/community/outbox").exists()
+
+
+def test_core_community_outbox_is_visible_to_feed_builder(tmp_path: Path) -> None:
+    from paperflow.feed.publisher import _community_records
+
+    workspace = tmp_path / ".paperflow/workspace.yaml"
+    workspace.parent.mkdir(parents=True)
+    workspace.write_text("workspace_schema_version: 3\ntimezone: UTC\n", encoding="utf-8")
+    service = PaperFlowCoreService(tmp_path, port=0)
+    result = service.community_publish(_core_community_request())
+
+    assert _community_records(tmp_path) == [tmp_path / result["path"]]
+
+
+def test_community_publish_does_not_write_duplicate_roots(tmp_path: Path) -> None:
+    workspace = tmp_path / ".paperflow/workspace.yaml"
+    workspace.parent.mkdir(parents=True)
+    workspace.write_text("workspace_schema_version: 3\ntimezone: UTC\n", encoding="utf-8")
+    service = PaperFlowCoreService(tmp_path, port=0)
+
+    first = service.community_publish(_core_community_request())
+    second = service.community_publish(_core_community_request())
+
+    assert first["status"] == "outbox-written"
+    assert second["status"] == "reused"
+    assert len(list((tmp_path / ".paperflow/data/community/outbox").rglob("r1.json"))) == 1
+    assert not (tmp_path / "data/community/outbox").exists()
+
+
+def _streaming_pdf_service(root: Path) -> tuple[PaperFlowCoreService, bytes]:
+    paper_dir = root / ".paperflow/data/papers"
+    paper_dir.mkdir(parents=True)
+    pdf = b"%PDF-1.7\n" + b"streaming" * 1024 + b"\n%%EOF\n"
+    pdf_path = root / "80 Attachments/Papers/streaming.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(pdf)
+    (paper_dir / "arxiv_streaming.json").write_text(
+        json.dumps({
+            "paper_uid": "arxiv:streaming",
+            "paper_pdf_path": pdf_path.relative_to(root).as_posix(),
+        }),
+        encoding="utf-8",
+    )
+    return PaperFlowCoreService(root, port=0), pdf
+
+
+def test_core_pdf_response_does_not_call_read_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, expected = _streaming_pdf_service(tmp_path)
+    original = Path.read_bytes
+
+    def guarded(path: Path) -> bytes:
+        if path.suffix.casefold() == ".pdf":
+            raise AssertionError("PDF read_bytes() is forbidden")
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded)
+    service.start()
+    try:
+        request = urllib.request.Request(
+            service.url + "/zotero/pdf/arxiv%3Astreaming",
+            headers={"Authorization": f"Bearer {service.token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.read() == expected
+    finally:
+        service.stop()
+
+
+def test_core_serves_pdf_in_chunks(tmp_path: Path) -> None:
+    service, expected = _streaming_pdf_service(tmp_path)
+    service.start()
+    try:
+        request = urllib.request.Request(
+            service.url + "/zotero/pdf/arxiv%3Astreaming",
+            headers={"Authorization": f"Bearer {service.token}"},
+        )
+        received = bytearray()
+        with urllib.request.urlopen(request, timeout=3) as response:
+            while chunk := response.read(257):
+                assert len(chunk) <= 257
+                received.extend(chunk)
+        assert bytes(received) == expected
+    finally:
+        service.stop()
+
+
+def test_large_pdf_stays_within_memory_budget(tmp_path: Path) -> None:
+    service, _expected = _streaming_pdf_service(tmp_path)
+    pdf_path = tmp_path / "80 Attachments/Papers/streaming.pdf"
+    with pdf_path.open("wb") as stream:
+        stream.write(b"%PDF-")
+        stream.truncate(16 * 1024 * 1024)
+
+    tracemalloc.start()
+    try:
+        served = service.paper_pdf("arxiv:streaming")
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert served.size == 16 * 1024 * 1024
+    assert peak < 4 * 1024 * 1024
+
+
+def test_stage_pdf_hashes_streamingly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "data").mkdir()
+    service = PaperFlowCoreService(tmp_path, port=0)
+    payload = b"%PDF-1.7\nstreamed upload\n%%EOF\n"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def forbidden(_path: Path) -> bytes:
+        raise AssertionError("read_bytes() is forbidden for staged PDFs")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden)
+    result = service.stage_pdf_chunk(
+        "arxiv:streaming",
+        payload,
+        offset="0",
+        total=str(len(payload)),
+        expected_sha256=digest,
+        filename="streaming.pdf",
+    )
+    assert result["status"] == "stored"
+
+
+def test_failed_pdf_upload_removes_partial_file(tmp_path: Path) -> None:
+    (tmp_path / "data").mkdir()
+    service = PaperFlowCoreService(tmp_path, port=0)
+    payload = b"%PDF-1.7\nbad hash\n%%EOF\n"
+    with pytest.raises(ValueError, match="SHA-256"):
+        service.stage_pdf_chunk(
+            "arxiv:failed",
+            payload,
+            offset="0",
+            total=str(len(payload)),
+            expected_sha256="0" * 64,
+            filename="failed.pdf",
+        )
+    assert not list((tmp_path / "runtime/staging").rglob("*.part"))
+
+
+def test_existing_pdf_conflict_is_preserved(tmp_path: Path) -> None:
+    (tmp_path / "data").mkdir()
+    service = PaperFlowCoreService(tmp_path, port=0)
+    target = tmp_path / "documents/zotero/arxiv_conflict.pdf"
+    target.parent.mkdir(parents=True)
+    original = b"%PDF-1.7\noriginal\n%%EOF\n"
+    target.write_bytes(original)
+    incoming = b"%PDF-1.7\nincoming\n%%EOF\n"
+    result = service.stage_pdf_chunk(
+        "arxiv:conflict",
+        incoming,
+        offset="0",
+        total=str(len(incoming)),
+        expected_sha256=hashlib.sha256(incoming).hexdigest(),
+        filename="conflict.pdf",
+    )
+    assert result["status"] == "manual-review"
+    assert target.read_bytes() == original
 
 
 def test_mapping_prefers_exact_arxiv_and_applies_only_exact(tmp_path: Path) -> None:

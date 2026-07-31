@@ -127,6 +127,37 @@ def test_stop_reports_active_job_and_keeps_session_on_timeout(
     assert service.stop(timeout_seconds=2)["status"] == "stopped"
 
 
+def test_stop_during_cancellation_preserves_honest_state(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking(job: dict[str, object]) -> None:
+        service._update_job_state(str(job["job_id"]), status="running")
+        entered.set()
+        release.wait(timeout=5)
+
+    service._run_job = blocking  # type: ignore[method-assign]
+    service.start()
+    queued = service.enqueue_job("analysis", {"paper_uid": UID})
+    assert entered.wait(timeout=2)
+    requested = service.cancel_job(queued["job_id"])
+    assert requested["status"] == "cancellation-requested"
+
+    result = service.stop(timeout_seconds=0.05)
+
+    assert result["status"] == "stopping"
+    assert result["active_job"] == queued["job_id"]
+    assert result["process_exit_required"] is True
+    assert service.job(queued["job_id"])["status"] == "cancellation-requested"
+    assert service.worker is not None and service.worker.is_alive()
+    assert (tmp_path / "state/zotero-core-session.json").is_file()
+    release.set()
+    service.worker.join(timeout=2)
+    assert service.stop(timeout_seconds=2)["status"] == "stopped"
+
+
 def test_cancel_running_job_at_safe_point(tmp_path: Path, monkeypatch) -> None:
     _paper(tmp_path)
     service = PaperFlowCoreService(tmp_path, port=0)
@@ -150,7 +181,7 @@ def test_cancel_running_job_at_safe_point(tmp_path: Path, monkeypatch) -> None:
         queued = service.enqueue_job("analysis", {"paper_uid": UID})
         assert entered.wait(timeout=2)
         result = service.cancel_job(queued["job_id"])
-        assert result["status"] in {"running", "cancelled"}
+        assert result["status"] in {"cancellation-requested", "cancelled"}
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             if service.job(queued["job_id"])["status"] == "cancelled":
@@ -158,6 +189,152 @@ def test_cancel_running_job_at_safe_point(tmp_path: Path, monkeypatch) -> None:
             time.sleep(0.02)
         assert service.job(queued["job_id"])["status"] == "cancelled"
     finally:
+        service.stop()
+
+
+def test_running_non_cancelable_operation_is_not_reported_as_cancelled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def non_cancelable(*_args, **_kwargs):
+        entered.set()
+        release.wait(timeout=3)
+        return {"status": "written", "side_effect": True}
+
+    monkeypatch.setattr("paperflow.zotero.standalone_ai.analyze_standalone", non_cancelable)
+    service.start()
+    try:
+        queued = service.enqueue_job("analysis", {"paper_uid": UID})
+        assert entered.wait(timeout=2)
+        requested = service.cancel_job(queued["job_id"])
+        assert requested["status"] == "cancellation-requested"
+        release.set()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            state = service.job(queued["job_id"])
+            if state["status"] == "completed-after-cancel-request":
+                break
+            time.sleep(0.02)
+        assert service.job(queued["job_id"])["status"] == "completed-after-cancel-request"
+    finally:
+        release.set()
+        service.stop()
+
+
+def test_cancel_request_timestamp_is_persisted(tmp_path: Path, monkeypatch) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking(*_args, **_kwargs):
+        entered.set()
+        release.wait(timeout=3)
+        return {"status": "written"}
+
+    monkeypatch.setattr("paperflow.zotero.standalone_ai.analyze_standalone", blocking)
+    service.start()
+    try:
+        queued = service.enqueue_job("analysis", {"paper_uid": UID})
+        assert entered.wait(timeout=2)
+        service.cancel_job(queued["job_id"])
+        state = json.loads(_job_path(tmp_path, queued["job_id"]).read_text(encoding="utf-8"))
+        assert state["status"] == "cancellation-requested"
+        assert state["cancellation_requested_at"]
+    finally:
+        release.set()
+        service.stop()
+
+
+def test_cancelled_job_is_not_requeued_after_restart(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    first = PaperFlowCoreService(tmp_path, port=0)
+    queued = first.enqueue_job("analysis", {"paper_uid": UID})
+    first.cancel_job(queued["job_id"])
+
+    second = PaperFlowCoreService(tmp_path, port=0)
+    second.start()
+    try:
+        time.sleep(0.1)
+        assert second.job(queued["job_id"])["status"] == "cancelled"
+        assert second.jobs.empty()
+    finally:
+        second.stop()
+
+
+def test_cancelled_analysis_does_not_write_ai_record(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    queued = service.enqueue_job("analysis", {"paper_uid": UID})
+    service.cancel_job(queued["job_id"])
+
+    service.start()
+    try:
+        time.sleep(0.1)
+        assert service.job(queued["job_id"])["status"] == "cancelled"
+        assert not (tmp_path / "data/ai").exists()
+    finally:
+        service.stop()
+
+
+def test_cancelled_render_does_not_replace_note(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    note = tmp_path / "documents/zotero/arxiv_2607.40001.analysis.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("user-owned marker", encoding="utf-8")
+    service = PaperFlowCoreService(tmp_path, port=0)
+    queued = service.enqueue_job("render", {"paper_uid": UID, "target": "zotero"})
+    service.cancel_job(queued["job_id"])
+
+    service.start()
+    try:
+        time.sleep(0.1)
+        assert service.job(queued["job_id"])["status"] == "cancelled"
+        assert note.read_text(encoding="utf-8") == "user-owned marker"
+    finally:
+        service.stop()
+
+
+def test_cancelled_subscription_sync_stops_before_next_source(tmp_path: Path, monkeypatch) -> None:
+    _paper(tmp_path)
+    (tmp_path / "config.yaml").write_text(
+        "subscriptions:\n"
+        "  sources:\n"
+        "    - name: first\n      url: https://first.invalid/feed\n"
+        "    - name: second\n      url: https://second.invalid/feed\n",
+        encoding="utf-8",
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def fake_sync(_root: Path, *, name: str, **_kwargs):
+        calls.append(name)
+        entered.set()
+        release.wait(timeout=3)
+        return {"name": name, "created": 1}
+
+    monkeypatch.setattr("paperflow.zotero.standalone_sync.sync_core_feed", fake_sync)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    service.start()
+    try:
+        queued = service.subscription_sync({"trigger": "test"})
+        assert entered.wait(timeout=2)
+        service.cancel_job(queued["job_id"])
+        release.set()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if service.job(queued["job_id"])["status"] == "completed-after-cancel-request":
+                break
+            time.sleep(0.02)
+        assert calls == ["first"]
+        assert service.job(queued["job_id"])["status"] == "completed-after-cancel-request"
+    finally:
+        release.set()
         service.stop()
 
 

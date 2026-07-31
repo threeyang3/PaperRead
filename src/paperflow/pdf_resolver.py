@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,9 @@ from paperflow.utils import sha256_file
 
 class PdfResolutionError(RuntimeError):
     pass
+
+
+_VERSIONED_PDF_NAME = re.compile(r"^v([1-9][0-9]*)\.pdf$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,11 @@ def _validate_pdf(
 ) -> ResolvedPdf:
     if path.suffix.casefold() != ".pdf":
         raise PdfResolutionError(f"Resolved file is not a PDF: {path.name}")
+    versioned_name = _VERSIONED_PDF_NAME.fullmatch(path.name)
+    if versioned_name and int(versioned_name.group(1)) != version:
+        raise PdfResolutionError(
+            f"PDF filename version does not match requested v{version}: {path.name}"
+        )
     if not path.is_file():
         raise PdfResolutionError(f"PDF file is missing: {path}")
     with path.open("rb") as stream:
@@ -115,6 +124,19 @@ def _read_index(root: Path, paper_uid: str) -> dict[str, Any] | None:
         or not isinstance(value.get("versions"), list)
     ):
         raise PdfResolutionError(f"PDF index identity is invalid: {path}")
+    seen_versions: set[int] = set()
+    for item in value["versions"]:
+        if not isinstance(item, dict):
+            raise PdfResolutionError(f"PDF index version entry is invalid: {path}")
+        try:
+            version = int(item.get("version") or 0)
+        except (TypeError, ValueError) as exc:
+            raise PdfResolutionError(f"PDF index version entry is invalid: {path}") from exc
+        if version < 1:
+            raise PdfResolutionError(f"PDF index version entry is invalid: {path}")
+        if version in seen_versions:
+            raise PdfResolutionError(f"PDF index version {version} is duplicated")
+        seen_versions.add(version)
     return value
 
 
@@ -162,6 +184,8 @@ def _fallback_candidates(
     paper_uid: str,
     record: dict[str, Any] | None,
     version: int,
+    *,
+    allow_legacy_unversioned: bool,
 ) -> list[Path]:
     candidates: list[Path] = []
     if record and record.get("paper_pdf_path"):
@@ -193,7 +217,10 @@ def _fallback_candidates(
     unique: list[Path] = []
     for candidate in candidates:
         resolved = candidate.resolve()
-        if resolved not in unique and resolved.is_file():
+        versioned_name = _VERSIONED_PDF_NAME.fullmatch(resolved.name)
+        version_matches = bool(versioned_name and int(versioned_name.group(1)) == version)
+        legacy_allowed = versioned_name is None and allow_legacy_unversioned
+        if resolved not in unique and resolved.is_file() and (version_matches or legacy_allowed):
             unique.append(resolved)
     return unique
 
@@ -203,13 +230,21 @@ def resolve_pdf_version(
     paper_uid: str,
     version: int,
     record: dict[str, Any] | None = None,
+    *,
+    allow_legacy_unversioned: bool = False,
 ) -> ResolvedPdf:
     if version < 1:
         raise PdfResolutionError("PDF version must be positive")
     index = _read_index(root, paper_uid)
     if index is not None:
         return _from_index(root, paper_uid, index, version)
-    candidates = _fallback_candidates(root, paper_uid, record, version)
+    candidates = _fallback_candidates(
+        root,
+        paper_uid,
+        record,
+        version,
+        allow_legacy_unversioned=allow_legacy_unversioned,
+    )
     if len(candidates) != 1:
         raise PdfResolutionError(
             f"Expected exactly one modeled PDF for {paper_uid} v{version}; found {len(candidates)}"
@@ -229,4 +264,10 @@ def resolve_current_pdf(
             raise PdfResolutionError("PDF index current version is invalid")
         return _from_index(root, paper_uid, index, version)
     version = int((record or {}).get("paper_arxiv_version") or 1)
-    return resolve_pdf_version(root, paper_uid, version, record)
+    return resolve_pdf_version(
+        root,
+        paper_uid,
+        version,
+        record,
+        allow_legacy_unversioned=True,
+    )

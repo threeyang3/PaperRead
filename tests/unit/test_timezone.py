@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from paperflow.clock import WorkspaceClock, parse_aware_datetime
+from paperflow.utils import iso_utc
 from paperflow.config import Config
 from paperflow.feed.publisher import build_feed
 from paperflow.models import ImportRequest
@@ -55,6 +56,23 @@ def test_workspace_clock_controls_local_day_boundaries() -> None:
     assert tokyo.isoformat().endswith("+09:00")
     assert utc.date().isoformat() == "2026-07-30"
     assert utc.isoformat().endswith("+00:00")
+
+
+def test_workspace_clock_handles_dst_transition() -> None:
+    before = datetime(2026, 3, 8, 6, 30, tzinfo=timezone.utc)
+    after = datetime(2026, 3, 8, 7, 30, tzinfo=timezone.utc)
+
+    new_york_before = WorkspaceClock("America/New_York", now_provider=lambda: before).now()
+    new_york_after = WorkspaceClock("America/New_York", now_provider=lambda: after).now()
+
+    assert new_york_before.isoformat().endswith("-05:00")
+    assert new_york_after.isoformat().endswith("-04:00")
+
+
+def test_internal_persistence_clock_is_utc_rfc3339() -> None:
+    value = iso_utc()
+    parsed = parse_aware_datetime(value)
+    assert parsed.utcoffset().total_seconds() == 0
 
 
 def test_workspace_timezone_must_be_valid_iana_name() -> None:

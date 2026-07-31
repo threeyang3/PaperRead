@@ -12,7 +12,7 @@ from typing import Any
 from paperflow.ai.schema_validation import validate_analysis
 from paperflow.models import Analysis, PaperMetadata
 from paperflow.text_quality import validate_text_quality
-from paperflow.utils import atomic_json, atomic_write, iso_beijing
+from paperflow.utils import atomic_json, atomic_write, iso_utc
 from paperflow.zotero.store import runtime_root, state_root
 from paperflow.paths.templates import safe_component
 from paperflow.pdf_resolver import resolve_current_pdf
@@ -85,7 +85,7 @@ class ChatGPTWebAdapter:
                 "status": status,
                 "detail": detail,
                 "actual_model": self.actual_model,
-                "checked_at": iso_beijing(),
+            "checked_at": iso_utc(),
             },
         )
 
@@ -250,7 +250,7 @@ class ChatGPTWebAdapter:
             validate_text_quality(value, label="chatgpt-web-analysis")
             self._save_state("ready", self.actual_model)
             atomic_write(
-                ai_log_path(self.root, f"{iso_beijing().replace(':', '-')}-chatgpt-web.txt"),
+                ai_log_path(self.root, f"{iso_utc().replace(':', '-')}-chatgpt-web.txt"),
                 response_text,
             )
             return validate_analysis(value, schema)

@@ -5,7 +5,7 @@ from paperflow.config import Config
 from paperflow.models import PaperMetadata
 from paperflow.sources.arxiv import ArxivSource
 from paperflow.ai.relevance import screen_relevance
-from paperflow.utils import now_beijing
+from paperflow.clock import WorkspaceClock
 
 
 def rule_score(paper: PaperMetadata, profile: dict) -> float:
@@ -28,7 +28,9 @@ def discover(cfg: Config) -> tuple[list[PaperMetadata], dict]:
     cache_dir = cfg.root / ".paperflow/cache/arxiv" if cfg.section("retention").get("keep_raw_api_responses", True) else None
     source = ArxivSource(section["timeout_seconds"], section["max_retries"], section["request_interval_seconds"], cache_dir=cache_dir)
     papers = source.discover(query, cfg.section("discovery")["max_candidates"])
-    cutoff = now_beijing().date() - timedelta(days=cfg.section("discovery")["lookback_days"])
+    cutoff = WorkspaceClock(str(cfg.timezone)).now().date() - timedelta(
+        days=cfg.section("discovery")["lookback_days"]
+    )
     recent = [p for p in papers if p.paper_updated_date >= cutoff]
     scored = [(p, rule_score(p, profile)) for p in recent]
     rule_selected = [p for p, score in scored if score >= cfg.section("discovery")["relevance_threshold"]]

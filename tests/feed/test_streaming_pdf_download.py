@@ -128,3 +128,34 @@ def test_stream_that_exceeds_limit_removes_partial_file(
     target = tmp_path / "80 Attachments/Papers/2025/2504.16054/v1.pdf"
     assert not target.exists()
     assert not target.with_name("v1.pdf.tmp").exists()
+
+
+def test_cancelled_download_removes_partial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"%PDF-" + b"x" * 100
+    response = FakeResponse([payload[:20], payload[20:]])
+    monkeypatch.setattr(
+        subscriber.httpx,
+        "stream",
+        lambda *_args, **_kwargs: FakeStream(response),
+    )
+
+    class CancelAfterFirstChunk:
+        checks = 0
+
+        def raise_if_cancelled(self, **_kwargs) -> None:
+            self.checks += 1
+            if self.checks >= 3:
+                raise RuntimeError("cancel requested")
+
+    with pytest.raises(RuntimeError, match="cancel requested"):
+        subscriber._download_linked_pdf(
+            tmp_path,
+            _item(payload),
+            cancellation_token=CancelAfterFirstChunk(),
+        )
+
+    target = tmp_path / "80 Attachments/Papers/2025/2504.16054/v1.pdf"
+    assert not target.exists()
+    assert not target.with_name("v1.pdf.tmp").exists()

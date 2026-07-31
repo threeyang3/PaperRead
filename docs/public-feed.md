@@ -9,6 +9,14 @@ deterministic manifests, hashes, attribution, and original PDF URLs. It does
 not publish User Data, rendered notes, Vault paths, logs, databases, cache,
 credentials, sessions, or PDFs by default.
 
+Remote `feed_id`, `paper_uid`, `source_id`, provider, analysis, creator and
+contribution identifiers are data, never paths. Readers reject path-shaped
+identifiers and encoded/NFKC collisions, then resolve every target below its
+managed root and reject symlink escapes. The identical checks run for dry-run;
+an unsafe Feed fails without changing `.paperflow` or writing outside the
+Vault/Core root. Logical IDs such as `arxiv:2607.00001` remain unchanged in
+records while storage keeps the schema-3-compatible `arxiv_2607.00001` layout.
+
 Build locally with `publish plan`, `build`, `validate`, `scan`, and `diff`.
 Build never commits or pushes. A separate data repository should be reviewed
 and pushed explicitly.

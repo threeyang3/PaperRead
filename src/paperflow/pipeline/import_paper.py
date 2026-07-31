@@ -20,7 +20,8 @@ from paperflow.obsidian.note_renderer import render_paper
 from paperflow.sources.arxiv import ArxivSource
 from paperflow.sources.url_parser import parse_input
 from paperflow.sources.web import fetch_generic
-from paperflow.utils import atomic_json, atomic_write, iso_beijing, now_beijing, safe_slug, sha256_bytes
+from paperflow.clock import WorkspaceClock
+from paperflow.utils import atomic_json, atomic_write, iso_utc, safe_slug, sha256_bytes
 from paperflow.taxonomy import canonicalize_topics
 from paperflow.text_quality import short_title
 from .deduplicate import decide
@@ -54,7 +55,7 @@ def _metadata(cfg: Config, value: str) -> PaperMetadata:
 
 def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path, Path]:
     ident = metadata.paper_arxiv_id or safe_slug(metadata.paper_uid.replace(":", "_"))
-    year = str(metadata.paper_year or now_beijing().year)
+    year = str(metadata.paper_year or WorkspaceClock(str(cfg.timezone)).now().year)
     if cfg.workspace is not None:
         # Keep the importer on the same path-template contract as the
         # renderer/migration code.  The old importer bypassed the workspace
@@ -294,10 +295,10 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             "paper_pdf_path": pdf_path.relative_to(cfg.root).as_posix() if pdf_path.exists() else "",
             "paper_has_code": bool(metadata.paper_code_url), "paper_has_project_page": bool(metadata.paper_project_url), "paper_has_dataset": bool(metadata.paper_dataset_url),
             "ai_analysis_provider": used_provider if run_ai else "", "ai_analysis_model": model, "ai_analysis_profile": used_profile if run_ai else "", "ai_analysis_prompt_version": PROMPT_VERSION if run_ai else "",
-            "ai_analyzed_at": iso_beijing() if run_ai else None, "user_priority": priority, "user_favorite": favorite,
+        "ai_analyzed_at": iso_utc() if run_ai else None, "user_priority": priority, "user_favorite": favorite,
             "user_reading_status": "queued" if queued else "inbox", "user_learning_status": "none", "user_rating": 0,
             "user_reproduction_status": "none", "user_added_tags": user_tags or [], "user_last_read_at": None, "user_next_review_at": None,
-            "system_import_method": import_method, "system_imported_at": iso_beijing(), "system_last_synced_at": iso_beijing(),
+        "system_import_method": import_method, "system_imported_at": iso_utc(), "system_last_synced_at": iso_utc(),
             "system_content_hash": content_hash, "system_pipeline_version": "0.1.0", "system_requires_manual_review": not bool(metadata.paper_pdf_url) or bool(unmatched_topics), "system_error": "",
             "extraction": extraction,
         })
@@ -316,7 +317,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             record["system_requires_manual_review"] = record["system_requires_manual_review"] or bool(topic_unmatched)
         if unmatched_topics:
             review_path = cfg.path("manual_review_folder") / f"{safe_slug(metadata.paper_uid)}-topics.md"
-            atomic_write(review_path, "---\ntype: paper-topic-review\npaper_uid: " + metadata.paper_uid + "\nstatus: pending\ncreated_at: " + iso_beijing() + "\n---\n\n# Topic 人工审核\n\n以下 AI 候选主题未自动创建：\n\n" + "\n".join(f"- {value}" for value in unmatched_topics) + "\n")
+        atomic_write(review_path, "---\ntype: paper-topic-review\npaper_uid: " + metadata.paper_uid + "\nstatus: pending\ncreated_at: " + iso_utc() + "\n---\n\n# Topic 人工审核\n\n以下 AI 候选主题未自动创建：\n\n" + "\n".join(f"- {value}" for value in unmatched_topics) + "\n")
         if note_path.exists():
             existing_frontmatter, _ = read_note(note_path)
             for key, value in existing_frontmatter.items():

@@ -17,6 +17,11 @@ from paperflow.versioning import APPLICATION_VERSION, VERSIONS, check_reader_ver
 from paperflow.workspace import WorkspaceSettings, dump_yaml
 from paperflow.clock import WorkspaceClock, parse_aware_datetime
 from paperflow.security.artifacts import PublishScanner
+from paperflow.security.paths import (
+    assert_distinct_storage_components,
+    resolve_under,
+    safe_storage_component,
+)
 from paperflow.data.records import PublicRawPaperRecord, RawPaperRecord
 from paperflow.utils import atomic_json
 import zstandard
@@ -100,9 +105,15 @@ def _publishable_raw_records(root: Path, sources: list[Path]) -> list[Publishabl
     records: list[PublishableRawRecord] = []
     business_keys: set[tuple[str, int]] = set()
     destinations: set[str] = set()
-    for source in sources:
-        internal = RawPaperRecord.model_validate_json(source.read_text(encoding="utf-8"))
-        uid = internal.paper_uid.replace(":", "_")
+    parsed = [
+        (source, RawPaperRecord.model_validate_json(source.read_text(encoding="utf-8")))
+        for source in sources
+    ]
+    components = assert_distinct_storage_components(
+        [record.paper_uid for _, record in parsed], label="paper_uid"
+    )
+    for source, internal in parsed:
+        uid = components[internal.paper_uid]
         destination = Path("papers") / uid / "raw" / f"v{internal.source_version}.json"
         business_key = (internal.paper_uid, internal.source_version)
         destination_key = destination.as_posix()
@@ -312,7 +323,9 @@ def _publish_community(
         if findings:
             raise RuntimeError(f"{source}: {', '.join(findings)}")
         relative = source.relative_to(root / ".paperflow/data/community/outbox")
-        target = destination / relative
+        target = resolve_under(
+            destination, *relative.parts, label="Community Feed staging path"
+        )
         _copy_if_changed(source, target)
         entry = {
             "paper_uid": value.paper_uid,
@@ -326,7 +339,11 @@ def _publish_community(
         contributors.add(value.creator)
         reviews += int(value.kind == "paper-review")
     for paper_uid, entries in sorted(by_paper.items()):
-        path = destination / "manifests/community" / f"{paper_uid.replace(':', '_')}.jsonl"
+        path = resolve_under(
+            destination / "manifests/community",
+            f"{safe_storage_component(paper_uid, label='paper_uid')}.jsonl",
+            label="Community manifest path",
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "".join(_json_line(item) + "\n" for item in entries),
@@ -397,7 +414,11 @@ def _build_feed_tree(
                 item.source_path.read_text(encoding="utf-8")
             )
             public = PublicRawPaperRecord.from_internal(internal)
-            target = destination / item.destination_path
+            target = resolve_under(
+                destination,
+                *item.destination_path.parts,
+                label="Raw Feed staging path",
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(
                 public.model_dump_json(indent=2) + "\n",
@@ -430,13 +451,25 @@ def _build_feed_tree(
                 }
             )
     if publishing.include_ai_analysis:
-        for source in ai:
-            record = json.loads(source.read_text(encoding="utf-8"))
-            uid = str(record["paper_uid"]).replace(":", "_")
+        ai_values = [json.loads(source.read_text(encoding="utf-8")) for source in ai]
+        ai_papers = assert_distinct_storage_components(
+            [record["paper_uid"] for record in ai_values], label="paper_uid"
+        )
+        analysis_ids = assert_distinct_storage_components(
+            [record["analysis_id"] for record in ai_values], label="analysis_id"
+        )
+        for source, record in zip(ai, ai_values, strict=True):
+            uid = ai_papers[str(record["paper_uid"])]
             identity = record["identity"]
-            provider = identity["provider"]
-            target = (
-                destination / "papers" / uid / "ai" / provider / f"{record['analysis_id']}.json"
+            provider = safe_storage_component(identity["provider"], label="provider")
+            target = resolve_under(
+                destination,
+                "papers",
+                uid,
+                "ai",
+                provider,
+                f"{analysis_ids[str(record['analysis_id'])]}.json",
+                label="AI Feed staging path",
             )
             changed += int(_copy_if_changed(source, target))
             analysis_manifest.append(
@@ -522,9 +555,6 @@ def _build_feed_tree(
         "community_review_count": community_review_count,
         "contributor_count": contributor_count,
         "application_version": APPLICATION_VERSION,
-        "community_contribution_count": community_count,
-        "community_review_count": community_review_count,
-        "contributor_count": contributor_count,
     }
     (manifests / "current.json").write_text(
         json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

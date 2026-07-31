@@ -15,6 +15,11 @@ import httpx
 import fitz
 
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
+from paperflow.security.paths import (
+    assert_distinct_storage_components,
+    resolve_under,
+    safe_storage_component,
+)
 from paperflow.versioning import check_reader_version
 from paperflow.sync_safety import assert_no_sync_conflicts
 
@@ -91,7 +96,10 @@ def sync_feed(
     auto_render_notes: bool = False,
     capabilities: list[str] | None = None,
     community_note_root: str = "70 Community",
+    cancellation_token: Any | None = None,
 ) -> dict[str, Any]:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
     assert_no_sync_conflicts(workspace)
     if trust not in {"metadata-only", "metadata-and-ai", "disabled"}:
         raise ValueError(f"Unsupported trust mode: {trust}")
@@ -99,6 +107,8 @@ def sync_feed(
         return {"name": name, "status": "disabled", "created": 0, "conflicts": []}
     with TemporaryDirectory(prefix="paperflow-feed-") as temporary:
         feed_root = _acquire(url, branch, Path(temporary) / "feed")
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled(side_effects=True)
         validation = validate_feed(feed_root)
         feed = YAML(typ="safe").load(
             (feed_root / "feed.yaml").read_text(encoding="utf-8")
@@ -128,32 +138,45 @@ def sync_feed(
                 .splitlines()
                 if line
             )
+        feed_component = safe_storage_component(feed["feed_id"], label="feed_id")
+        paper_components = assert_distinct_storage_components(
+            [item["paper_uid"] for item in manifests], label="paper_uid"
+        )
+        analysis_components = assert_distinct_storage_components(
+            [item["analysis_id"] for item in manifests if "analysis_id" in item],
+            label="analysis_id",
+        )
         created = 0
         reused = 0
         downloaded_pdfs = 0
         rendered_notes = 0
         conflicts: list[dict[str, str]] = []
         for item in manifests:
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
             source = resolve_feed_file(feed_root, item["path"])
             if _sha256(source) != item["sha256"]:
                 raise ValueError(f"Manifest hash mismatch: {item['path']}")
             is_ai = "analysis_id" in item
+            paper_component = paper_components[str(item["paper_uid"])]
             if is_ai:
-                target = (
-                    workspace
-                    / ".paperflow/data/ai/subscriptions"
-                    / str(feed["feed_id"])
-                    / str(item["paper_uid"]).replace(":", "_")
-                    / f"{item['analysis_id']}.json"
+                target = resolve_under(
+                    workspace / ".paperflow/data/ai/subscriptions",
+                    feed_component,
+                    paper_component,
+                    f"{analysis_components[str(item['analysis_id'])]}.json",
+                    label="Feed AI subscription path",
                 )
             else:
-                target = (
-                    workspace
-                    / ".paperflow/data/raw"
-                    / "subscriptions"
-                    / str(feed["feed_id"])
-                    / str(item["paper_uid"]).replace(":", "_")
-                    / f"v{item['version']}.json"
+                version = int(item["version"])
+                if version < 1:
+                    raise ValueError("Feed paper version must be positive")
+                target = resolve_under(
+                    workspace / ".paperflow/data/raw/subscriptions",
+                    feed_component,
+                    paper_component,
+                    f"v{version}.json",
+                    label="Feed Raw subscription path",
                 )
             if target.exists():
                 if _sha256(target) == item["sha256"]:
@@ -167,9 +190,11 @@ def sync_feed(
                     }
                 )
                 target = target.with_name(
-                    target.stem + f"-{str(feed['feed_id'])}" + target.suffix
+                    target.stem + f"-{feed_component}" + target.suffix
                 )
             if not dry_run:
+                if cancellation_token is not None:
+                    cancellation_token.raise_if_cancelled()
                 target.parent.mkdir(parents=True, exist_ok=True)
                 temporary_target = target.with_name(target.name + ".tmp")
                 shutil.copy2(source, temporary_target)
@@ -183,7 +208,9 @@ def sync_feed(
             ]
             if auto_download_pdf:
                 for item in paper_items:
-                    if _download_linked_pdf(workspace, item):
+                    if _download_linked_pdf(
+                        workspace, item, cancellation_token=cancellation_token
+                    ):
                         downloaded_pdfs += 1
             if auto_render_notes:
                 for item in paper_items:
@@ -228,16 +255,27 @@ def sync_feed(
         }
 
 
-def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
+def _download_linked_pdf(
+    workspace: Path,
+    item: dict[str, Any],
+    *,
+    cancellation_token: Any | None = None,
+) -> bool:
     pdf = item.get("pdf") or {}
     source_url = str(pdf.get("source_url") or "")
     if not source_url:
         return False
-    paper_id = str(item.get("source_id") or item["paper_uid"]).replace(":", "_")
-    year = str(item.get("year") or "Unclassified")
+    paper_id = safe_storage_component(
+        item.get("source_id") or item["paper_uid"], label="source_id"
+    )
+    year = safe_storage_component(item.get("year") or "Unclassified", label="paper year")
     version = int(item.get("version") or 1)
-    target = (
-        workspace / "80 Attachments/Papers" / year / paper_id / f"v{version}.pdf"
+    target = resolve_under(
+        workspace / "80 Attachments/Papers",
+        year,
+        paper_id,
+        f"v{version}.pdf",
+        label="linked PDF path",
     )
     if target.exists():
         if not target.read_bytes()[:5] == b"%PDF-":
@@ -261,6 +299,8 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
     with httpx.stream(
         "GET", source_url, timeout=60, follow_redirects=True
     ) as response:
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled()
         response.raise_for_status()
         content_length = response.headers.get("content-length")
         if content_length and int(content_length) > maximum_size:
@@ -270,6 +310,8 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
         try:
             with temporary.open("xb") as output:
                 for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                    if cancellation_token is not None:
+                        cancellation_token.raise_if_cancelled()
                     if not chunk:
                         continue
                     if len(header) < 5:
@@ -300,6 +342,8 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
             raise ValueError(f"Downloaded PDF checksum mismatch: {source_url}")
         if expected_size is not None and size != int(expected_size):
             raise ValueError(f"Downloaded PDF size mismatch: {source_url}")
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled()
         temporary.replace(target)
     except Exception:
         temporary.unlink(missing_ok=True)

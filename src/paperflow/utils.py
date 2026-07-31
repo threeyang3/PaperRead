@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -17,7 +17,20 @@ def now_beijing() -> datetime:
 
 
 def iso_beijing() -> str:
+    """Deprecated compatibility clock; new persisted records must use UTC."""
     return now_beijing().isoformat(timespec="seconds")
+
+
+def now_utc() -> datetime:
+    """Return an aware UTC instant for internal persistence and logs."""
+
+    return datetime.now(timezone.utc)
+
+
+def iso_utc() -> str:
+    """Return an RFC3339-compatible UTC timestamp with an explicit offset."""
+
+    return now_utc().isoformat(timespec="seconds")
 
 
 def atomic_write(path: Path, content: str | bytes) -> None:

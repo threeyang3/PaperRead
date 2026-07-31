@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Post-audit security hardening centralizes NFKC storage-component encoding,
+  normalization-collision detection and resolved-root/symlink containment for
+  Feed, Community and standalone subscription writes; dry-run validates the
+  same boundary before any filesystem change.
+- Removed the recursive same-name Offline Installer wrapper and added a real
+  Windows install/`--version`/`--help`/uninstall smoke in a space-and-CJK path.
+- Corrected Vault Core Community outbox layout, introduced honest
+  `cancellation-requested`/`completed-after-cancel-request` states and
+  cooperative cancellation boundaries, strengthened credential redaction and
+  bounded binary/text automation logs.
+- Enforced exact PDF-version fallback and duplicate-index rejection; Core PDF
+  serving and upload validation now stream and hash without `read_bytes()` on
+  PDF payloads.
+- Added hashed transitive locks for Python 3.11-3.13 and a reusable
+  cross-platform CI/Release gate. Tag releases are draft-first, environment
+  protected, main-ancestry/version checked, and asset/SHA verified. This change
+  does not create a tag or Release.
+
 - 加固 Public Feed：只枚举 canonical Raw，使用公开正向白名单模型，隔离未知
   legacy 字段，先在干净 staging 中完成 schema/SHA/身份/隐私验证，并在同步时
   清理已停用或删除的管理文件而保留 Git 与用户文件。

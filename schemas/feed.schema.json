@@ -11,7 +11,11 @@
   "properties": {
     "feed_schema_version": {"enum": [1, 2]},
     "community_data_schema_version": {"type": "integer", "minimum": 1},
-    "feed_id": {"type": "string", "minLength": 1},
+    "feed_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
     "name": {"type": "string", "minLength": 1},
     "publisher": {
       "type": "object",
@@ -45,7 +49,10 @@
       "required": [
         "community_data_schema_version", "capabilities", "schemas",
         "licenses", "policy"
-      ]
+      ],
+      "properties": {
+        "feed_id": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"}
+      }
     }
   }],
   "additionalProperties": false

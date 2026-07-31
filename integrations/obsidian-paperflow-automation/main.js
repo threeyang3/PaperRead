@@ -25,12 +25,66 @@ function windowsProcessTreeCommand(pid) {
   };
 }
 
+const AUTOMATION_LOG_MAX_BYTES = 1024 * 1024;
+const SENSITIVE_LOG_KEY = /^(?:authorization|cookie|set-cookie|password|secret|token|api[_-]?key|.*_(?:api_key|token|password|secret))$/i;
+
+function redactStructuredLog(value) {
+  if (Array.isArray(value)) return value.map(redactStructuredLog);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      SENSITIVE_LOG_KEY.test(key) ? "[REDACTED]" : redactStructuredLog(item)
+    ])
+  );
+}
+
 function redactAutomationLog(value) {
-  return String(value || "")
+  let text = String(value ?? "");
+  const trimmed = text.trim();
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      text = JSON.stringify(redactStructuredLog(JSON.parse(trimmed)));
+    } catch {
+      // Command output is frequently JSON-adjacent rather than valid JSON.
+    }
+  }
+  return text
+    .replace(/\b(?:set-cookie|cookie|authorization)\s*[:=]\s*[^\r\n]*/gi, (match) => {
+      const separator = match.match(/^([^:=]+[:=])/);
+      return `${separator ? separator[1] : "header:"} [REDACTED]`;
+    })
     .replace(
-      /((?:authorization|api[_-]?key|token|cookie|password)\s*[:=]\s*)[^\s"']+/gi,
+      /\b([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|PASSWORD|SECRET))\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+      "$1=[REDACTED]"
+    )
+    .replace(
+      /("(?:authorization|api[_-]?key|token|cookie|password|secret)"\s*:\s*)"[^"\r\n]*"/gi,
+      '$1"[REDACTED]"'
+    )
+    .replace(
+      /('(?:authorization|api[_-]?key|token|cookie|password|secret)'\s*:\s*)'[^'\r\n]*'/gi,
+      "$1'[REDACTED]'"
+    )
+    .replace(
+      /(\b(?:authorization|api[_-]?key|token|cookie|password|secret)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
       "$1[REDACTED]"
-    );
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]");
+}
+
+function automationLogText(chunk) {
+  const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk ?? ""), "utf8");
+  const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
+  let controls = 0;
+  for (const byte of sample) {
+    if (byte === 0 || (byte < 9 || (byte > 13 && byte < 32))) controls += 1;
+  }
+  if (sample.length && (sample.includes(0) || controls / sample.length > 0.08)) {
+    return `[binary output omitted: ${buffer.length} bytes]\n`;
+  }
+  return redactAutomationLog(buffer.toString("utf8"));
 }
 
 async function terminateProcessTree(
@@ -1680,16 +1734,22 @@ class PaperFlowAutomationPlugin extends Plugin {
         path.relative(root, logPath).replaceAll("\\", "/");
       let stdout = "";
       let stderr = "";
+      let logBytes = 0;
       const append = (current, chunk) => (current + chunk.toString("utf8")).slice(-16000);
       const writeLog = (streamName, chunk) => {
-        log.write(`[${streamName}] ${redactAutomationLog(chunk.toString("utf8"))}`);
+        if (logBytes >= AUTOMATION_LOG_MAX_BYTES) return;
+        const entry = Buffer.from(`[${streamName}] ${automationLogText(chunk)}`, "utf8");
+        const remaining = AUTOMATION_LOG_MAX_BYTES - logBytes;
+        const bounded = entry.subarray(0, remaining);
+        log.write(bounded);
+        logBytes += bounded.length;
       };
       child.stdout.on("data", (chunk) => {
-        stdout = append(stdout, chunk);
+        stdout = append(stdout, automationLogText(chunk));
         writeLog("stdout", chunk);
       });
       child.stderr.on("data", (chunk) => {
-        stderr = append(stderr, chunk);
+        stderr = append(stderr, automationLogText(chunk));
         writeLog("stderr", chunk);
       });
       let settled = false;
@@ -3108,5 +3168,7 @@ module.exports.__test = {
   workspaceTimezoneFromYaml,
   terminateProcessTree,
   windowsProcessTreeCommand,
-  redactAutomationLog
+  redactAutomationLog,
+  automationLogText,
+  AUTOMATION_LOG_MAX_BYTES
 };

@@ -22,12 +22,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from paperflow._version import __version__
 from paperflow.paths.templates import safe_component
-from paperflow.utils import atomic_json, iso_beijing
+from paperflow.utils import atomic_json, iso_utc, sha256_file
 from paperflow.utils import atomic_write
 from paperflow.zotero.store import data_root, runtime_root, state_root, standalone
 from paperflow.zotero.mapping_index import mapping_for_item
 from paperflow.zotero.events import ZoteroEventProcessor
 from paperflow.security.artifacts import PermissionGuard
+from paperflow.security.paths import resolve_under, safe_storage_component
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -40,6 +41,50 @@ MAX_PDF_CHUNK_BYTES = 768 * 1024
 MAX_PDF_BYTES = 100 * 1024 * 1024
 JOB_SCHEMA_VERSION = 1
 JOB_ID_MAX_LENGTH = 160
+JOB_TERMINAL_STATES = frozenset(
+    {"cancelled", "completed", "completed-after-cancel-request", "failed", "interrupted", "skipped"}
+)
+JOB_TRANSITIONS = {
+    "queued": {"running", "cancelled"},
+    "running": {
+        "cancellation-requested",
+        "cancelled",
+        "completed",
+        "completed-after-cancel-request",
+        "failed",
+        "interrupted",
+        "skipped",
+    },
+    "cancellation-requested": {
+        "cancelled",
+        "completed-after-cancel-request",
+        "failed",
+        "interrupted",
+    },
+}
+
+
+class JobCancelled(RuntimeError):
+    """Cooperative cancellation reached a boundary before a side effect."""
+
+
+class JobCompletedAfterCancel(RuntimeError):
+    """Cancellation arrived after an operation may have produced side effects."""
+
+
+@dataclass(frozen=True)
+class CancellationToken:
+    event: threading.Event
+
+    def is_cancelled(self) -> bool:
+        return self.event.is_set()
+
+    def raise_if_cancelled(self, *, side_effects: bool = False) -> None:
+        if not self.is_cancelled():
+            return
+        if side_effects:
+            raise JobCompletedAfterCancel("cancel requested after operation completed")
+        raise JobCancelled("cancel requested")
 
 
 @dataclass(frozen=True)
@@ -54,6 +99,16 @@ class StopResult:
             "active_job": self.active_job,
             "process_exit_required": self.process_exit_required,
         }
+
+
+@dataclass(frozen=True)
+class ServedPdf:
+    """Validated PDF metadata; the HTTP layer owns chunked file transfer."""
+
+    path: Path
+    filename: str
+    sha256: str
+    size: int
 
 
 def _json_bytes(value: object) -> bytes:
@@ -130,7 +185,7 @@ def _annotation_component(value: object, label: str) -> str:
 def _append_event(root: Path, name: str, payload: dict[str, Any]) -> None:
     target = runtime_root(root) / f"zotero-{name}.jsonl"
     target.parent.mkdir(parents=True, exist_ok=True)
-    record = {"at": iso_beijing(), "event": name, **payload}
+    record = {"at": iso_utc(), "event": name, **payload}
     with target.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -195,16 +250,22 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_pdf(self, body: bytes, *, filename: str, sha256: str) -> None:
+    def _send_pdf(self, pdf: ServedPdf) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(pdf.size))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-PaperFlow-Sha256", sha256)
-        self.send_header("X-PaperFlow-Filename", filename)
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("X-PaperFlow-Sha256", pdf.sha256)
+        self.send_header("X-PaperFlow-Filename", pdf.filename)
+        self.send_header("Content-Disposition", f'attachment; filename="{pdf.filename}"')
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            with pdf.path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            # A disconnected loopback client must not retain an open handle.
+            return
 
     def _auth(self) -> bool:
         value = self.headers.get("Authorization", "")
@@ -251,12 +312,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/zotero/pdf/"):
                 paper_uid = unquote(path.removeprefix("/zotero/pdf/"))
-                pdf = self.core.paper_pdf(paper_uid)
-                self._send_pdf(
-                    pdf["content"],
-                    filename=str(pdf["filename"]),
-                    sha256=str(pdf["sha256"]),
-                )
+                self._send_pdf(self.core.paper_pdf(paper_uid))
                 return
             if path.startswith("/zotero/markdown/"):
                 paper_uid = unquote(path.removeprefix("/zotero/markdown/"))
@@ -400,6 +456,7 @@ class PaperFlowCoreService:
         self.worker: threading.Thread | None = None
         self.worker_stop = threading.Event()
         self.active_job_cancel = threading.Event()
+        self.active_cancellation_token = CancellationToken(self.active_job_cancel)
         self.jobs: queue.Queue[dict[str, Any]] = queue.Queue()
         self.job_state_lock = threading.RLock()
         self.stage_lock = threading.RLock()
@@ -440,7 +497,7 @@ class PaperFlowCoreService:
                 "port": self.port,
                 "base_url": self.url,
                 "token_sha256": hashlib.sha256(self.token.encode("utf-8")).hexdigest(),
-                "started_at": iso_beijing(),
+                "started_at": iso_utc(),
                 "network_scope": "loopback-only",
             },
         )
@@ -496,7 +553,7 @@ class PaperFlowCoreService:
                 key=lambda key: str(pairings[key].get("created_at") or ""),
             )
             pairings.pop(oldest, None)
-        now = iso_beijing()
+        now = iso_utc()
         pairings[pairing_id] = {
             "client_name": client_name,
             "secret_sha256": hashlib.sha256(pairing_secret.encode("utf-8")).hexdigest(),
@@ -529,7 +586,7 @@ class PaperFlowCoreService:
         expected = str(record.get("secret_sha256") or "")
         if not expected or not hmac.compare_digest(actual, expected):
             raise ValueError("invalid pairing credentials")
-        now = iso_beijing()
+        now = iso_utc()
         record["last_used_at"] = now
         value["updated_at"] = now
         self._write_pairings(value)
@@ -566,12 +623,12 @@ class PaperFlowCoreService:
                     continue
                 if not isinstance(value, dict):
                     continue
-                if value.get("status") == "running":
+                if value.get("status") in {"running", "cancellation-requested"}:
                     value.update(
                         {
                             "status": "interrupted",
-                            "finished_at": iso_beijing(),
-                            "updated_at": iso_beijing(),
+                            "finished_at": iso_utc(),
+                            "updated_at": iso_utc(),
                             "error": "Core stopped while this job was running",
                         }
                     )
@@ -590,8 +647,12 @@ class PaperFlowCoreService:
     def _update_job_state(self, job_id: str, **updates: Any) -> dict[str, Any]:
         with self.job_state_lock:
             value = _read_job_state(self.root, job_id)
+            current = str(value.get("status") or "")
+            target = str(updates.get("status") or current)
+            if target != current and target not in JOB_TRANSITIONS.get(current, set()):
+                raise ValueError(f"invalid job state transition: {current} -> {target}")
             value.update(updates)
-            value["updated_at"] = iso_beijing()
+            value["updated_at"] = iso_utc()
             _write_job_state(self.root, value)
             return value
 
@@ -626,29 +687,37 @@ class PaperFlowCoreService:
         paper_uid = str(job.get("paper_uid") or "")
         self.active_job_id = job_id
         self.active_job_cancel.clear()
+        token = self.active_cancellation_token
         self._update_job_state(
             job_id,
             status="running",
-            started_at=iso_beijing(),
+            started_at=iso_utc(),
         )
         _append_event(self.root, "jobs", {"job_id": job_id, "kind": kind, "paper_uid": paper_uid, "status": "running"})
         result: dict[str, Any] = {"job_id": job_id, "kind": kind, "paper_uid": paper_uid}
         try:
+            token.raise_if_cancelled()
             workspace = self.root / ".paperflow/workspace.yaml"
             if standalone(self.root):
                 if kind == "analysis":
                     from paperflow.zotero.standalone_ai import analyze_standalone
 
+                    token.raise_if_cancelled()
                     value = analyze_standalone(
                         self.root,
                         paper_uid,
                         provider_override=str(job.get("provider") or ""),
                         profile_override=str(job.get("analysis_profile") or ""),
                         model_override=str(job.get("model") or ""),
+                        cancellation_token=token,
                     )
+                    if isinstance(value, dict) and value.get("status") == "aborted":
+                        raise JobCancelled("analysis acknowledged cancellation")
+                    token.raise_if_cancelled(side_effects=True)
                     if job.get("target") in {"zotero", "obsidian", "both"}:
                         from paperflow.zotero.markdown import render_ai_projection
 
+                        token.raise_if_cancelled()
                         value = {
                             "analysis": value,
                             "ai_projection": render_ai_projection(
@@ -657,19 +726,24 @@ class PaperFlowCoreService:
                                 zotero_item_key=str(job.get("zotero_item_key") or ""),
                                 target=str(job["target"]),
                                 apply_changes=True,
+                                cancellation_token=token,
                             ),
                         }
+                        token.raise_if_cancelled(side_effects=True)
                     result.update({"status": "completed", "result": value})
                 elif kind == "render":
                     from paperflow.zotero.markdown import render_ai_projection
 
+                    token.raise_if_cancelled()
                     value = render_ai_projection(
                         self.root,
                         paper_uid,
                         zotero_item_key=str(job.get("zotero_item_key") or ""),
                         target=str(job.get("target") or "zotero"),
                         apply_changes=True,
+                        cancellation_token=token,
                     )
+                    token.raise_if_cancelled(side_effects=True)
                     result.update({"status": "completed", "result": value})
                 elif kind == "subscription-sync":
                     from paperflow.zotero.standalone_sync import sync_core_feed
@@ -688,16 +762,17 @@ class PaperFlowCoreService:
                         if str(value).strip()
                     }
                     configured = (config_value.get("subscriptions") or {}).get("sources") or []
-                    sources = []
+                    standalone_sources: list[dict[str, Any]] = []
                     for source in configured:
                         if not isinstance(source, dict) or not source.get("url"):
                             continue
                         source_name = str(source.get("name") or source.get("url"))
                         if requested and source_name not in requested:
                             continue
-                        sources.append(source)
+                        standalone_sources.append(source)
                     results = []
-                    for source in sources:
+                    for source in standalone_sources:
+                        token.raise_if_cancelled()
                         results.append(
                             sync_core_feed(
                                 self.root,
@@ -709,9 +784,11 @@ class PaperFlowCoreService:
                                 auto_download_pdf=bool(source.get("auto_download_pdf", False)),
                                 auto_render_notes=bool(source.get("auto_render_notes", False)),
                                 capabilities=list(source.get("capabilities") or ["raw", "ai"]),
+                                cancellation_token=token,
                             )
                         )
-                    result.update({"status": "completed", "sources": results, "source_count": len(sources)})
+                        token.raise_if_cancelled(side_effects=True)
+                    result.update({"status": "completed", "sources": results, "source_count": len(standalone_sources)})
                 else:
                     result.update({"status": "skipped", "reason": "standalone-worker-not-implemented"})
             elif not workspace.is_file():
@@ -725,10 +802,11 @@ class PaperFlowCoreService:
                 config = load_config(self.root)
                 _, settings = load_workspace_settings(self.root)
                 requested = {str(value).strip() for value in (job.get("source_names") or []) if str(value).strip()}
-                sources = [source for source in settings.subscriptions.sources if source.enabled and (not requested or source.name in requested)]
+                vault_sources = [source for source in settings.subscriptions.sources if source.enabled and (not requested or source.name in requested)]
                 results = []
                 with FileLock(self.root / ".paperflow/runtime/pipeline.lock"):
-                    for source in sources:
+                    for source in vault_sources:
+                        token.raise_if_cancelled()
                         results.append(sync_feed(
                             self.root,
                             url=source.url,
@@ -739,8 +817,10 @@ class PaperFlowCoreService:
                             auto_download_pdf=source.auto_download_pdf,
                             auto_render_notes=source.auto_render_notes,
                             capabilities=list(source.capabilities),
+                            cancellation_token=token,
                         ))
-                result.update({"status": "completed", "sources": results, "source_count": len(sources)})
+                        token.raise_if_cancelled(side_effects=True)
+                result.update({"status": "completed", "sources": results, "source_count": len(vault_sources)})
             elif kind in {"analysis", "render"}:
                 from paperflow.config import ensure_layout, load_config
                 from paperflow.locking import FileLock
@@ -751,43 +831,57 @@ class PaperFlowCoreService:
                 ensure_layout(config)
                 with FileLock(self.root / ".paperflow/runtime/pipeline.lock"):
                     if kind == "analysis":
+                        token.raise_if_cancelled()
                         analysis_value = analyze_uid(
                             config,
                             paper_uid,
                             provider=job.get("provider"),
+                            cancellation_token=token,
                         )
-                        render_value = render_uid(config, paper_uid)
-                        value: Any = {
+                        token.raise_if_cancelled(side_effects=True)
+                        render_value = render_uid(
+                            config, paper_uid, cancellation_token=token
+                        )
+                        token.raise_if_cancelled(side_effects=True)
+                        pipeline_value: Any = {
                             "analysis": str(analysis_value),
                             "obsidian_projection": str(render_value),
                         }
                     else:
-                        value = render_uid(config, paper_uid)
+                        token.raise_if_cancelled()
+                        pipeline_value = render_uid(
+                            config, paper_uid, cancellation_token=token
+                        )
+                        token.raise_if_cancelled(side_effects=True)
                     if job.get("target") in {"zotero", "obsidian", "both"}:
                         from paperflow.zotero.markdown import render_ai_projection
-                        value = {
-                            "pipeline": value,
+                        token.raise_if_cancelled()
+                        pipeline_value = {
+                            "pipeline": pipeline_value,
                             "ai_projection": render_ai_projection(
                                 self.root,
                                 paper_uid,
                                 zotero_item_key=str(job.get("zotero_item_key") or ""),
                                 target=str(job["target"]),
                                 apply_changes=True,
+                                cancellation_token=token,
                             ),
                         }
-                result.update({"status": "completed", "result": str(value)})
+                        token.raise_if_cancelled(side_effects=True)
+                result.update({"status": "completed", "result": str(pipeline_value)})
             else:
                 result.update({"status": "skipped", "reason": "worker-not-implemented"})
+        except JobCancelled as exc:
+            result.update({"status": "cancelled", "reason": str(exc)})
+        except JobCompletedAfterCancel as exc:
+            result.update(
+                {
+                    "status": "completed-after-cancel-request",
+                    "reason": str(exc),
+                }
+            )
         except Exception as exc:  # worker failures remain observable and do not kill Core
             result.update({"status": "failed", "error": str(exc)})
-        if self.active_job_cancel.is_set():
-            result = {
-                "job_id": job_id,
-                "kind": kind,
-                "paper_uid": paper_uid,
-                "status": "cancelled",
-                "reason": "cancel-requested",
-            }
         persisted_result = result.get("result")
         if persisted_result is None:
             persisted_result = {
@@ -798,7 +892,7 @@ class PaperFlowCoreService:
         self._update_job_state(
             job_id,
             status=str(result.get("status") or "failed"),
-            finished_at=iso_beijing(),
+            finished_at=iso_utc(),
             result=persisted_result,
         )
         _append_event(self.root, "jobs", result)
@@ -899,12 +993,13 @@ class PaperFlowCoreService:
         value = json.loads(path.read_text(encoding="utf-8"))
         return {"ok": True, "paper_uid": paper_uid, "paper": value}
 
-    def paper_pdf(self, paper_uid: str) -> dict[str, Any]:
+    def paper_pdf(self, paper_uid: str) -> ServedPdf:
         """Return one canonical PDF without accepting a caller-supplied path."""
         paper = self.paper(paper_uid)
         if not paper.get("ok"):
             raise FileNotFoundError(f"paper not found: {paper_uid}")
-        record = paper.get("paper") if isinstance(paper.get("paper"), dict) else {}
+        paper_value = paper.get("paper")
+        record: dict[str, Any] = paper_value if isinstance(paper_value, dict) else {}
         relative = str(record.get("paper_pdf_path") or "").strip()
         if not relative:
             raise FileNotFoundError(f"canonical PDF not found: {paper_uid}")
@@ -916,15 +1011,16 @@ class PaperFlowCoreService:
         size = target.stat().st_size
         if size <= 5 or size > MAX_PDF_BYTES:
             raise ValueError("canonical PDF is empty or exceeds 100 MB")
-        content = target.read_bytes()
-        if not content.startswith(b"%PDF-"):
+        with target.open("rb") as stream:
+            header = stream.read(5)
+        if header != b"%PDF-":
             raise ValueError("canonical document is not a PDF")
-        return {
-            "content": content,
-            "filename": f"{_paper_component(paper_uid)}.pdf",
-            "sha256": hashlib.sha256(content).hexdigest(),
-            "size": len(content),
-        }
+        return ServedPdf(
+            path=target,
+            filename=f"{_paper_component(paper_uid)}.pdf",
+            sha256=sha256_file(target),
+            size=size,
+        )
 
     def ai_markdown(self, paper_uid: str, *, item_key: str = "") -> dict[str, Any]:
         """Return rendered AI Markdown without writing to Zotero or the Vault."""
@@ -950,7 +1046,8 @@ class PaperFlowCoreService:
         overwritten with empty Zotero fields, and conflicting non-empty values
         are preserved in a review snapshot instead of silently replaced.
         """
-        snapshot = body.get("paper") if isinstance(body.get("paper"), dict) else body
+        paper_snapshot = body.get("paper")
+        snapshot: dict[str, Any] = paper_snapshot if isinstance(paper_snapshot, dict) else body
         value = _canonical_paper_from_snapshot(snapshot)
         paper_uid = str(value["paper_uid"])
         target = _paper_path(self.root, paper_uid)
@@ -1045,10 +1142,12 @@ class PaperFlowCoreService:
             uploaded = part.stat().st_size
             if uploaded < size:
                 return {"ok": True, "status": "staging", "paper_uid": paper_uid, "offset": uploaded, "total": size}
-            if uploaded != size or part.read_bytes()[:5] != b"%PDF-":
+            with part.open("rb") as stream:
+                header = stream.read(5)
+            if uploaded != size or header != b"%PDF-":
                 part.unlink(missing_ok=True)
                 raise ValueError("staged file is not a complete PDF")
-            actual = hashlib.sha256(part.read_bytes()).hexdigest()
+            actual = sha256_file(part)
             if not hmac.compare_digest(actual, digest):
                 part.unlink(missing_ok=True)
                 raise ValueError("staged PDF SHA-256 mismatch")
@@ -1056,7 +1155,7 @@ class PaperFlowCoreService:
             documents.mkdir(parents=True, exist_ok=True)
             target = documents / f"{component}.pdf"
             if target.is_file():
-                existing = hashlib.sha256(target.read_bytes()).hexdigest()
+                existing = sha256_file(target)
                 if existing != actual:
                     conflict = target.with_name(f"{target.stem}-conflict-{actual[:12]}{target.suffix}")
                     part.replace(conflict)
@@ -1113,8 +1212,10 @@ class PaperFlowCoreService:
                     break
         if not isinstance(record, dict):
             return {"status": "not-analyzed"}
-        identity = record.get("identity") if isinstance(record.get("identity"), dict) else {}
-        analysis = record.get("analysis") if isinstance(record.get("analysis"), dict) else {}
+        identity_value = record.get("identity")
+        identity: dict[str, Any] = identity_value if isinstance(identity_value, dict) else {}
+        analysis_value = record.get("analysis")
+        analysis: dict[str, Any] = analysis_value if isinstance(analysis_value, dict) else {}
         summary_keys = (
             "ai_summary_short", "ai_one_sentence_summary", "ai_reading_recommendation",
             "ai_method_family", "ai_contributions", "ai_experimental_findings",
@@ -1145,8 +1246,10 @@ class PaperFlowCoreService:
                 from paperflow.zotero.feynman import load_answers
 
                 answers = load_answers(self.root, paper_uid)
-                questions = answers.get("questions") if isinstance(answers.get("questions"), list) else []
-                answer_map = answers.get("answers") if isinstance(answers.get("answers"), dict) else {}
+                question_value = answers.get("questions")
+                questions: list[Any] = question_value if isinstance(question_value, list) else []
+                answer_value = answers.get("answers")
+                answer_map: dict[str, Any] = answer_value if isinstance(answer_value, dict) else {}
                 feynman = {"question_count": len(questions), "answered_count": len(answer_map)}
             except (OSError, ValueError, ImportError):
                 pass
@@ -1245,7 +1348,7 @@ class PaperFlowCoreService:
     @classmethod
     def _public_subscription_record(cls, value: dict[str, Any]) -> dict[str, Any]:
         # Never expose local source paths or hashes through the Zotero UI API.
-        public = {
+        public: dict[str, Any] = {
             key: value.get(key)
             for key in (
                 "schema_version", "artifact_permission", "paper_uid", "title", "authors",
@@ -1312,7 +1415,7 @@ class PaperFlowCoreService:
             paper_component = safe_component(paper_uid.replace(":", "_"))
             # Subscription feeds include a feed-id directory, while the
             # local outbox is intentionally flatter. Read both layouts.
-            paths = []
+            paths: list[Path] = []
             for pattern in (
                 f"*/papers/{paper_component}/community/*/*/r*.json",
                 f"papers/{paper_component}/community/*/*/r*.json",
@@ -1358,7 +1461,7 @@ class PaperFlowCoreService:
         if not isinstance(value, dict) or value.get("paper_uid") != paper_uid:
             raise ValueError("subscription inbox identity mismatch")
         value["status"] = {"approve": "approved", "imported": "imported", "dismiss": "dismissed"}[decision]
-        value["updated_at"] = iso_beijing()
+        value["updated_at"] = iso_utc()
         value["decision_at"] = value["updated_at"]
         if item_key:
             value["zotero_item_key"] = item_key
@@ -1407,7 +1510,7 @@ class PaperFlowCoreService:
                     continue
                 if not isinstance(value, dict):
                     continue
-                value.update({"deleted": True, "updated_at": body.get("updated_at") or iso_beijing(), "artifact_permission": "SYSTEM_MANAGED"})
+                value.update({"deleted": True, "updated_at": body.get("updated_at") or iso_utc(), "artifact_permission": "SYSTEM_MANAGED"})
                 PermissionGuard(self.root).authorize(target, "SYSTEM_MANAGED")
                 atomic_json(target, value)
                 updated += 1
@@ -1438,8 +1541,8 @@ class PaperFlowCoreService:
             "page": body.get("page"),
             "position": body.get("position") if isinstance(body.get("position"), (dict, str, list)) else {},
             "tags": [str(tag) for tag in tags],
-            "created_at": str(body.get("created_at") or iso_beijing()),
-            "updated_at": str(body.get("updated_at") or iso_beijing()),
+            "created_at": str(body.get("created_at") or iso_utc()),
+            "updated_at": str(body.get("updated_at") or iso_utc()),
             "deleted": False,
         }
         atomic_json(target, value)
@@ -1640,7 +1743,7 @@ class PaperFlowCoreService:
                     continue
                 if (
                     existing.get("idempotency_key") == idempotency_key
-                    and existing.get("status") in {"queued", "running"}
+                    and existing.get("status") in {"queued", "running", "cancellation-requested"}
                 ):
                     return {
                         "ok": True,
@@ -1661,8 +1764,8 @@ class PaperFlowCoreService:
             "target": target,
             "source_content_hash": source_content_hash,
             "idempotency_key": idempotency_key,
-            "created_at": iso_beijing(),
-            "updated_at": iso_beijing(),
+            "created_at": iso_utc(),
+            "updated_at": iso_utc(),
             "status": "queued",
             "trigger": body.get("trigger", ""),
             "attempt": 0,
@@ -1698,8 +1801,9 @@ class PaperFlowCoreService:
             updated = self._update_job_state(
                 job_id,
                 status="cancelled",
-                finished_at=iso_beijing(),
-                cancelled_at=iso_beijing(),
+                finished_at=iso_utc(),
+                cancellation_requested_at=iso_utc(),
+                cancelled_at=iso_utc(),
                 error=None,
             )
             _append_event(
@@ -1716,11 +1820,17 @@ class PaperFlowCoreService:
         if status == "running":
             if self.active_job_id == job_id:
                 self.active_job_cancel.set()
-            self._update_job_state(
+            updated = self._update_job_state(
                 job_id,
-                cancellation_requested_at=iso_beijing(),
+                status="cancellation-requested",
+                cancellation_requested_at=iso_utc(),
             )
-            return {"ok": True, "job_id": job_id, "status": "running", "cancelled": False}
+            return {
+                "ok": True,
+                "job_id": job_id,
+                "status": updated["status"],
+                "cancelled": False,
+            }
         return {
             "ok": True,
             "job_id": job_id,
@@ -1774,13 +1884,13 @@ class PaperFlowCoreService:
             supersedes=str(body.get("supersedes") or source.get("supersedes") or ""),
         )
         value = snapshot.model_dump(mode="json")
-        paper_id = safe_component(str(value["paper_uid"]))
+        paper_id = safe_storage_component(value["paper_uid"], label="paper_uid")
         relative = (
             Path("papers")
             / paper_id
             / "community"
-            / safe_component(creator)
-            / safe_component(str(value["contribution_id"]))
+            / safe_storage_component(creator, label="creator")
+            / safe_storage_component(value["contribution_id"], label="contribution_id")
             / f"r{value['revision']}.json"
         )
         value.update({
@@ -1802,7 +1912,13 @@ class PaperFlowCoreService:
         relative = Path(str(value.pop("path")))
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("invalid community outbox path")
-        target = self.root / "data/community/outbox" / relative
+        target = resolve_under(
+            data_root(self.root),
+            "community",
+            "outbox",
+            *relative.parts,
+            label="Core Community outbox path",
+        )
         stored = dict(value)
         for key in ("path", "artifact_permission", "network_changes", "requires_user_confirmation"):
             stored.pop(key, None)
@@ -1845,8 +1961,8 @@ class PaperFlowCoreService:
             "job_id": job_id,
             "kind": "subscription-sync",
             "source_names": source_names,
-            "created_at": iso_beijing(),
-            "updated_at": iso_beijing(),
+            "created_at": iso_utc(),
+            "updated_at": iso_utc(),
             "status": "queued",
             "trigger": body.get("trigger", ""),
         }

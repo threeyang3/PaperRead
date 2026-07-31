@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from paperflow._version import __version__
+from paperflow._version import __version__  # noqa: E402
 
 VERSION = __version__
 DIST = ROOT / "dist"
@@ -159,16 +159,6 @@ def main() -> None:
     shutil.copy2(wheel, offline_stage / wheel.name)
     shutil.copy2(ROOT / "scripts/install.ps1", offline_stage / "install.ps1")
     shutil.copy2(ROOT / "scripts/uninstall.ps1", offline_stage / "uninstall.ps1")
-    (offline_stage / "paperflow.cmd").write_text(
-        "@echo off\r\n"
-        "where paperflow >nul 2>nul\r\n"
-        "if errorlevel 1 (\r\n"
-        "  echo PaperFlow is not installed. Run install.ps1 first.\r\n"
-        "  exit /b 1\r\n"
-        ")\r\n"
-        "paperflow %*\r\n",
-        encoding="utf-8",
-    )
     (offline_stage / "OFFLINE-INSTALL.txt").write_text(
         "PaperFlow Offline Installer Bundle\n\n"
         "This archive contains the wheel, installers, documentation, templates, "
@@ -178,7 +168,10 @@ def main() -> None:
         "PowerShell examples:\n"
         "  .\\install.ps1 -Method pipx\n"
         "  .\\install.ps1 -Method uv\n"
-        "  .\\install.ps1 -Method pip\n",
+        "  .\\install.ps1 -Method pip\n\n"
+        "After installation, run the installed `paperflow` console script "
+        "directly. This bundle intentionally contains no same-name command "
+        "wrapper.\n",
         encoding="utf-8",
     )
     (offline_stage / "VERSION").write_text(VERSION + "\n", encoding="utf-8")

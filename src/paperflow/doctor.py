@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 from paperflow.config import Config
 from paperflow.clock import WorkspaceClock
-from paperflow._version import __version__
 from paperflow.ai.providers import make_provider
 from paperflow.sync_safety import find_sync_conflicts
 from paperflow.pdf_resolver import resolve_current_pdf
@@ -24,7 +23,8 @@ def _command(
     timeout: int = 15,
 ) -> tuple[bool, str]:
     executable = shutil.which(name)
-    if not executable: return False, "not found"
+    if not executable:
+        return False, "not found"
     try:
         result = subprocess.run(
             [executable, *(args or ["--version"])],
@@ -35,7 +35,22 @@ def _command(
         output = (result.stdout or result.stderr).strip()
         detail = output.splitlines()[0][:160] if output else executable
         return result.returncode == 0, detail
-    except Exception as exc: return False, str(exc)
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _legacy_community_outbox_status(root: Path) -> tuple[bool, str]:
+    """Report the historical Vault outbox without modifying user records."""
+
+    legacy = root / "data/community/outbox"
+    records = list(legacy.rglob("*.json")) if legacy.is_dir() else []
+    if not records:
+        return True, "not found"
+    return (
+        False,
+        f"{len(records)} record(s) require dry-run comparison and manual review; "
+        "nothing was moved or deleted",
+    )
 
 
 def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
@@ -113,8 +128,12 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         )
     )
     checks.append(("UI locale", cfg.ui_locale.locale in {"zh-CN", "en"}, f"{cfg.ui_locale.locale} ({cfg.ui_locale.source})"))
-    try: sqlite3.connect(root / ".paperflow/state/paperflow.db").execute("select 1"); sqlite_ok = True
-    except Exception: sqlite_ok = False
+    try:
+        with sqlite3.connect(root / ".paperflow/state/paperflow.db") as connection:
+            connection.execute("select 1")
+        sqlite_ok = True
+    except Exception:
+        sqlite_ok = False
     checks.append(("SQLite", sqlite_ok, sqlite3.sqlite_version))
     for display, command in [("Codex CLI", "codex"), ("Claude Code", "claude")]:
         ok, detail = _command(command)
@@ -185,11 +204,17 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
             ("Community outbox", cfg.workspace.paths.community_outbox),
         ]:
             checks.append((display, (root / rule.root).exists(), rule.root))
+        legacy_ok, legacy_detail = _legacy_community_outbox_status(root)
+        checks.append(("Legacy Community outbox", legacy_ok, legacy_detail))
     manifest = root / ".obsidian/plugins/form-flow/manifest.json"
     checks.append(("Form Flow installed", manifest.exists(), str(manifest)))
     enabled = False
-    try: enabled = "form-flow" in json.loads((root / ".obsidian/community-plugins.json").read_text())
-    except Exception: pass
+    try:
+        enabled = "form-flow" in json.loads(
+            (root / ".obsidian/community-plugins.json").read_text()
+        )
+    except Exception:
+        enabled = False
     checks.append(("Form Flow enabled", enabled and manifest.exists(), "form-flow"))
     checks.append(("Form Flow form", (root / "90 System/Forms/添加论文.cform").exists(), "添加论文.cform"))
     checks.append(("Request folder", cfg.path("request_folder").exists(), str(cfg.path("request_folder"))))
@@ -257,10 +282,14 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         )
     )
     if network:
-        try: socket.create_connection(("export.arxiv.org", 443), 10).close(); arxiv_ok = True
-        except Exception: arxiv_ok = False
+        try:
+            socket.create_connection(("export.arxiv.org", 443), 10).close()
+            arxiv_ok = True
+        except Exception:
+            arxiv_ok = False
         checks.append(("arXiv network", arxiv_ok, "export.arxiv.org:443"))
-    else: checks.append(("arXiv network", True, "skipped (use --network)"))
+    else:
+        checks.append(("arXiv network", True, "skipped (use --network)"))
     checks.append(("JSON Schemas", all((root / ".paperflow/schemas" / name).exists() for name in [
         "raw-paper.schema.json", "ai-analysis.schema.json", "user-paper.schema.json",
         "paper-analysis.schema.json", "visual-assets.schema.json",

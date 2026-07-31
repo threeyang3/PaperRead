@@ -7,12 +7,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
-
 from paperflow.community.models import CommunityContribution
 from paperflow.annotations.models import Annotation, PaperReview
 from paperflow.community.privacy import scan_community_contribution
-from paperflow.utils import atomic_json, iso_beijing
+from paperflow.utils import atomic_json, iso_utc
+from paperflow.security.paths import resolve_under, safe_storage_component
 
 
 def canonical_content_sha256(value: dict[str, Any]) -> str:
@@ -108,7 +107,7 @@ def immutable_snapshot(
         "rating": source.get("rating"),
         "anchor": source.get("anchor"),
         "license": license_name,
-        "created_at": str(source.get("created_at") or iso_beijing()),
+        "created_at": str(source.get("created_at") or iso_utc()),
         "extensions": dict(source.get("extensions") or {}),
     }
     public["content_sha256"] = ""
@@ -127,12 +126,20 @@ def build_outbox(
     *,
     dry_run: bool = True,
 ) -> dict[str, Any]:
-    paper_id = contribution.paper_uid.replace(":", "_")
-    relative = (
-        Path("papers") / paper_id / "community" / contribution.creator
-        / contribution.contribution_id / f"r{contribution.revision}.json"
+    paper_id = safe_storage_component(contribution.paper_uid, label="paper_uid")
+    creator = safe_storage_component(contribution.creator, label="creator")
+    contribution_id = safe_storage_component(
+        contribution.contribution_id, label="contribution_id"
     )
-    target = vault / ".paperflow/data/community/outbox" / relative
+    relative = (
+        Path("papers") / paper_id / "community" / creator
+        / contribution_id / f"r{contribution.revision}.json"
+    )
+    target = resolve_under(
+        vault / ".paperflow/data/community/outbox",
+        *relative.parts,
+        label="Community outbox path",
+    )
     result = {
         "dry_run": dry_run,
         "path": relative.as_posix(),
@@ -161,7 +168,9 @@ def build_pr_tree(vault: Path, destination: Path, *, dry_run: bool = True) -> di
         relative = source.relative_to(outbox)
         planned.append(relative.as_posix())
         if not dry_run:
-            target = destination / relative
+            target = resolve_under(
+                destination, *relative.parts, label="Community PR staging path"
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
     return {"dry_run": dry_run, "files": planned, "network_changes": 0}

@@ -93,9 +93,14 @@ include = [
   "src/paperflow/data/records.py",
   "src/paperflow/data/store.py",
   "src/paperflow/doctor.py",
+  "src/paperflow/ai/chatgpt_web_adapter.py",
+  "src/paperflow/community/publisher.py",
+  "src/paperflow/community/subscriber.py",
   "src/paperflow/feed/publisher.py",
   "src/paperflow/feed/subscriber.py",
   "src/paperflow/pdf_resolver.py",
+  "src/paperflow/security/artifacts.py",
+  "src/paperflow/security/paths.py",
   "src/paperflow/pipeline/daily_brief.py",
   "src/paperflow/pipeline/visuals.py",
   "src/paperflow/utils.py",
@@ -115,7 +120,7 @@ include = [
 ]
 
 [tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+select = ["E4", "E7", "E9", "F", "B"]
 
 [tool.ruff.format]
 exclude = [
@@ -123,11 +128,15 @@ exclude = [
   "src/paperflow/data/records.py",
   "src/paperflow/data/store.py",
   "src/paperflow/doctor.py",
+  "src/paperflow/ai/chatgpt_web_adapter.py",
+  "src/paperflow/community/publisher.py",
+  "src/paperflow/community/subscriber.py",
   "src/paperflow/feed/publisher.py",
   "src/paperflow/feed/subscriber.py",
   "src/paperflow/pipeline/daily_brief.py",
   "src/paperflow/pipeline/visuals.py",
   "src/paperflow/utils.py",
+  "src/paperflow/security/artifacts.py",
   "src/paperflow/zotero/core_service.py",
   "src/paperflow/zotero/mapping.py",
   "src/paperflow/zotero/migration.py",
@@ -148,12 +157,18 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [
+  "paperflow.ai.chatgpt_web_adapter",
   "paperflow.clock",
+  "paperflow.community.publisher",
+  "paperflow.community.subscriber",
   "paperflow.data.records",
   "paperflow.data.store",
   "paperflow.feed.publisher",
   "paperflow.feed.subscriber",
   "paperflow.pdf_resolver",
+  "paperflow.security.artifacts",
+  "paperflow.security.paths",
+  "paperflow.zotero.core_service",
   "paperflow.zotero.mapping_index",
 ]
 ignore_errors = false
