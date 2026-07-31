@@ -23,6 +23,17 @@ Feed must still declare its independent data licence; the current public data
 repository uses CC BY 4.0. PyPI upload and remote publication require explicit
 owner authorization.
 
+Every PaperFlow 1.5 Release includes both reader integrations:
+
+- `PaperFlow-Zotero-<version>.xpi` and `zotero-update.json`;
+- `PaperFlow-Obsidian-<version>.zip`, containing the complete
+  `paperflow-automation/` plugin directory;
+- exact `main.js`, `manifest.json`, and `styles.css` assets for Obsidian
+  release installers such as BRAT.
+
+All of these files must appear in `dist/SHA256SUMS` and pass the packaging
+audit before a tag is pushed.
+
 PaperRead and ArXiv-data are released independently. A PaperRead tag publishes
 software artifacts. An ArXiv-data push validates the Feed and builds the
 `ArXiv-data-feed.zip` workflow artifact, but does not create or imply a

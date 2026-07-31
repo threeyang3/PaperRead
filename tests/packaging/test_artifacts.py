@@ -24,8 +24,14 @@ def test_fixed_release_artifacts_and_checksums() -> None:
         f"paperflow-{VERSION}.tar.gz",
         f"PaperFlow-Offline-Installer-{VERSION}.zip",
         f"PaperFlow-Template-Vault-{VERSION}.zip",
+        f"PaperFlow-Obsidian-{VERSION}.zip",
+        f"PaperFlow-Zotero-{VERSION}.xpi",
         f"schemas-{VERSION}.zip",
         f"templates-{VERSION}.zip",
+        "main.js",
+        "manifest.json",
+        "styles.css",
+        "zotero-update.json",
         "SHA256SUMS",
         "migration-notes.md",
     }
@@ -111,6 +117,36 @@ def test_template_vault_is_curated_and_contains_no_papers() -> None:
         for name in names
         for fragment in ["10 Papers", "80 Attachments", ".paperflow/data", ".pdf"]
     )
+
+
+def test_obsidian_release_contains_installable_plugin_assets() -> None:
+    source = ROOT / "integrations/obsidian-paperflow-automation"
+    plugin = DIST / f"PaperFlow-Obsidian-{VERSION}.zip"
+    assert plugin.is_file()
+    with zipfile.ZipFile(plugin) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(
+            archive.read("paperflow-automation/manifest.json")
+        )
+    required = {
+        "paperflow-automation/main.js",
+        "paperflow-automation/manifest.json",
+        "paperflow-automation/styles.css",
+        "paperflow-automation/scheduler-core.js",
+        "paperflow-automation/reading-workspace.js",
+        "paperflow-automation/default-data.json",
+        "paperflow-automation/README.md",
+    }
+    assert required <= names
+    assert manifest["id"] == "paperflow-automation"
+    assert manifest["version"] == VERSION
+    assert not any(
+        name.endswith(("data.json", ".pdf", ".db", ".sqlite", ".log"))
+        for name in names
+        if not name.endswith("default-data.json")
+    )
+    for name in ["main.js", "manifest.json", "styles.css"]:
+        assert (DIST / name).read_bytes() == (source / name).read_bytes()
 
 
 def test_zotero_xpi_is_valid_source_package() -> None:
