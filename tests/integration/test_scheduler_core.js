@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   TIME_ZONE,
   beijingClock,
+  workspaceClock,
   parseLocalTime,
   shouldRunDaily,
   jobArguments,
@@ -18,11 +19,34 @@ const now = new Date("2026-07-17T01:00:00Z");
 const clock = beijingClock(now);
 assert.equal(clock.date, "2026-07-17");
 assert.equal(clock.time, "09:00:00");
+const tokyoClock = workspaceClock(
+  new Date("2026-07-17T15:30:00Z"),
+  "Asia/Tokyo"
+);
+assert.equal(tokyoClock.date, "2026-07-18");
+assert.equal(tokyoClock.time, "00:30:00");
+assert.throws(
+  () => workspaceClock(now, "Mars/Olympus"),
+  /Invalid Workspace timezone/
+);
 assert.equal(
   shouldRunDaily(
     {
       catchUpDailyAfterStartup: true,
+      timezone: "UTC",
       dailyLocalTime: "08:00",
+      runtime: { lastDailyDate: "2026-07-16" }
+    },
+    now
+  ).due,
+  false
+);
+assert.equal(
+  shouldRunDaily(
+    {
+      catchUpDailyAfterStartup: true,
+      timezone: "Asia/Tokyo",
+      dailyLocalTime: "10:00",
       runtime: { lastDailyDate: "2026-07-16" }
     },
     now

@@ -9,9 +9,11 @@ from paperflow.logging_config import configure_logging
 from paperflow.database import Database
 from paperflow.utils import iso_beijing
 from paperflow.retention import cleanup_ai_logs
+from paperflow.sync_safety import assert_no_sync_conflicts
 
 
 def run_daily(cfg: Config, discover_enabled: bool = True) -> dict:
+    assert_no_sync_conflicts(cfg.root)
     run_id = str(uuid.uuid4())
     logger = configure_logging(cfg.root, "daily")
     cleanup_ai_logs(cfg.root, int(cfg.section("retention").get("keep_ai_logs_days", 30)))

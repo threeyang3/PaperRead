@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paperflow"
-version = "1.3.2"
+dynamic = ["version"]
 description = "Local-first, installable AI paper learning workflow for Obsidian"
 readme = "README.md"
 license = "MIT"
@@ -24,10 +24,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=8.3", "respx>=0.21"]
+dev = ["build>=1.2", "hatchling>=1.27", "pytest>=8.3", "respx>=0.21"]
+quality = [
+  "mypy>=1.15",
+  "pip-audit>=2.9",
+  "pytest-cov>=6.1",
+  "ruff>=0.11",
+]
+browser = ["playwright>=1.52"]
 
 [project.scripts]
 paperflow = "paperflow.cli:app"
+
+[tool.hatch.version]
+path = "src/paperflow/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paperflow"]
@@ -37,6 +47,7 @@ exclude = ["**/__pycache__/**", "**/*.pyc"]
 "schemas" = "paperflow/resources/schemas"
 "templates" = "paperflow/resources/templates"
 "integrations" = "paperflow/resources/integrations"
+"prompts" = "paperflow/resources/prompts"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -44,6 +55,7 @@ include = [
   "/schemas",
   "/templates",
   "/integrations",
+  "/prompts",
   "/migrations",
   "/examples",
   "/scripts",
@@ -64,5 +76,84 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", ".paperflow/tests"]
+testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"
+
+[tool.coverage.report]
+fail_under = 70
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["docs/archive", "dist"]
+include = [
+  "scripts/build_release.py",
+  "scripts/check_coverage.py",
+  "src/paperflow/clock.py",
+  "src/paperflow/data/records.py",
+  "src/paperflow/data/store.py",
+  "src/paperflow/doctor.py",
+  "src/paperflow/feed/publisher.py",
+  "src/paperflow/feed/subscriber.py",
+  "src/paperflow/pdf_resolver.py",
+  "src/paperflow/pipeline/daily_brief.py",
+  "src/paperflow/pipeline/visuals.py",
+  "src/paperflow/utils.py",
+  "src/paperflow/zotero/core_service.py",
+  "src/paperflow/zotero/mapping.py",
+  "src/paperflow/zotero/mapping_index.py",
+  "src/paperflow/zotero/migration.py",
+  "src/paperflow/zotero/standalone_sync.py",
+  "tests/feed/test_release_hardening.py",
+  "tests/feed/test_streaming_pdf_download.py",
+  "tests/packaging/test_offline_installer.py",
+  "tests/unit/test_data_release_hardening.py",
+  "tests/unit/test_pdf_resolver.py",
+  "tests/unit/test_timezone.py",
+  "tests/unit/test_zotero_core_lifecycle.py",
+  "tests/unit/test_zotero_mapping_index.py",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.format]
+exclude = [
+  "scripts/build_release.py",
+  "src/paperflow/data/records.py",
+  "src/paperflow/data/store.py",
+  "src/paperflow/doctor.py",
+  "src/paperflow/feed/publisher.py",
+  "src/paperflow/feed/subscriber.py",
+  "src/paperflow/pipeline/daily_brief.py",
+  "src/paperflow/pipeline/visuals.py",
+  "src/paperflow/utils.py",
+  "src/paperflow/zotero/core_service.py",
+  "src/paperflow/zotero/mapping.py",
+  "src/paperflow/zotero/migration.py",
+  "src/paperflow/zotero/standalone_sync.py",
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = ["src/paperflow/resources/"]
+
+[[tool.mypy.overrides]]
+module = ["paperflow.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+  "paperflow.clock",
+  "paperflow.data.records",
+  "paperflow.data.store",
+  "paperflow.feed.publisher",
+  "paperflow.feed.subscriber",
+  "paperflow.pdf_resolver",
+  "paperflow.zotero.mapping_index",
+]
+ignore_errors = false

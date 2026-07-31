@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -8,8 +9,10 @@ from paperflow.models import Analysis, PaperMetadata
 from .schema_validation import validate_analysis
 from .context import select_context
 from paperflow.utils import atomic_write, iso_beijing
+from paperflow.text_quality import validate_text_quality
+from .paths import ai_log_path, prompt_path, provider_runtime_path, schema_path
 
-PROMPT_VERSION = "paper-analysis-v2"
+PROMPT_VERSION = "paper-analysis-v3"
 
 
 def _claude_cli_schema(schema: dict) -> dict:
@@ -45,10 +48,10 @@ class ClaudeAdapter:
         executable = shutil.which(self.executable)
         if not executable:
             raise RuntimeError("Claude Code not found")
-        schema_path = self.root / ".paperflow/schemas/paper-analysis.schema.json"
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        prompt = (self.root / ".paperflow/prompts/paper-analysis-v2.md").read_text(encoding="utf-8")
-        with tempfile.TemporaryDirectory(dir=self.root / ".paperflow/runtime") as temporary:
+        schema_file = schema_path(self.root)
+        schema = json.loads(schema_file.read_text(encoding="utf-8"))
+        prompt = prompt_path(self.root).read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory(dir=provider_runtime_path(self.root)) as temporary:
             work = Path(temporary)
             shutil.copy2(text_path, work / "paper.txt")
             (work / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
@@ -58,13 +61,26 @@ class ClaudeAdapter:
             command.extend(self.extra_args)
             paper_text = select_context(text_path.read_text(encoding="utf-8", errors="replace"))
             full_prompt = prompt + "\n\nMETADATA:\n" + metadata.model_dump_json(indent=2) + "\n\nPAPER TEXT:\n" + paper_text + "\n\nReturn only schema-valid JSON."
-            result = subprocess.run(command, cwd=work, input=full_prompt, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout)
+            environment = dict(os.environ)
+            environment.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
+            result = subprocess.run(
+                command,
+                cwd=work,
+                env=environment,
+                input=full_prompt.encode("utf-8"),
+                capture_output=True,
+                text=False,
+                timeout=self.timeout,
+            )
+            stdout = result.stdout.decode("utf-8", errors="strict")
+            stderr = result.stderr.decode("utf-8", errors="strict")
             log_name = iso_beijing().replace(":", "-") + "-claude.log"
-            atomic_write(self.root / ".paperflow/logs/ai" / log_name, (result.stdout or "") + "\nSTDERR:\n" + (result.stderr or ""))
+            atomic_write(ai_log_path(self.root, log_name), stdout + "\nSTDERR:\n" + stderr)
             if result.returncode != 0:
-                raise RuntimeError(f"Claude analysis failed: {result.stderr[-500:]}")
-            wrapper = json.loads(result.stdout)
+                raise RuntimeError(f"Claude analysis failed: {stderr[-500:]}")
+            wrapper = json.loads(stdout)
             value = wrapper.get("structured_output") or wrapper.get("result") or wrapper
             if isinstance(value, str):
                 value = json.loads(value)
-            return validate_analysis(value, schema_path)
+            validate_text_quality(value, label="claude-analysis")
+            return validate_analysis(value, schema_file)

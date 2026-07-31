@@ -15,6 +15,15 @@ CREATE TABLE IF NOT EXISTS analysis_runs (run_id TEXT PRIMARY KEY, paper_uid TEX
 CREATE TABLE IF NOT EXISTS manual_requests (request_id TEXT PRIMARY KEY, path TEXT, status TEXT, paper_uid TEXT, error TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS failed_jobs (job_id TEXT PRIMARY KEY, payload_json TEXT, attempts INTEGER DEFAULT 0, error TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT);
+CREATE TABLE IF NOT EXISTS annotations (annotation_id TEXT PRIMARY KEY, paper_uid TEXT, kind TEXT, status TEXT, markdown_path TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS annotation_revisions (annotation_id TEXT, revision INTEGER, preferred INTEGER, anchor_json TEXT, method TEXT, confidence REAL, status TEXT, created_at TEXT, PRIMARY KEY(annotation_id, revision));
+CREATE TABLE IF NOT EXISTS annotation_anchors (annotation_id TEXT, revision INTEGER, pdf_version INTEGER, pdf_sha256 TEXT, page INTEGER, selector_json TEXT, PRIMARY KEY(annotation_id, revision));
+CREATE TABLE IF NOT EXISTS reviews (review_id TEXT PRIMARY KEY, paper_uid TEXT, rating INTEGER, markdown_path TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS community_outbox (contribution_id TEXT, revision INTEGER, paper_uid TEXT, creator TEXT, status TEXT, path TEXT, updated_at TEXT, PRIMARY KEY(contribution_id, revision));
+CREATE TABLE IF NOT EXISTS community_subscriptions (feed_id TEXT, contribution_id TEXT, revision INTEGER, creator TEXT, path TEXT, retracted INTEGER DEFAULT 0, updated_at TEXT, PRIMARY KEY(feed_id, contribution_id, revision));
+CREATE TABLE IF NOT EXISTS community_revisions (contribution_id TEXT, revision INTEGER, supersedes TEXT, content_sha256 TEXT, PRIMARY KEY(contribution_id, revision));
+CREATE TABLE IF NOT EXISTS community_retractions (feed_id TEXT, contribution_id TEXT, revision INTEGER, reason TEXT, created_at TEXT, PRIMARY KEY(feed_id, contribution_id, revision));
+CREATE TABLE IF NOT EXISTS community_preferences (preference_key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT);
 """
 
 
@@ -51,7 +60,14 @@ class Database:
         self.conn.commit()
 
     def stats(self) -> dict[str, int]:
-        tables = ["papers", "paper_versions", "discovery_runs", "import_jobs", "analysis_runs", "manual_requests", "failed_jobs"]
+        tables = [
+            "papers", "paper_versions", "discovery_runs", "import_jobs",
+            "analysis_runs", "manual_requests", "failed_jobs", "annotations",
+            "annotation_revisions", "annotation_anchors", "reviews",
+            "community_outbox", "community_subscriptions",
+            "community_revisions", "community_retractions",
+            "community_preferences",
+        ]
         return {t: self.conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in tables}
 
     def add_failed(self, job_id: str, payload: dict[str, Any], error: str) -> None:

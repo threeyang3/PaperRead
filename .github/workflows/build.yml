@@ -12,12 +12,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install build
+      - run: python -m pip install -e ".[dev]"
+      - run: python scripts/check_versions.py
       - run: python scripts/build_release.py
+      - name: Audit release artifacts
+        run: python -m pytest tests/packaging -q
       - name: Install built wheel
         shell: pwsh
-        run: python -m pip install --force-reinstall (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
-      - run: paperflow --help
+        run: |
+          python -m venv "$env:RUNNER_TEMP\paperflow-smoke"
+          $python = "$env:RUNNER_TEMP\paperflow-smoke\Scripts\python.exe"
+          & $python -m pip install (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
+          $paperflow = "$env:RUNNER_TEMP\paperflow-smoke\Scripts\paperflow.exe"
+          & $paperflow --version
+          & $paperflow --help
+          & $paperflow init --non-interactive --vault "$env:RUNNER_TEMP\PaperFlow 测试库"
+          & $paperflow workspace info --vault "$env:RUNNER_TEMP\PaperFlow 测试库"
+          $previousNativePreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          $doctor = & $paperflow doctor --vault "$env:RUNNER_TEMP\PaperFlow 测试库" 2>&1
+          $doctorExit = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+          if ($doctorExit -notin @(0, 1)) { throw "doctor crashed: $doctor" }
+          if (-not ($doctor | Select-String "Workspace schema")) { throw "doctor output incomplete" }
+          $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         with:
           name: paperflow-dist

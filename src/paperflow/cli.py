@@ -4,7 +4,11 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
+import signal
+import urllib.error
+import urllib.request
 from pathlib import Path
 import typer
 from ruamel.yaml import YAML
@@ -21,7 +25,8 @@ from paperflow.pipeline.import_paper import import_paper
 from paperflow.pipeline.inbox import process_inbox
 from paperflow.pipeline.render import render_uid
 from paperflow.pipeline.visuals import refresh_record_visuals
-from paperflow.data.store import persist_layer_records
+from paperflow.data.records import split_legacy_record
+from paperflow.paths.templates import safe_component
 from paperflow.scheduler import windows
 from paperflow.validation import validate_all
 from paperflow.utils import atomic_json, atomic_write, iso_beijing, now_beijing
@@ -43,6 +48,7 @@ from paperflow.paths.service import (
     variables_documentation,
 )
 from paperflow.paths.migrate import migrate_paths
+from paperflow.paths.redirects import plan_redirect_labels, apply_redirect_labels
 from paperflow.workspace import (
     backup_workspace_config,
     init_workspace,
@@ -57,6 +63,16 @@ from paperflow.ai.providers import (
     explain_profile,
     make_provider,
 )
+from paperflow.health import scan_workspace_health
+from paperflow.template_sets import TemplateSetManager
+from paperflow.obsidian.artifacts import apply_user_note_migration, plan_user_note_migration, ensure_user_note, artifact_path
+from paperflow.obsidian.view_model import build_paper_view_model
+from paperflow.zotero import environment as zotero_environment
+from paperflow.zotero.environment import redact_environment
+from paperflow.zotero.core_service import PaperFlowCoreService, read_pairing_token, read_session
+from paperflow.zotero.mapping import apply_links, load_items, plan_links
+from paperflow.zotero.store import runtime_root, state_root
+from paperflow.zotero.cli_commands import attach_zotero_commands
 
 
 def _configure_console_stream(stream) -> None:
@@ -101,6 +117,11 @@ from paperflow.workspace_ops import (
     export_user_data,
     import_user_data,
 )
+from paperflow.workspace_v2 import (
+    apply_workspace_v2,
+    plan_workspace_v2,
+    verify_workspace_v2,
+)
 
 app = typer.Typer(
     help="PaperFlow：本地优先的 AI 论文采集、分析与 Obsidian 学习工作流。",
@@ -121,6 +142,12 @@ publish_app = typer.Typer(help="构建、验证和检查本地公共 Feed。", n
 source_app = typer.Typer(help="管理并同步只读公共 Feed 数据源。", no_args_is_help=True)
 update_app = typer.Typer(help="检查版本信息并迁移 Workspace；不修改程序安装。", no_args_is_help=True)
 paper_app = typer.Typer(help="导入、分析、渲染和验证论文。", no_args_is_help=True)
+templates_app = typer.Typer(help="管理 Paper Workspace 模板集。", no_args_is_help=True)
+zotero_app = typer.Typer(
+    help="检测并维护 PaperFlow 与 Zotero 的安全集成。真实 Zotero 写入必须经插件 API。",
+    no_args_is_help=True,
+)
+zotero_service_app = typer.Typer(help="管理 loopback-only PaperFlow Core 服务。", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(migrate_app, name="migrate")
 app.add_typer(config_app, name="config")
@@ -132,6 +159,14 @@ app.add_typer(publish_app, name="publish")
 app.add_typer(source_app, name="source")
 app.add_typer(update_app, name="update")
 app.add_typer(paper_app, name="paper")
+app.add_typer(templates_app, name="templates")
+app.add_typer(zotero_app, name="zotero")
+zotero_app.add_typer(zotero_service_app, name="service")
+attach_zotero_commands(zotero_app)
+
+from paperflow.cli_features import attach_feature_apps
+
+attach_feature_apps(app, integration_app, migrate_app, workspace_app)
 
 
 @app.callback()
@@ -153,6 +188,395 @@ def cfg():
 
 def _root(vault: Path | None) -> Path:
     return resolve_vault_root(vault)
+
+
+def _service_root(vault: Path | None, core_root: Path | None) -> Path:
+    """Resolve a Vault or a standalone Core data root without guessing.
+
+    A standalone root is deliberately explicit: it must not look like an
+    Obsidian Vault and PaperFlow never creates or migrates Zotero files from
+    this option.  This keeps Zotero-only mode usable when Obsidian is absent.
+    """
+    if vault is not None and core_root is not None:
+        raise typer.BadParameter("--vault and --data-root are mutually exclusive")
+    if core_root is not None:
+        resolved = core_root.expanduser().resolve()
+        if (resolved / ".paperflow").exists():
+            raise typer.BadParameter("--data-root must be a standalone Core directory, not a Vault")
+        if not (resolved / "data").is_dir():
+            raise typer.BadParameter("--data-root is not initialized; run `zotero data-root --apply` first")
+        return resolved
+    if vault is not None:
+        return _root(vault)
+    raise typer.BadParameter("provide either --vault or --data-root")
+
+
+def _persist_zotero_environment(root: Path, report: dict[str, object]) -> str:
+    target = root / ".paperflow/state/zotero-environment.json"
+    atomic_json(target, report)
+    return target.relative_to(root).as_posix()
+
+
+def _echo_json(value: object) -> None:
+    typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+@zotero_app.command("detect")
+def zotero_detect(
+    vault: Path | None = typer.Option(None, "--vault", help="可选的 PaperFlow Vault。"),
+    persist: bool = typer.Option(True, "--persist/--no-persist", help="将本地检测结果写入被 Git 忽略的状态目录。"),
+    redacted: bool = typer.Option(False, "--redacted", help="隐藏本机路径，适合复制到公共审计报告。"),
+):
+    """只读检测 Zotero 安装、活动 Profile、自定义数据目录和 Local API。"""
+    report = zotero_environment.detect_environment()
+    persisted = ""
+    if persist and vault is not None:
+        persisted = _persist_zotero_environment(_root(vault), report)
+    output = redact_environment(report) if redacted else report
+    if persisted:
+        output["persisted_state"] = persisted
+    _echo_json(output)
+
+
+@zotero_app.command("status")
+def zotero_status(
+    vault: Path | None = typer.Option(None, "--vault"),
+    redacted: bool = typer.Option(False, "--redacted"),
+):
+    """显示当前 Zotero 连接状态；Zotero 未启动不被误报为数据库故障。"""
+    report = zotero_environment.detect_environment()
+    output = redact_environment(report) if redacted else report
+    output["ready_for_read_only_integration"] = bool(
+        report["zotero"]["installed"]
+        and any(item["data_dir"]["sqlite"] for item in report["profiles"])
+    )
+    plugins = [item.get("paperflow_plugin", {}) for item in report.get("profiles", [])]
+    output["paperflow_plugin"] = {
+        "installed": any(bool(item.get("installed")) for item in plugins),
+        "active": any(bool(item.get("active")) for item in plugins),
+        "profile_count": sum(1 for item in plugins if item.get("installed")),
+    }
+    output["ready_for_plugin_integration"] = bool(
+        report.get("local_api", {}).get("reachable")
+        and output["paperflow_plugin"]["active"]
+    )
+    output["note"] = (
+        "Local API is reachable; PaperFlow does not start or stop Zotero."
+        if report.get("local_api", {}).get("reachable")
+        else "Local API will become reachable after Zotero is started; PaperFlow does not start or stop Zotero."
+    )
+    _echo_json(output)
+
+
+@zotero_app.command("doctor")
+def zotero_doctor(
+    vault: Path | None = typer.Option(None, "--vault"),
+    redacted: bool = typer.Option(False, "--redacted"),
+):
+    """对 Zotero 集成前置条件做只读诊断，不写入 Zotero。"""
+    report = zotero_environment.detect_environment()
+    checks = {
+        "installed": bool(report["zotero"]["installed"]),
+        "profile_detected": bool(report["profiles"]),
+        "data_directory_resolved": any(
+            item["data_dir"]["exists"] and item["data_dir"]["sqlite"] and item["data_dir"]["storage"]
+            for item in report["profiles"]
+        ),
+        "single_active_profile": report["active_profile_count"] == 1,
+        "api_loopback_only": report["safety"]["network_scope"] == "loopback-only",
+        "database_untouched": not report["safety"]["database_modified"] and not report["safety"]["database_read"],
+    }
+    output = redact_environment(report) if redacted else report
+    output["checks"] = checks
+    plugins = [item.get("paperflow_plugin", {}) for item in report.get("profiles", [])]
+    output["paperflow_plugin"] = {
+        "installed": any(bool(item.get("installed")) for item in plugins),
+        "active": any(bool(item.get("active")) for item in plugins),
+        "profile_count": sum(1 for item in plugins if item.get("installed")),
+    }
+    output["ready_for_plugin_integration"] = bool(
+        report.get("local_api", {}).get("reachable")
+        and output["paperflow_plugin"]["active"]
+    )
+    output["ok"] = all(checks.values())
+    _echo_json(output)
+    if not output["ok"]:
+        raise typer.Exit(1)
+
+
+def _pid_alive(pid: object) -> bool:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    try:
+        os.kill(value, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
+def _is_core_service_pid(pid: object, root: Path) -> bool:
+    """Verify a session PID command line before sending it a stop signal."""
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    if os.name != "nt":
+        return _pid_alive(value)
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"(Get-CimInstance Win32_Process -Filter \"ProcessId={value}\").CommandLine",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    command_line = completed.stdout.decode("utf-8", errors="replace")
+    return (
+        "paperflow.cli zotero service serve" in command_line
+        and str(root) in command_line
+    )
+
+
+@zotero_service_app.command("serve")
+def zotero_service_serve(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+    port: int | None = typer.Option(None, "--port", min=1024, max=65535),
+):
+    """在前台运行 loopback-only Core 服务；供 `service start` 使用。"""
+    root = _service_root(vault, core_root)
+    if port is None and (root / ".paperflow/workspace.yaml").is_file():
+        _, settings = load_workspace_settings(root)
+        port = settings.zotero.environment.core_service_port
+    port = port or 23140
+    service = PaperFlowCoreService(root, port=port)
+    service.start(background=False)
+    try:
+        service.serve_forever()
+    except KeyboardInterrupt:
+        service.stop()
+
+
+@zotero_service_app.command("start")
+def zotero_service_start(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+    port: int | None = typer.Option(None, "--port", min=1024, max=65535),
+):
+    """启动后台 Core 服务；只创建随机会话令牌，不接受命令执行。"""
+    root = _service_root(vault, core_root)
+    if port is None and (root / ".paperflow/workspace.yaml").is_file():
+        _, settings = load_workspace_settings(root)
+        port = settings.zotero.environment.core_service_port
+    port = port or 23140
+    session_path = state_root(root) / "zotero-core-session.json"
+    existing = read_session(root)
+    if existing and _pid_alive(existing.get("pid")):
+        _echo_json({"status": "already-running", "session_state": session_path.relative_to(root).as_posix()})
+        return
+    if existing:
+        session_path.unlink(missing_ok=True)
+    flag = "--data-root" if core_root is not None else "--vault"
+    command = [
+        sys.executable,
+        "-m",
+        "paperflow.cli",
+        "zotero",
+        "service",
+        "serve",
+        flag,
+        str(root),
+        "--port",
+        str(port),
+    ]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+    runtime = runtime_root(root)
+    runtime.mkdir(parents=True, exist_ok=True)
+    process = subprocess.Popen(
+        command,
+        cwd=str(root),
+        stdin=subprocess.DEVNULL,
+        stdout=(runtime / "zotero-core-service.out.log").open("ab"),
+        stderr=(runtime / "zotero-core-service.err.log").open("ab"),
+        creationflags=creationflags,
+        close_fds=os.name != "nt",
+    )
+    session = None
+    for _ in range(50):
+        time.sleep(0.1)
+        session = read_session(root)
+        if not session or not session.get("base_url"):
+            continue
+        try:
+            with urllib.request.urlopen(session["base_url"] + "/health", timeout=0.25):
+                break
+        except (OSError, urllib.error.URLError):
+            continue
+    if not session:
+        if process.poll() is None:
+            process.terminate()
+        raise typer.BadParameter(
+            f"Core service did not publish a live session; inspect {runtime.relative_to(root).as_posix()}/zotero-core-service.err.log"
+        )
+    _echo_json({"status": "started", "pid": session.get("pid"), "base_url": session.get("base_url"), "session_state": session_path.relative_to(root).as_posix(), "root_mode": "standalone" if core_root is not None else "vault"})
+
+
+@zotero_service_app.command("status")
+def zotero_service_status(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+):
+    root = _service_root(vault, core_root)
+    session = read_session(root)
+    if not session:
+        _echo_json({"status": "stopped", "session_state": (state_root(root) / "zotero-core-session.json").relative_to(root).as_posix()})
+        return
+    verified = _is_core_service_pid(session.get("pid"), root)
+    running = _pid_alive(session.get("pid"))
+    state = "running" if verified else ("manual-review" if running else "stale")
+    _echo_json({"status": state, "pid": session.get("pid"), "base_url": session.get("base_url"), "network_scope": "loopback-only"})
+
+
+@zotero_service_app.command("token")
+def zotero_service_token(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+):
+    """显示当前 Core 会话令牌，供用户手动粘贴到 Zotero 插件。
+
+    令牌仅存在于被忽略的 runtime 文件；本命令不会写入日志或 Vault 文档。
+    """
+    root = _service_root(vault, core_root)
+    session = read_session(root)
+    token = read_pairing_token(root)
+    if not session or not token or not _is_core_service_pid(session.get("pid"), root):
+        _echo_json({"status": "unavailable", "reason": "Core is not running"})
+        raise typer.Exit(1)
+    _echo_json({
+        "status": "available",
+        "base_url": session.get("base_url"),
+        "token": token,
+        "warning": "只粘贴到 Zotero 本机偏好设置，不要提交或同步此令牌。",
+    })
+
+
+@zotero_service_app.command("stop")
+def zotero_service_stop(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+):
+    root = _service_root(vault, core_root)
+    session = read_session(root)
+    if not session:
+        _echo_json({"status": "already-stopped"})
+        return
+    if not _is_core_service_pid(session.get("pid"), root):
+        if not _pid_alive(session.get("pid")):
+            (state_root(root) / "zotero-core-session.json").unlink(missing_ok=True)
+            _echo_json({"status": "stale-session-removed"})
+            return
+        _echo_json({"status": "manual-review-required", "reason": "session PID command line was not verified as PaperFlow Core; no process was stopped"})
+        raise typer.Exit(2)
+    try:
+        os.kill(int(session["pid"]), signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        (state_root(root) / "zotero-core-session.json").unlink(missing_ok=True)
+        _echo_json({"status": "stale-session-removed"})
+        return
+    stopped = False
+    for _ in range(30):
+        time.sleep(0.1)
+        if not _is_core_service_pid(session.get("pid"), root):
+            stopped = True
+            break
+    if stopped:
+        (state_root(root) / "zotero-core-session.json").unlink(missing_ok=True)
+        (runtime_root(root) / "zotero-core-session.token").unlink(missing_ok=True)
+        _echo_json({"status": "stopped", "pid": session["pid"]})
+        return
+    _echo_json({"status": "stop-requested", "pid": session["pid"]})
+
+
+@zotero_app.command("collections")
+def zotero_collections(vault: Path = typer.Option(..., "--vault")):
+    """显示配置的 PaperFlow Collection；不访问 Zotero 数据库。"""
+    _, settings = load_workspace_settings(vault)
+    primary = settings.zotero.collections.primary
+    _echo_json({
+        "enabled": settings.zotero.enabled and settings.integrations.zotero.enabled,
+        "primary": primary.model_dump(mode="json"),
+        "source": "workspace configuration",
+        "zotero_write": "plugin-api-only",
+    })
+
+
+@zotero_app.command("ensure-collection")
+def zotero_ensure_collection(
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+):
+    """生成 Collection 计划；实际创建必须由 Zotero 插件公开 API 执行。"""
+    _, settings = load_workspace_settings(vault)
+    primary = settings.zotero.collections.primary
+    result = {
+        "dry_run": not apply_changes,
+        "status": "plugin-required",
+        "collection": primary.model_dump(mode="json"),
+        "database_access": False,
+        "reason": "PaperFlow Core never writes zotero.sqlite; the Zotero plugin must create/reuse the Collection.",
+    }
+    _echo_json(result)
+    if apply_changes:
+        raise typer.Exit(2)
+
+
+@zotero_app.command("link")
+def zotero_link(
+    items_json: Path = typer.Option(..., "--items-json", exists=True, readable=True),
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+):
+    """用 Zotero 插件/API 导出的 JSON 规划论文身份映射，不直接读数据库。"""
+    items = load_items(items_json)
+    plan = plan_links(_root(vault), items)
+    _echo_json(apply_links(_root(vault), plan) if apply_changes else plan)
+
+
+@zotero_app.command("unlink")
+def zotero_unlink(
+    paper_uid: str,
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+):
+    root = _root(vault)
+    from paperflow.paths.templates import safe_component
+
+    path = root / ".paperflow/data/connectors/zotero/mappings" / f"{safe_component(paper_uid.replace(':', '_'))}.json"
+    result = {"paper_uid": paper_uid, "path": path.relative_to(root).as_posix(), "dry_run": not apply_changes, "exists": path.exists()}
+    if apply_changes and path.exists():
+        path.unlink()
+        result["status"] = "unlinked"
+    else:
+        result["status"] = "would-unlink" if path.exists() else "already-unlinked"
+    _echo_json(result)
 
 
 @app.command("init")
@@ -537,6 +961,129 @@ def migrate_history_command(vault: Path | None = typer.Option(None, "--vault")):
     typer.echo(json.dumps(migration_history(_root(vault)), ensure_ascii=False, indent=2))
 
 
+@migrate_app.command("user-notes")
+def migrate_user_notes_command(
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """迁移主论文中的 USER_NOTES 到独立 User Note（默认只预览）。"""
+    root, settings = load_workspace_settings(vault)
+    result = apply_user_note_migration(root, settings) if apply_changes else plan_user_note_migration(root, settings)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@migrate_app.command("redirect-labels")
+def migrate_redirect_labels_command(
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """为旧论文路径兼容桩补充可读标题；不会覆盖用户改写的桩。"""
+    root = _root(vault)
+    result = apply_redirect_labels(root) if apply_changes else plan_redirect_labels(root)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@templates_app.command("list")
+def templates_list(vault: Path | None = typer.Option(None, "--vault")):
+    root = _root(vault)
+    typer.echo(json.dumps(TemplateSetManager(root).list(), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("show")
+def templates_show(set_id: str, vault: Path | None = typer.Option(None, "--vault")):
+    root = _root(vault)
+    manager = TemplateSetManager(root)
+    items = [item for item in manager.list() if item.get("id") == set_id]
+    if not items:
+        raise typer.BadParameter(f"Unknown template set: {set_id}")
+    typer.echo(json.dumps(items[0], ensure_ascii=False, indent=2))
+
+
+@templates_app.command("use")
+def templates_use(set_id: str, vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).use(set_id), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("copy")
+def templates_copy(set_id: str, destination: str = typer.Option("", "--destination"), vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).copy(set_id, destination or None), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("validate")
+def templates_validate(set_id: str | None = typer.Argument(None), vault: Path | None = typer.Option(None, "--vault")):
+    result = TemplateSetManager(_root(vault)).validate(set_id)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@templates_app.command("export")
+def templates_export(set_id: str, output: Path, vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(str(TemplateSetManager(_root(vault)).export(set_id, output)))
+
+
+@templates_app.command("import")
+def templates_import(archive: Path, name: str = typer.Option("", "--name"), vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).import_zip(archive, name or None), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("doctor")
+def templates_doctor(vault: Path | None = typer.Option(None, "--vault")):
+    result = TemplateSetManager(_root(vault)).doctor()
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@templates_app.command("diff")
+def templates_diff(left: str, right: str, vault: Path | None = typer.Option(None, "--vault")):
+    typer.echo(json.dumps(TemplateSetManager(_root(vault)).diff(left, right), ensure_ascii=False, indent=2))
+
+
+@templates_app.command("preview")
+def templates_preview(
+    set_id: str,
+    template_name: str = typer.Option("Paper Hub.md", "--template"),
+    paper_uid: str = typer.Option("", "--paper-uid"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    root, settings = load_workspace_settings(vault)
+    candidates = list((root / ".paperflow/data/papers").glob(f"{paper_uid.replace(':', '_')}.json")) if paper_uid else []
+    if not candidates:
+        raise typer.BadParameter("--paper-uid must reference a local paper")
+    record = json.loads(candidates[0].read_text(encoding="utf-8"))
+    record["_settings"] = settings
+    typer.echo(TemplateSetManager(root).preview(set_id, template_name, record))
+
+
+@migrate_app.command("workspace-v2")
+def migrate_workspace_v2_command(
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """升级到 PaperFlow 1.4 Workspace schema 2，并安全重渲染生成笔记。"""
+    root = _root(vault)
+    result = (
+        apply_workspace_v2(root)
+        if apply_changes
+        else plan_workspace_v2(root)
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@migrate_app.command("verify-workspace-v2")
+def verify_workspace_v2_command(
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    typer.echo(
+        json.dumps(
+            verify_workspace_v2(_root(vault)),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 @workspace_app.command("info")
 def workspace_info(vault: Path | None = typer.Option(None, "--vault")):
     root, settings = load_workspace_settings(vault)
@@ -669,6 +1216,21 @@ def ai_test(
     provider = make_provider(
         selected.provider, root, settings.ai.providers[selected.provider]
     )
+    provider.validate_config()
+    typer.echo(
+        json.dumps(
+            {
+                "selection": explain_profile(
+                    profile, settings.ai.profiles, settings.ai.providers
+                ),
+                "capability": provider.check_available().__dict__,
+                "credentials_read": False,
+                "paper_content_sent": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 @ai_app.command("configure")
@@ -726,23 +1288,6 @@ def ai_configure(
             ensure_ascii=False,
         )
     )
-    provider.validate_config()
-    typer.echo(
-        json.dumps(
-            {
-                "selection": explain_profile(
-                    profile, settings.ai.profiles, settings.ai.providers
-                ),
-                "capability": provider.check_available().__dict__,
-                "credentials_read": False,
-                "paper_content_sent": False,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
-
-
 @ai_app.command("explain-selection")
 def ai_explain_selection(
     paper_uid: str,
@@ -784,9 +1329,9 @@ def ai_set_profile(
         raise typer.BadParameter(
             "reanalyze_when must be identity-changed, never, or always"
         )
-    if reasoning_effort not in {"", "low", "medium", "high", "xhigh"}:
+    if reasoning_effort not in {"", "low", "medium", "high", "xhigh", "max"}:
         raise typer.BadParameter(
-            "reasoning_effort must be low, medium, high, xhigh, or empty"
+            "reasoning_effort must be low, medium, high, xhigh, max, or empty"
         )
     path, local = _local_config(root)
     existed = path.exists()
@@ -828,6 +1373,39 @@ def ai_set_profile(
                     mode="json"
                 ),
                 "credentials_read": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@ai_app.command("web-consent")
+def ai_web_consent(
+    allow_pdf_upload: bool = typer.Option(
+        ..., "--allow-pdf-upload/--deny-pdf-upload"
+    ),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """保存 ChatGPT 网页 PDF 外部上传许可，不保存账号或凭证。"""
+    root, _ = load_workspace_settings(vault)
+    path, local = _local_config(root)
+    provider = (
+        local.setdefault("ai", {})
+        .setdefault("providers", {})
+        .setdefault("chatgpt-web", {})
+    )
+    provider["allow_pdf_upload"] = allow_pdf_upload
+    dump_yaml(path, local)
+    _, resolved = load_workspace_settings(root)
+    typer.echo(
+        json.dumps(
+            {
+                "provider": "chatgpt-web",
+                "allow_pdf_upload": resolved.ai.providers[
+                    "chatgpt-web"
+                ].allow_pdf_upload,
+                "credentials_saved": False,
             },
             ensure_ascii=False,
             indent=2,
@@ -1222,9 +1800,13 @@ def publish_snapshot(
     vault: Path | None = typer.Option(None, "--vault"),
 ):
     root = _root(vault)
+    _, settings = load_workspace_settings(root)
     typer.echo(
         json.dumps(
-            create_snapshot(_feed_output(root, output)),
+            create_snapshot(
+                _feed_output(root, output),
+                timezone_name=settings.timezone,
+            ),
             ensure_ascii=False,
             indent=2,
         )
@@ -1407,6 +1989,8 @@ def source_sync(
             dry_run=dry_run,
             auto_download_pdf=item.auto_download_pdf,
             auto_render_notes=item.auto_render_notes,
+            capabilities=item.capabilities,
+            community_note_root=settings.paths.community_note.root,
         )
         for item in selected
     ]
@@ -1429,6 +2013,21 @@ def source_status(vault: Path | None = typer.Option(None, "--vault")):
             indent=2,
         )
     )
+
+
+@paper_app.command("view-model")
+def paper_view_model(paper_uid: str, vault: Path | None = typer.Option(None, "--vault")):
+    """输出稳定 Paper View Model，供模板调试和维护者验收。"""
+    root, settings = load_workspace_settings(vault)
+    safe_id = paper_uid.replace(":", "_")
+    candidates = list((root / ".paperflow/data/papers").glob(f"{safe_id}.json"))
+    if not candidates:
+        candidates = list((root / ".paperflow/data/papers").glob(f"*{safe_id}*.json"))
+    if not candidates:
+        raise typer.BadParameter(f"Unknown paper_uid: {paper_uid}")
+    record = json.loads(candidates[0].read_text(encoding="utf-8"))
+    record["paper_uid"] = record.get("paper_uid") or paper_uid
+    typer.echo(json.dumps(build_paper_view_model(root, settings, record), ensure_ascii=False, indent=2, default=str))
 
 
 @paper_app.command("add")
@@ -1494,7 +2093,7 @@ def paper_render_all(
 def paper_visuals(
     paper_uid: str = typer.Argument(""),
     all_papers: bool = typer.Option(False, "--all"),
-    max_assets: int = typer.Option(6, "--max-assets", min=1, max=12),
+    max_assets: int = typer.Option(12, "--max-assets", min=0, max=12),
 ):
     """从本地 PDF 提取图注可追溯的关键图片，并安全重渲染论文笔记。"""
     c = cfg()
@@ -1536,7 +2135,27 @@ def _refresh_visual_records(
                 max_assets=max_assets,
             )
             if c.workspace:
-                record["layer_paths"] = persist_layer_records(c.root, record)
+                paper_id = safe_component(
+                    str(
+                        record.get("paper_arxiv_id")
+                        or record["paper_uid"]
+                    ).replace(":", "_")
+                )
+                derived_path = (
+                    c.root / ".paperflow/data/derived" / f"{paper_id}.json"
+                )
+                layer_paths = dict(record.get("layer_paths") or {})
+                layer_paths["derived"] = derived_path.relative_to(c.root).as_posix()
+                record["layer_paths"] = layer_paths
+                _, _, _, derived = split_legacy_record(record)
+                if derived_path.exists():
+                    existing_derived = json.loads(
+                        derived_path.read_text(encoding="utf-8")
+                    )
+                    derived.extensions = dict(
+                        existing_derived.get("extensions") or {}
+                    )
+                atomic_json(derived_path, derived.model_dump(mode="json"))
             atomic_json(path, record)
             render_uid(c, str(record["paper_uid"]))
             results.append(
@@ -1563,9 +2182,9 @@ def _refresh_visual_records(
 
 @migrate_app.command("visual-assets")
 def migrate_visual_assets(
-    max_assets: int = typer.Option(6, "--max-assets", min=1, max=12),
+    max_assets: int = typer.Option(12, "--max-assets", min=0, max=12),
 ):
-    """迁移到模板 v3，并为已有论文生成可重建的视觉资产。"""
+    """为已有论文重建自适应、可追溯的 Derived 视觉资产。"""
     c = cfg()
     with FileLock(c.root / ".paperflow/state/workspace.lock"):
         payload = _apply_visual_assets_migration(c, max_assets=max_assets)
@@ -1582,13 +2201,15 @@ def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
     backup = create_workspace_backup(c.root, label="pre-visual-assets")
     workspace_path = c.root / ".paperflow/workspace.yaml"
     template_names = ["Paper Note Template.md", "Paper Note Template.en.md"]
-    official_v3_hashes = {
-        "Paper Note Template.md": (
-            "4a6ebd51a9226b2f4abe9e39813e03f15d06b6afd883ca610e7e2d9ee4cf0ddf"
-        ),
-        "Paper Note Template.en.md": (
-            "34f4fee88ceda1d41c414beabd2892a5af5a339fcf72f1e5a6069b2b4cebeaac"
-        ),
+    official_previous_hashes = {
+        "Paper Note Template.md": {
+            "4a6ebd51a9226b2f4abe9e39813e03f15d06b6afd883ca610e7e2d9ee4cf0ddf",
+            "e7ff700ed43bb0f2dd72e3eae8cfa002cd1f0ee07f7a1a1821dd257ac6b36e73",
+        },
+        "Paper Note Template.en.md": {
+            "34f4fee88ceda1d41c414beabd2892a5af5a339fcf72f1e5a6069b2b4cebeaac",
+            "72726400b1ead5da93100a245d2fe3ff29814fcaef5b371900c411943e3f356a",
+        },
     }
     template_source = _distribution_resource("templates")
     for name in template_names:
@@ -1601,15 +2222,15 @@ def _apply_visual_assets_migration(c, *, max_assets: int) -> dict[str, object]:
             if target.exists()
             else ""
         )
-        is_official_v3 = target_hash == official_v3_hashes[name]
-        if target_text and target_text != source_text and not is_official_v3:
+        is_official_previous = target_hash in official_previous_hashes[name]
+        if target_text and target_text != source_text and not is_official_previous:
             candidate = target.with_name(target.name + ".new")
             atomic_write(candidate, source_text)
             raise RuntimeError(
                 f"Customized template requires merge review: "
                 f"{candidate.relative_to(c.root).as_posix()}"
             )
-        if target_text != source_text and (not target_text or is_official_v3):
+        if target_text != source_text and (not target_text or is_official_previous):
             atomic_write(target, source_text)
     workspace_data = YAML(typ="safe").load(
         workspace_path.read_text(encoding="utf-8")
@@ -1772,9 +2393,18 @@ def update_workspace(vault: Path | None = typer.Option(None, "--vault")):
     )
 
 @app.command()
-def doctor(network: bool = typer.Option(False, help="同时测试 arXiv 网络连接。")):
+def doctor(
+    network: bool = typer.Option(False, help="同时测试 arXiv 网络连接。"),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        help="要检查的 Obsidian Vault；未提供时使用 PAPERFLOW_VAULT 或当前目录向上查找。",
+    ),
+):
     """检查 Vault、运行时、AI CLI、插件、Bases、PDF 工具和调度器。"""
-    checks = run_doctor(cfg(), network)
+    value = load_config(vault)
+    ensure_layout(value)
+    checks = run_doctor(value, network)
     for item in checks: typer.echo(f"{'OK' if item['ok'] else 'FAIL':4} {item['name']}: {item['detail']}")
     if not all(i["ok"] for i in checks): raise typer.Exit(1)
 
@@ -1863,10 +2493,27 @@ def language():
     locale = cfg().ui_locale
     typer.echo(json.dumps({"locale": locale.locale, "source": locale.source, "paper_originals_translated": False}, ensure_ascii=False))
 
+
+@app.command("health")
+def health():
+    """扫描乱码、缺图、断裂附件、待重分析和同步冲突。"""
+    result = scan_workspace_health(cfg().root)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
 @app.command()
-def audit():
+def audit(
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        help="要审计的 Obsidian Vault；未提供时使用 PAPERFLOW_VAULT 或当前目录向上查找。",
+    ),
+):
     """逐项核对开发计划的本地验收证据，并明确列出仍受阻的系统/UI 项。"""
-    results = acceptance_audit(cfg())
+    value = load_config(vault)
+    ensure_layout(value)
+    results = acceptance_audit(value)
     for item in results:
         typer.echo(f"{'PASS' if item['ok'] else 'BLOCKED' if item['blocker'] else 'FAIL':7} {item['requirement']}: {item['evidence']}")
     if not all(item["ok"] for item in results):
@@ -1901,6 +2548,64 @@ def rebuild_index():
             count += 1
     finally: db.close()
     typer.echo(f"Indexed {count} papers")
+
+
+@app.command("rebuild-relationships")
+def rebuild_relationships_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run"),
+):
+    """重建关系派生层、实体链接和论文笔记中的图谱属性。"""
+    from paperflow.sync_safety import assert_no_sync_conflicts
+
+    c = cfg()
+    records = sorted((c.root / ".paperflow/data/papers").glob("*.json"))
+    planned: list[str] = []
+    for path in records:
+        try:
+            planned.append(
+                str(json.loads(path.read_text(encoding="utf-8"))["paper_uid"])
+            )
+        except (OSError, KeyError, json.JSONDecodeError):
+            planned.append(path.stem.replace("_", ":", 1))
+    if dry_run:
+        typer.echo(
+            json.dumps(
+                {
+                    "dry_run": True,
+                    "papers": planned,
+                    "changes_applied": 0,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    assert_no_sync_conflicts(c.root)
+    results: list[dict[str, str]] = []
+    with FileLock(c.root / ".paperflow/runtime/pipeline.lock"):
+        for paper_uid in planned:
+            try:
+                note = render_uid(c, paper_uid)
+                results.append(
+                    {
+                        "paper_uid": paper_uid,
+                        "status": "rebuilt",
+                        "note": str(note),
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "paper_uid": paper_uid,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+    typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+    if any(item["status"] == "failed" for item in results):
+        raise typer.Exit(1)
+
 
 @app.command("rebuild-bases")
 def rebuild_bases_cmd():

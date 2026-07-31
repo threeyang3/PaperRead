@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/public-raw-paper.schema.json",
+  "title": "PaperFlow Public Raw Paper Record",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "paper_uid",
+    "source",
+    "source_id",
+    "source_version",
+    "metadata",
+    "source_license",
+    "pdf_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "paper_uid": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "source_version": {"type": "integer", "minimum": 1},
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "paper_title": {"type": "string"},
+        "paper_authors": {"type": "array", "items": {"type": "string"}},
+        "paper_year": {"type": ["integer", "null"]},
+        "paper_submitted_date": {"type": ["string", "null"]},
+        "paper_updated_date": {"type": ["string", "null"]},
+        "paper_primary_category": {"type": "string"},
+        "paper_categories": {"type": "array", "items": {"type": "string"}},
+        "paper_abstract": {"type": "string"},
+        "paper_pdf_url": {"type": "string"},
+        "paper_abs_url": {"type": "string"},
+        "paper_doi": {"type": "string"},
+        "paper_license": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "source_license": {"type": "string"},
+    "pdf_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}

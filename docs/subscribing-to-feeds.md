@@ -15,6 +15,11 @@ validated for PDF header, expected hash, and size. Compatible analyses may be
 reused. Local User Data is never overwritten, and all publisher analyses are
 retained.
 
+Subscriptions may request `raw`, `ai`, and `community` capabilities. Existing
+configuration defaults to Raw/AI only. Community revisions and retractions are
+stored in a separate cache and rendered into `70 Community`; they never enter
+personal Annotation/Review or AI.
+
 Published Feed repositories include a generated `.gitattributes` and normalize
 all checksummed text to LF. This is part of the checksum contract: a Feed must
 still validate after a Windows clone with `core.autocrlf=true`.

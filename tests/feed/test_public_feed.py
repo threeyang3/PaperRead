@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import respx
 import httpx
+import fitz
 import zstandard
 
 from paperflow.data.records import (
@@ -28,6 +29,8 @@ from paperflow.feed import (
 )
 from paperflow.feed.git_ops import normalize_github_repository_url
 from paperflow.feed.subscriber import _download_linked_pdf
+from paperflow.community.publisher import build_outbox, immutable_snapshot
+from paperflow.zotero.standalone_sync import sync_core_feed
 from paperflow.workspace import (
     WorkspaceSettings,
     default_workspace_dict,
@@ -106,6 +109,10 @@ def _workspace(tmp_path: Path) -> tuple[Path, str]:
         "raw-paper.schema.json",
         "ai-analysis.schema.json",
         "feed.schema.json",
+        "community-contribution.schema.json",
+        "community-profile.schema.json",
+        "community-retraction.schema.json",
+        "community-manifest.schema.json",
     ]:
         shutil.copy2(repository_root / "schemas" / name, schema_dir / name)
     return root, identity.analysis_id
@@ -119,6 +126,9 @@ def test_build_validate_and_sync_feed_without_user_data(tmp_path: Path) -> None:
 
     assert result["paper_count"] == 1
     assert result["analysis_count"] == 1
+    assert (feed / "feed.yaml").read_text(encoding="utf-8").startswith(
+        "feed_schema_version: 2"
+    )
     assert validate_feed(feed)["ok"]
     assert scan_feed(feed) == []
     all_text = "\n".join(
@@ -153,6 +163,29 @@ def test_build_validate_and_sync_feed_without_user_data(tmp_path: Path) -> None:
     )
     assert repeated["created"] == 0
     assert repeated["reused"] == 2
+
+
+def test_standalone_core_sync_preserves_feed_contract(tmp_path: Path) -> None:
+    publisher, analysis_id = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(publisher, _settings(), feed)
+
+    core = tmp_path / "core"
+    result = sync_core_feed(core, url=str(feed), name="core-feed", trust="metadata-and-ai")
+    assert result["created"] == 2
+    assert result["remote_code_executed"] is False
+    assert list((core / "data/raw/subscriptions").rglob("*.json"))
+    assert list((core / "data/ai/subscriptions").rglob(f"{analysis_id}.json"))
+    inbox = core / "data/subscriptions/inbox/arxiv_2607.00001.json"
+    assert inbox.is_file()
+    inbox_record = json.loads(inbox.read_text(encoding="utf-8"))
+    assert inbox_record["status"] == "pending-confirmation"
+    assert inbox_record["artifact_permission"] == "REMOTE_READ_ONLY"
+    repeated = sync_core_feed(core, url=str(feed), name="core-feed", trust="metadata-and-ai")
+    assert repeated["created"] == 0
+    assert repeated["reused"] == 2
+    assert json.loads(inbox.read_text(encoding="utf-8"))["status"] == "pending-confirmation"
+    assert not (core / ".paperflow").exists()
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="Git not installed")
@@ -218,6 +251,155 @@ def test_publisher_does_not_republish_subscription_cache(
         encoding="utf-8"
     )
     assert "9999.00001" not in text
+
+
+def test_rendered_markdown_edits_cannot_change_published_ai_analysis(
+    tmp_path: Path,
+) -> None:
+    publisher, _ = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(publisher, _settings(), feed)
+    analysis_manifest = json.loads(
+        (feed / "manifests/analyses.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    published_ai = feed / analysis_manifest["path"]
+    before = published_ai.read_bytes()
+    note = publisher / "10 Papers/2026/2607.00001.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "---\ntype: paper\n---\n\nLocally rewritten analysis and user notes.\n",
+        encoding="utf-8",
+    )
+
+    build_feed(publisher, _settings(), feed)
+
+    assert published_ai.read_bytes() == before
+    assert b"Locally rewritten" not in published_ai.read_bytes()
+
+
+def test_community_annotation_round_trip_renders_read_only_local_note(
+    tmp_path: Path,
+) -> None:
+    publisher, _ = _workspace(tmp_path)
+    snapshot = immutable_snapshot(
+        {
+            "contribution_id": "ann-roundtrip",
+            "paper_uid": "arxiv:2607.00001",
+            "kind": "passage-comment",
+            "body": "A published annotation comment.",
+            "tags": ["method"],
+            "anchor": {
+                "pdf_version": 1,
+                "pdf_sha256": "a" * 64,
+                "page": 2,
+                "exact_quote": "A short verified quote.",
+            },
+            "created_at": "2026-07-20T10:00:00+08:00",
+        },
+        creator="threeyang3",
+        license_name="CC-BY-4.0",
+    )
+    build_outbox(publisher, snapshot, dry_run=False)
+    settings = _settings()
+    settings = settings.model_copy(
+        update={
+            "publishing": settings.publishing.model_copy(
+                update={"include_community_contributions": True}
+            )
+        }
+    )
+    feed = tmp_path / "feed"
+    build_feed(publisher, settings, feed)
+    subscriber = tmp_path / "subscriber"
+
+    result = sync_feed(
+        subscriber,
+        url=str(feed),
+        name="community",
+        trust="metadata-and-ai",
+        capabilities=["raw", "ai", "community"],
+    )
+
+    assert result["community"]["accepted"] == 1
+    assert result["community"]["private_user_records_modified"] == 0
+    note = (
+        subscriber
+        / "70 Community/Unclassified/arxiv_2607.00001.community.md"
+    )
+    assert note.is_file()
+    text = note.read_text(encoding="utf-8")
+    assert "# 社区观点 · Safe public paper" in text
+    assert "### 段落评论 · @threeyang3" in text
+    assert "passage-comment" not in text
+    assert "A published annotation comment." in text
+    assert "A short verified quote." in text
+    assert not (subscriber / ".paperflow/data/user").exists()
+
+
+def test_standalone_core_community_subscription_isolated_from_user_data(
+    tmp_path: Path,
+) -> None:
+    publisher, _ = _workspace(tmp_path)
+    snapshot = immutable_snapshot(
+        {
+            "contribution_id": "core-ann-roundtrip",
+            "paper_uid": "arxiv:2607.00001",
+            "kind": "passage-comment",
+            "body": "Core community subscription comment.",
+            "tags": ["method"],
+            "anchor": {
+                "pdf_version": 1,
+                "pdf_sha256": "a" * 64,
+                "page": 2,
+                "exact_quote": "A short verified quote.",
+            },
+            "created_at": "2026-07-20T10:00:00+08:00",
+        },
+        creator="threeyang3",
+        license_name="CC-BY-4.0",
+    )
+    build_outbox(publisher, snapshot, dry_run=False)
+    settings = _settings().model_copy(
+        update={
+            "publishing": _settings().publishing.model_copy(
+                update={"include_community_contributions": True}
+            )
+        }
+    )
+    feed = tmp_path / "core-feed"
+    build_feed(publisher, settings, feed)
+    core = tmp_path / "core"
+    result = sync_core_feed(
+        core,
+        url=str(feed),
+        name="core-community",
+        trust="metadata-and-ai",
+        capabilities=["raw", "ai", "community"],
+    )
+    assert result["community"]["accepted"] == 1
+    assert list((core / "data/community/subscriptions").rglob("r1.json"))
+    note = core / "documents/zotero/arxiv_2607.00001.community.md"
+    assert note.is_file()
+    assert "Core community subscription comment." in note.read_text(encoding="utf-8")
+    assert not (core / "data/user").exists() or not list((core / "data/user").rglob("*"))
+
+
+def test_feed_build_uses_installed_workspace_schemas(tmp_path: Path) -> None:
+    publisher, _ = _workspace(tmp_path)
+    installed = publisher / ".paperflow/schemas"
+    installed.parent.mkdir(parents=True, exist_ok=True)
+    (publisher / "schemas").replace(installed)
+    feed = tmp_path / "feed"
+
+    result = build_feed(publisher, _settings(), feed)
+
+    schema = json.loads(
+        (feed / "schemas/feed.schema.json").read_text(encoding="utf-8")
+    )
+    assert result["validation"]["ok"]
+    assert schema["properties"]["feed_schema_version"]["enum"] == [1, 2]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="Git not installed")
@@ -331,7 +513,10 @@ def test_tampered_feed_and_malicious_manifest_path_are_rejected(
 
 @respx.mock
 def test_linked_pdf_download_validates_header_and_hash(tmp_path: Path) -> None:
-    content = b"%PDF-1.7\nsynthetic"
+    document = fitz.open()
+    document.new_page()
+    content = document.tobytes()
+    document.close()
     digest = __import__("hashlib").sha256(content).hexdigest()
     respx.get("https://example.test/paper.pdf").mock(
         return_value=httpx.Response(200, content=content)
@@ -346,7 +531,7 @@ def test_linked_pdf_download_validates_header_and_hash(tmp_path: Path) -> None:
         },
     }
     assert _download_linked_pdf(tmp_path, item)
-    target = tmp_path / "80 Attachments/Papers/2607.00001.pdf"
+    target = tmp_path / "80 Attachments/Papers/Unclassified/2607.00001/v1.pdf"
     assert target.read_bytes() == content
 
 
@@ -368,7 +553,7 @@ def test_feed_sync_renders_note_with_selected_analysis(tmp_path: Path) -> None:
     )
 
     assert result["rendered_notes"] == 1
-    note = subscriber / "10 Papers/Unclassified/2607.00001.md"
+    note = subscriber / "10 Papers/Unclassified/Safe-public-paper-2607.00001.md"
     assert note.exists()
     text = note.read_text(encoding="utf-8")
     assert "system_selected_analysis_id" in text

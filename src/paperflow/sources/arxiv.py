@@ -8,6 +8,7 @@ from pathlib import Path
 import feedparser
 import httpx
 from paperflow.models import PaperMetadata
+from paperflow.text_quality import validate_text_quality
 from .url_parser import parse_input
 
 API_URL = "https://export.arxiv.org/api/query"
@@ -31,7 +32,10 @@ class ArxivSource:
                     if self.cache_dir is not None:
                         self.cache_dir.mkdir(parents=True, exist_ok=True)
                         (self.cache_dir / f"response-{int(time.time())}-{uuid.uuid4().hex[:8]}.xml").write_bytes(response.content)
-                    return feedparser.parse(response.content)
+                    # arXiv Atom is UTF-8. Passing decoded text avoids
+                    # feedparser/header charset guesses on Windows locales.
+                    xml = response.content.decode("utf-8-sig", errors="strict")
+                    return feedparser.parse(xml)
             except Exception as exc:
                 error = exc
                 if attempt + 1 < self.retries:
@@ -56,7 +60,7 @@ class ArxivSource:
         authors = [a.name for a in e.authors]
         categories = [t.term for t in e.tags]
         pdf_url = next((l.href for l in e.links if getattr(l, "type", "") == "application/pdf"), f"https://arxiv.org/pdf/{arxiv_id}")
-        return PaperMetadata(
+        metadata = PaperMetadata(
             paper_uid=f"arxiv:{arxiv_id}", paper_arxiv_id=arxiv_id,
             paper_arxiv_version=version, paper_title=" ".join(e.title.split()), paper_authors=authors,
             paper_first_author=authors[0] if authors else "", paper_year=_date(e.published).year,
@@ -66,6 +70,8 @@ class ArxivSource:
             paper_abs_url=f"https://arxiv.org/abs/{arxiv_id}v{version}",
             paper_doi=getattr(e, "arxiv_doi", "") or "", paper_published_venue=getattr(e, "arxiv_journal_ref", "") or "",
         )
+        validate_text_quality(metadata.model_dump(mode="json"), label="arxiv")
+        return metadata
 
     def discover(self, query: str, max_results: int = 100) -> list[PaperMetadata]:
         feed = self._query({"search_query": query, "start": 0, "max_results": max_results, "sortBy": "lastUpdatedDate", "sortOrder": "descending"})

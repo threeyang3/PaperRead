@@ -49,16 +49,18 @@ def create_workspace_backup(
         ".paperflow/data/ai",
         ".paperflow/data/user",
         ".paperflow/data/derived",
+        ".paperflow/data/community",
         ".paperflow/schemas",
         "10 Papers",
         "40 Daily Briefs",
         "50 Inbox",
+        "60 Annotations",
+        "60 Reviews",
+        "70 Community",
         "90 System/Forms",
         "90 System/Templates",
         "90 System/Taxonomy",
-        ".obsidian/community-plugins.json",
-        ".obsidian/plugins/form-flow/data.json",
-        ".obsidian/plugins/paperflow-automation/data.json",
+        ".obsidian",
     ]
     manifest: list[dict[str, Any]] = []
     for relative in includes:

@@ -97,7 +97,9 @@ def migrate_paths(
                         "paperflow_redirect: true\n"
                         f"paper_uid: {move['paper_uid']}\n"
                         "---\n\n"
-                        f"# Moved\n\n[[{Path(move['new_path']).with_suffix('').as_posix()}]]\n"
+                        "# 已迁移的论文笔记\n\n"
+                        "这是旧路径兼容入口，实际论文笔记已使用可读文件名。\n\n"
+                        f"→ [[{Path(move['new_path']).with_suffix('').as_posix()}|打开论文笔记]]\n"
                     )
                     atomic_write(old, redirect)
                 else:
@@ -134,6 +136,31 @@ def migrate_paths(
                 snapshot.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(legacy_path, snapshot)
                 atomic_json(legacy_path, record)
+                # The selected Derived layer is also a canonical pointer to
+                # the current Paper Hub/PDF paths.  Keep it in sync with the
+                # legacy composed record so subsequent compose_record() calls
+                # cannot resurrect the old ID-only filename.
+                derived_path = (
+                    root
+                    / ".paperflow/data/derived"
+                    / f"{str(record.get('paper_arxiv_id') or uid).replace(':', '_')}.json"
+                )
+                if derived_path.exists():
+                    derived_snapshot = backup / "files" / derived_path.relative_to(root)
+                    derived_snapshot.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(derived_path, derived_snapshot)
+                    try:
+                        derived_value = json.loads(derived_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        derived_value = {}
+                    derived_layer = dict(derived_value.get("derived") or {})
+                    for move in [item for item in plan["moves"] if item["paper_uid"] == uid]:
+                        if move["kind"] == "note":
+                            derived_layer["note_path"] = move["new_path"]
+                        elif move["kind"] == "pdf":
+                            derived_layer["paper_pdf_path"] = move["new_path"]
+                    derived_value["derived"] = derived_layer
+                    atomic_json(derived_path, derived_value)
             for move in plan["moves"]:
                 if not (root / move["new_path"]).exists():
                     raise RuntimeError(f"Path migration verification failed: {move}")

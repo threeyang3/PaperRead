@@ -14,7 +14,163 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const TIME_ZONE = "Asia/Shanghai";
+function windowsProcessTreeCommand(pid) {
+  const value = Number(pid);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("Refusing to terminate an invalid child PID");
+  }
+  return {
+    command: "taskkill",
+    args: ["/PID", String(value), "/T", "/F"]
+  };
+}
+
+function redactAutomationLog(value) {
+  return String(value || "")
+    .replace(
+      /((?:authorization|api[_-]?key|token|cookie|password)\s*[:=]\s*)[^\s"']+/gi,
+      "$1[REDACTED]"
+    );
+}
+
+async function terminateProcessTree(
+  child,
+  {
+    gracefulMs = 1500,
+    force = true,
+    platform = process.platform,
+    spawnImpl = spawn
+  } = {}
+) {
+  if (!child || !Number.isSafeInteger(Number(child.pid)) || Number(child.pid) <= 0) {
+    return { status: "not-running" };
+  }
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { status: "already-exited", pid: Number(child.pid) };
+  }
+  const pid = Number(child.pid);
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // The process may have exited between the state check and signal.
+  }
+  await new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, Math.max(0, Number(gracefulMs) || 0));
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  if (
+    !force ||
+    child.exitCode !== null ||
+    child.signalCode !== null
+  ) {
+    return { status: "terminated", pid };
+  }
+  if (platform === "win32") {
+    const command = windowsProcessTreeCommand(pid);
+    await new Promise((resolve) => {
+      const killer = spawnImpl(command.command, command.args, {
+        shell: false,
+        windowsHide: true,
+        stdio: "ignore"
+      });
+      killer.once("error", resolve);
+      killer.once("close", resolve);
+    });
+  } else {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The child is already gone.
+      }
+    }
+  }
+  return { status: "forced", pid };
+}
+
+function safePaperId(value) {
+  const result = String(value || "").replace(":", "_");
+  if (!/^[A-Za-z0-9._-]+$/.test(result)) {
+    throw new Error("The active note has an unsafe paper_uid");
+  }
+  return result;
+}
+
+async function ensureMarkdown(app, filePath, content) {
+  const normalized = filePath.replaceAll("\\", "/");
+  let file = app.vault.getAbstractFileByPath(normalized);
+  if (file) return file;
+  const parent = normalized.split("/").slice(0, -1).join("/");
+  if (parent) await app.vault.adapter.mkdir(parent).catch(() => {});
+  return app.vault.create(normalized, content);
+}
+
+async function openReadingWorkspace(app, options = {}) {
+  const paper = app.workspace.getActiveFile();
+  if (!paper || paper.extension !== "md") {
+    throw new Error("Open a generated PaperFlow paper note first");
+  }
+  const metadata = app.metadataCache.getFileCache(paper)?.frontmatter || {};
+  if (metadata.type !== "paper" || !metadata.paper_uid || !metadata.paper_pdf_path) {
+    throw new Error("The active note is not a PaperFlow paper with a local PDF");
+  }
+  const paperId = safePaperId(metadata.paper_uid);
+  const year = String(metadata.paper_year || "Unclassified");
+  const pdf = app.vault.getAbstractFileByPath(String(metadata.paper_pdf_path));
+  if (!pdf) throw new Error(`Local PDF is missing: ${metadata.paper_pdf_path}`);
+
+  const annotationPath = String(
+    options.annotationPath || `60 Annotations/${paperId}/index.md`
+  ).replaceAll("\\", "/");
+  const reviewPath = `60 Reviews/${year}/${paperId}.review.md`;
+  const communityPath = `70 Community/${year}/${paperId}.community.md`;
+  const annotation = await ensureMarkdown(
+    app,
+    annotationPath,
+    `---\ntype: paperflow-annotation-index-note\npaper_uid: ${metadata.paper_uid}\n---\n\n# 标注\n\nPDF++ 复制的标注链接可粘贴到这里；正式标注由 PaperFlow 命令同步。\n`
+  );
+  const review = await ensureMarkdown(
+    app,
+    reviewPath,
+    `---\ntype: paperflow-user-paper-review\nschema_version: 1\nreview_id: review-${paperId}\npaper_uid: ${metadata.paper_uid}\nrating:\ncreated_at:\nupdated_at:\n---\n\n## 摘要\n\n## 优点\n\n## 局限\n\n## 问题\n\n## 复现笔记\n\n## 结论\n`
+  );
+  const community = await ensureMarkdown(
+    app,
+    communityPath,
+    `---\ntype: paperflow-community-note\npaper_uid: ${metadata.paper_uid}\ncommunity_count: 0\n---\n\n# 社区观点\n\n> 社区订阅是只读缓存，不会写入个人标注或个人评审。\n`
+  );
+
+  const pdfLeaf = app.workspace.getLeaf("split", "vertical");
+  await pdfLeaf.openFile(pdf);
+  const annotationLeaf = app.workspace.getRightLeaf(false);
+  if (!annotationLeaf) throw new Error("Unable to create the annotation leaf");
+  await annotationLeaf.openFile(annotation);
+  const reviewLeaf = app.workspace.createLeafBySplit(pdfLeaf, "horizontal");
+  await reviewLeaf.openFile(review);
+  const communityLeaf = app.workspace.getRightLeaf(true);
+  if (!communityLeaf) throw new Error("Unable to create the Community leaf");
+  await communityLeaf.openFile(community);
+  await app.workspace.revealLeaf(pdfLeaf);
+  app.workspace.setActiveLeaf(pdfLeaf, { focus: true });
+  return {
+    paper: paper.path,
+    pdf: pdf.path,
+    annotation: annotation.path,
+    review: review.path,
+    community: community.path
+  };
+}
+
+const DEFAULT_TIME_ZONE = "Asia/Shanghai";
 const CONTROL_VIEW_TYPE = "paperflow-control-center";
 const PROPERTY_LABEL_STYLE_ID = "paperflow-property-labels-zh";
 const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
@@ -33,6 +189,7 @@ const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
   system_requires_manual_review: "需要人工审核",
   paper_uid: "论文唯一标识",
   paper_title: "论文标题",
+  paper_title_display: "显示标题",
   paper_authors: "作者",
   paper_first_author: "第一作者",
   paper_year: "年份",
@@ -67,6 +224,12 @@ const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
   ai_relevance_reason: "相关性依据",
   ai_topic_primary: "主要主题",
   ai_topics: "主题",
+  ai_topic_links: "主题双链",
+  ai_method_links: "方法双链",
+  ai_dataset_links: "数据集双链",
+  paper_cites: "已验证引用",
+  paper_citation_ids: "外部引用标识",
+  ai_related_papers: "语义相关论文",
   ai_method_family: "方法类别",
   ai_task_types: "任务类型",
   ai_robot_platforms: "机器人平台",
@@ -98,17 +261,22 @@ const PAPER_PROPERTY_LABELS_ZH = Object.freeze({
   user_next_review_at: "下次复习时间"
 });
 
-function beijingClock(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(now);
+function workspaceClock(now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(now);
+  } catch (error) {
+    throw new Error(`Invalid Workspace timezone: ${timeZone}`, { cause: error });
+  }
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return {
     date: `${values.year}-${values.month}-${values.day}`,
@@ -124,7 +292,7 @@ function parseLocalTime(value) {
 }
 
 function shouldRunDaily(settings, now = new Date()) {
-  const clock = beijingClock(now);
+  const clock = workspaceClock(now, settings.timezone || DEFAULT_TIME_ZONE);
   return {
     due:
       Boolean(settings.catchUpDailyAfterStartup) &&
@@ -173,6 +341,138 @@ function cleanText(value, label, maximum = 300) {
     throw new Error(`${label}包含无效字符或过长。`);
   }
   return result;
+}
+
+function beijingClock(now = new Date()) {
+  return workspaceClock(now, DEFAULT_TIME_ZONE);
+}
+
+function workspaceTimezoneFromYaml(content) {
+  const match = /^timezone:\s*([^#\r\n]+?)\s*(?:#.*)?$/m.exec(String(content || ""));
+  if (!match) {
+    throw new Error("`.paperflow/workspace.yaml` is missing the top-level timezone");
+  }
+  const timeZone = match[1].trim().replace(/^(["'])(.*)\1$/, "$2");
+  workspaceClock(new Date(0), timeZone);
+  return timeZone;
+}
+
+function boundedMultiline(value, label, maximum = 12000) {
+  const result = String(value || "");
+  if (result.length > maximum || /[\u0000\u000b\u000c\u000e-\u001f\u007f]/.test(result)) {
+    throw new Error(`${label}包含无效字符或过长。`);
+  }
+  return result;
+}
+
+const PDF_PLUS_SELECTION_COMMAND = "pdf-plus:copy-link-to-selection";
+const ANNOTATION_KINDS = new Set(["highlight", "passage-comment", "question", "critique"]);
+const ANNOTATION_MOTIVATIONS = Object.freeze({
+  highlight: "highlighting",
+  "passage-comment": "commenting",
+  question: "questioning",
+  critique: "assessing"
+});
+
+function parsePdfAnnotationLink(value) {
+  const raw = String(value || "").trim().replaceAll("&amp;", "&");
+  const match = /^\[\[([^#|\]]+\.pdf)#([^|\]]+)(?:\|[^\]]*)?\]\]$/i.exec(raw);
+  if (!match) throw new Error("需要指向 PDF 页码的 Obsidian 链接。");
+  const query = new URLSearchParams(match[2]);
+  const page = Number(query.get("page"));
+  if (!Number.isInteger(page) || page < 1) throw new Error("PDF 链接缺少有效页码。");
+  const selection = query.get("selection") || "";
+  if (selection && !/^\d+,\d+,\d+,\d+$/.test(selection)) {
+    throw new Error("PDF++ selection 必须是四个整数；不会把文本伪造成选区。");
+  }
+  const color = selection ? String(query.get("color") || "") : "";
+  if (color && !/^[A-Za-z0-9_-]{1,64}$/.test(color)) throw new Error("PDF++ 颜色无效。");
+  return { raw, path: match[1].replaceAll("\\", "/"), page, selection, color };
+}
+
+function nativePdfPageLink(pdfPath, page = 1) {
+  const normalized = String(pdfPath || "").replaceAll("\\", "/");
+  const number = Math.max(1, Math.trunc(Number(page) || 1));
+  return `[[${normalized}#page=${number}]]`;
+}
+
+function annotationPayload(context, values = {}) {
+  const parsed = parsePdfAnnotationLink(
+    String(values.pdfLink || "").trim() || nativePdfPageLink(context.pdfPath, values.page)
+  );
+  if (parsed.path !== String(context.pdfPath).replaceAll("\\", "/")) {
+    throw new Error("标注链接必须指向当前 PaperFlow 论文的 PDF 版本。");
+  }
+  const kind = String(values.kind || "highlight");
+  if (!ANNOTATION_KINDS.has(kind)) throw new Error(`未知标注类型：${kind}`);
+  return {
+    paperUid: context.paperUid,
+    pdfLink: parsed.raw,
+    pdfVersion: Math.max(1, Math.trunc(Number(context.pdfVersion) || 1)),
+    kind,
+    motivation: ANNOTATION_MOTIVATIONS[kind],
+    selectedText: String(values.selectedText || "").trim(),
+    body: String(values.body || "").trim()
+  };
+}
+
+function paperContextFromFrontmatter(frontmatter, pdfPath = "") {
+  const data = frontmatter || {};
+  if (data.type !== "paper" || !data.paper_uid || !data.paper_pdf_path) return null;
+  const expected = String(data.paper_pdf_path).replaceAll("\\", "/");
+  if (pdfPath && expected !== String(pdfPath).replaceAll("\\", "/")) return null;
+  const version = Number(String(data.paper_arxiv_version || "1").replace(/^v/i, ""));
+  return {
+    paperUid: String(data.paper_uid),
+    pdfPath: expected,
+    pdfVersion: Number.isInteger(version) && version >= 1 ? version : 1
+  };
+}
+
+function activePaperContext(app, requestedFile = null) {
+  const active = requestedFile || app.workspace.getActiveFile?.();
+  if (!active) throw new Error("请先打开 PaperFlow 论文笔记或对应 PDF。");
+  if (active.extension === "md") {
+    const context = paperContextFromFrontmatter(
+      app.metadataCache.getFileCache(active)?.frontmatter
+    );
+    if (context) return context;
+  }
+  if (active.extension === "pdf") {
+    for (const file of app.vault.getMarkdownFiles?.() || []) {
+      const context = paperContextFromFrontmatter(
+        app.metadataCache.getFileCache(file)?.frontmatter,
+        active.path
+      );
+      if (context) return context;
+    }
+  }
+  throw new Error("当前文件没有可验证的 PaperFlow paper_uid 与版本化 PDF 路径。");
+}
+
+async function copyPdfPlusSelectionLink(app, pdfPath, clipboard = globalThis.navigator?.clipboard) {
+  const manager = app.commands;
+  const execute = manager?.executeCommandById;
+  const registered = manager?.commands;
+  if (typeof execute !== "function" || (registered && !registered[PDF_PLUS_SELECTION_COMMAND])) {
+    return { ok: false, reason: "command-unavailable" };
+  }
+  if (!clipboard || typeof clipboard.readText !== "function") {
+    return { ok: false, reason: "clipboard-unavailable" };
+  }
+  try {
+    const invoked = await Promise.resolve(execute.call(manager, PDF_PLUS_SELECTION_COMMAND));
+    if (invoked === false) return { ok: false, reason: "command-rejected" };
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+    const raw = await clipboard.readText();
+    const parsed = parsePdfAnnotationLink(raw);
+    if (!parsed.selection || parsed.path !== String(pdfPath).replaceAll("\\", "/")) {
+      return { ok: false, reason: "no-current-selection" };
+    }
+    return { ok: true, link: parsed.raw };
+  } catch (error) {
+    return { ok: false, reason: "adapter-error", error: String(error?.message || error) };
+  }
 }
 
 function safeName(value, label = "名称") {
@@ -248,7 +548,7 @@ function profileName(value) {
 
 function providerName(value) {
   const result = String(value || "");
-  if (!new Set(["codex", "claude", "mock"]).has(result)) {
+  if (!new Set(["codex", "claude", "chatgpt-web", "mock"]).has(result)) {
     throw new Error(`未知 AI provider：${result}`);
   }
   return result;
@@ -260,6 +560,8 @@ function controlCommands(action, payload = {}) {
       return [["status"]];
     case "doctor":
       return [["doctor"]];
+    case "health":
+      return [["health"]];
     case "inbox":
       return [["inbox"]];
     case "daily":
@@ -277,20 +579,43 @@ function controlCommands(action, payload = {}) {
     case "paper-analyze": {
       const paperUid = cleanText(payload.paperUid, "Paper UID", 300);
       const provider = String(payload.provider || "configured");
-      if (!new Set(["configured", "codex", "claude", "mock"]).has(provider)) {
+      if (!new Set(["configured", "codex", "claude", "chatgpt-web", "mock"]).has(provider)) {
         throw new Error(`未知 AI provider：${provider}`);
       }
       const command = ["paper", "analyze", paperUid];
       if (provider !== "configured") command.push("--provider", provider);
       return [command];
     }
+    case "annotation-create": {
+      const kind = String(payload.kind || "highlight");
+      const motivation = String(payload.motivation || ANNOTATION_MOTIVATIONS[kind] || "");
+      if (!ANNOTATION_KINDS.has(kind)) throw new Error(`未知标注类型：${kind}`);
+      if (motivation !== ANNOTATION_MOTIVATIONS[kind]) throw new Error("标注类型与 motivation 不匹配。");
+      const link = cleanText(payload.pdfLink, "PDF 标注链接", 4000);
+      parsePdfAnnotationLink(link);
+      const command = [
+        "annotation", "create", cleanText(payload.paperUid, "Paper UID", 300), link,
+        "--kind", kind, "--motivation", motivation,
+        "--body", boundedMultiline(payload.body, "标注正文"),
+        "--selected-text", boundedMultiline(payload.selectedText, "所选文本"),
+        "--pdf-version", String(Math.max(1, Math.trunc(Number(payload.pdfVersion) || 1))),
+        "--apply"
+      ];
+      return [command];
+    }
+    case "annotation-index":
+      return [[
+        "annotation", "ensure-index",
+        cleanText(payload.paperUid, "Paper UID", 300),
+        "--apply"
+      ]];
     case "ai-save": {
       const profile = profileName(payload.profile);
       const provider = providerName(payload.provider);
       const model = String(payload.model || "").trim();
       const timeout = Math.min(14400, Math.max(1, Number(payload.timeout) || 1800));
       const reasoningEffort = String(payload.reasoningEffort || "");
-      if (!new Set(["", "low", "medium", "high", "xhigh"]).has(reasoningEffort)) {
+      if (!new Set(["", "low", "medium", "high", "xhigh", "max"]).has(reasoningEffort)) {
         throw new Error(`未知推理强度：${reasoningEffort}`);
       }
       const reanalyzeWhen = String(payload.reanalyzeWhen || "identity-changed");
@@ -300,7 +625,7 @@ function controlCommands(action, payload = {}) {
       if (model.length > 200 || /[\u0000-\u001f\u007f]/.test(model)) {
         throw new Error("模型名称包含无效字符或过长。");
       }
-      return [[
+      const commands = [[
         "ai",
         "set-profile",
         profile,
@@ -317,6 +642,14 @@ function controlCommands(action, payload = {}) {
         "--reanalyze-when",
         reanalyzeWhen
       ]];
+      if (provider === "chatgpt-web") {
+        commands.push([
+          "ai",
+          "web-consent",
+          payload.allowPdfUpload ? "--allow-pdf-upload" : "--deny-pdf-upload"
+        ]);
+      }
+      return commands;
     }
     case "ai-test":
       return [["ai", "test", "--profile", profileName(payload.profile)]];
@@ -355,6 +688,18 @@ function controlCommands(action, payload = {}) {
         "source", "trust", safeName(payload.name, "订阅名称"), mode
       ]];
     }
+    case "templates-list":
+      return [["templates", "list"]];
+    case "templates-validate":
+      return [["templates", "validate"]];
+    case "templates-use": {
+      const setId = safeName(payload.setId || "academic-zh", "模板集 ID");
+      return [["templates", "use", setId]];
+    }
+    case "user-notes-plan":
+      return [["migrate", "user-notes", "--dry-run"]];
+    case "user-notes-apply":
+      return [["migrate", "user-notes", "--apply"]];
     case "publish-status":
       return [["publish", "status"]];
     case "publish-plan":
@@ -433,6 +778,8 @@ function controlCommands(action, payload = {}) {
       return [["retry-failed"]];
     case "rebuild-index":
       return [["rebuild-index"]];
+    case "rebuild-relationships":
+      return [["rebuild-relationships"]];
     case "rebuild-bases":
       return [["rebuild-bases"]];
     case "config-validate":
@@ -464,6 +811,8 @@ function controlCommands(action, payload = {}) {
 const DEFAULT_SETTINGS = {
   enabled: true,
   openControlCenterOnStartup: true,
+  pdfAnnotationEnabled: true,
+  preferPdfPlusSelectionLinks: true,
   inboxIntervalMinutes: 5,
   inboxEventDebounceMs: 1500,
   dailyLocalTime: "08:00",
@@ -474,6 +823,18 @@ const DEFAULT_SETTINGS = {
   autoPublishIntervalMinutes: 60,
   updateCheckEnabled: true,
   updateCheckIntervalMinutes: 360,
+  processTerminationGraceMs: 1500,
+  jobTimeoutSeconds: {
+    default: 1800,
+    inbox: 900,
+    daily: 3600,
+    "source-sync": 1800,
+    "publish-auto": 1800,
+    "update-auto": 900,
+    migration: 3600,
+    "visual-extraction": 3600,
+    analysis: 14400
+  },
   pythonExecutable: "python",
   preferVaultPython: true,
   pythonRelativePath: ".paperflow/.venv/Scripts/python.exe",
@@ -490,6 +851,7 @@ const DEFAULT_SETTINGS = {
     aiReasoningEffort: "high",
     aiFallback: false,
     aiReuseFeed: true,
+    chatgptWebUploadApproved: false,
     aiReanalyzeWhen: "identity-changed",
     sourceName: "community-feed",
     sourceUrl: "",
@@ -522,7 +884,10 @@ const DEFAULT_SETTINGS = {
     lastControlAt: "",
     lastControlAction: "",
     lastControlExitCode: null,
-    lastControlOutput: ""
+    lastControlOutput: "",
+    activeJob: null,
+    lastAbortReason: "",
+    lastAutomationLog: ""
   }
 };
 
@@ -596,6 +961,10 @@ function mergedSettings(value) {
       ...DEFAULT_SETTINGS.runtime,
       ...((value || {}).runtime || {})
     },
+    jobTimeoutSeconds: {
+      ...DEFAULT_SETTINGS.jobTimeoutSeconds,
+      ...((value || {}).jobTimeoutSeconds || {})
+    },
     controlCenter: {
       ...DEFAULT_SETTINGS.controlCenter,
       ...((value || {}).controlCenter || {})
@@ -606,7 +975,20 @@ function mergedSettings(value) {
 class PaperFlowAutomationPlugin extends Plugin {
   async onload() {
     this.settings = mergedSettings(await this.loadData());
+    await this.loadRuntimeState();
+    await this.loadWorkspaceTimezone();
+    this.lastStaticSettings = this.staticSettingsJson();
+    const orphanedJob = this.settings.runtime.activeJob;
     this.runningJob = null;
+    this.activeChild = null;
+    this.activeJob = null;
+    this.activeJobStartedAt = "";
+    this.activeJobAbortReason = "";
+    this.unloading = false;
+    if (orphanedJob) {
+      this.settings.runtime.lastAbortReason = `orphan-recovered:${orphanedJob.action || "unknown"}`;
+      this.settings.runtime.activeJob = null;
+    }
     this.inboxEventTimer = null;
     this.controlSaveTimer = null;
     this.started = false;
@@ -624,11 +1006,50 @@ class PaperFlowAutomationPlugin extends Plugin {
       text("打开 PaperFlow 控制中心", "Open PaperFlow Control Center"),
       () => void this.activateControlCenter()
     );
+    this.addRibbonIcon(
+      "highlighter",
+      text("从当前 PDF 选区创建 PaperFlow 标注", "Create PaperFlow annotation from current PDF selection"),
+      () => void this.openAnnotationModal({ preferSelection: true })
+    );
     this.addCommand({
       id: "open-control-center",
       name: text("打开控制中心", "Open Control Center"),
       callback: () => void this.activateControlCenter()
     });
+    this.addCommand({
+      id: "open-paper-reading-workspace",
+      name: text("打开论文阅读工作区", "Open paper reading workspace"),
+      callback: async () => {
+        try {
+          await this.openPaperReadingWorkspace();
+        } catch (error) {
+          new Notice(
+            text(
+              `无法打开论文阅读工作区：${error.message}`,
+              `Could not open the paper reading workspace: ${error.message}`
+            ),
+            12000
+          );
+        }
+      }
+    });
+    this.addCommand({
+      id: "create-pdf-annotation",
+      name: text("从当前 PDF / 选区创建标注", "Create annotation from current PDF / selection"),
+      callback: () => void this.openAnnotationModal({ preferSelection: true })
+    });
+    if (typeof this.app.workspace.on === "function") {
+      this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+        if (!this.settings.pdfAnnotationEnabled || !["md", "pdf"].includes(file?.extension)) return;
+        menu.addItem((item) => item
+          .setTitle(text("创建 PaperFlow PDF 标注", "Create PaperFlow PDF annotation"))
+          .setIcon("highlighter")
+          .onClick(() => void this.openAnnotationModal({
+            preferSelection: file.extension === "pdf",
+            requestedFile: file
+          })));
+      }));
+    }
     this.addCommand({
       id: "run-inbox-now",
       name: text("立即处理 Inbox", "Process Inbox now"),
@@ -643,6 +1064,15 @@ class PaperFlowAutomationPlugin extends Plugin {
       id: "show-status",
       name: text("显示自动化状态", "Show automation status"),
       callback: () => new Notice(this.statusSummary(), 10000)
+    });
+    this.addCommand({
+      id: "cancel-current-job",
+      name: text("取消当前 PaperFlow 任务", "Cancel current PaperFlow job"),
+      checkCallback: (checking) => {
+        const available = Boolean(this.activeChild);
+        if (!checking && available) void this.cancelActiveJob("user");
+        return available;
+      }
     });
     this.addSettingTab(new PaperFlowAutomationSettingTab(this.app, this));
 
@@ -665,6 +1095,7 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   onunload() {
+    this.unloading = true;
     this.started = false;
     this.propertyLabelStyle?.remove();
     this.propertyLabelStyle = null;
@@ -676,8 +1107,53 @@ class PaperFlowAutomationPlugin extends Plugin {
       window.clearTimeout(this.controlSaveTimer);
       this.controlSaveTimer = null;
     }
+    if (this.activeChild) {
+      void this.cancelActiveJob("unload");
+    }
     this.app.workspace.detachLeavesOfType?.(CONTROL_VIEW_TYPE);
-    this.updateStatus(text("PaperFlow 自动化：已停止", "PaperFlow automation: stopped"));
+    if (!this.activeChild) {
+      this.updateStatus(text("PaperFlow 自动化：已停止", "PaperFlow automation: stopped"));
+    }
+  }
+
+  async openAnnotationModal({ preferSelection = false, requestedFile = null } = {}) {
+    if (!this.settings.pdfAnnotationEnabled) {
+      new Notice(text("PDF 标注入口已在设置中关闭。", "PDF annotation entry is disabled in settings."));
+      return;
+    }
+    try {
+      const context = activePaperContext(this.app, requestedFile);
+      let initialLink = nativePdfPageLink(context.pdfPath, 1);
+      let adapter = { ok: false, reason: "manual" };
+      if (preferSelection && this.settings.preferPdfPlusSelectionLinks) {
+        adapter = await copyPdfPlusSelectionLink(this.app, context.pdfPath);
+        if (adapter.ok) initialLink = adapter.link;
+      }
+      new PaperFlowAnnotationModal(this.app, this, context, initialLink, adapter).open();
+    } catch (error) {
+      new Notice(
+        text(`无法创建 PDF 标注：${error.message}`, `Could not create PDF annotation: ${error.message}`),
+        12000
+      );
+    }
+  }
+
+  async openPaperReadingWorkspace() {
+    const context = activePaperContext(this.app);
+    const result = await this.runControlAction("annotation-index", {
+      paperUid: context.paperUid
+    });
+    if (result.code !== 0) {
+      throw new Error(result.stderr || "Unable to refresh the annotation index");
+    }
+    let payload;
+    try {
+      payload = JSON.parse(result.stdout);
+    } catch {
+      throw new Error("PaperFlow returned an invalid annotation index path");
+    }
+    if (!payload.path) throw new Error("PaperFlow did not return an annotation index path");
+    return openReadingWorkspace(this.app, { annotationPath: payload.path });
   }
 
   installLocalizedPropertyLabels() {
@@ -691,7 +1167,49 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    const serialized = this.staticSettingsJson();
+    if (serialized !== this.lastStaticSettings) {
+      await this.saveData(JSON.parse(serialized));
+      this.lastStaticSettings = serialized;
+    }
+    await this.saveRuntimeState();
+  }
+
+  runtimeStatePath() {
+    return path.resolve(this.vaultRoot(), ".paperflow", "runtime", "plugin-state.json");
+  }
+
+  staticSettingsJson() {
+    const value = { ...this.settings };
+    delete value.runtime;
+    return JSON.stringify(value);
+  }
+
+  async loadRuntimeState() {
+    const target = this.runtimeStatePath();
+    try {
+      this.settings.runtime = {
+        ...DEFAULT_SETTINGS.runtime,
+        ...JSON.parse(await fs.promises.readFile(target, "utf8"))
+      };
+    } catch {
+      this.settings.runtime = {
+        ...DEFAULT_SETTINGS.runtime,
+        ...(this.settings.runtime || {})
+      };
+    }
+  }
+
+  async saveRuntimeState() {
+    const target = this.runtimeStatePath();
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    const temporary = `${target}.tmp`;
+    await fs.promises.writeFile(
+      temporary,
+      `${JSON.stringify(this.settings.runtime, null, 2)}\n`,
+      "utf8"
+    );
+    await fs.promises.rename(temporary, target);
   }
 
   scheduleControlSettingsSave() {
@@ -746,7 +1264,8 @@ class PaperFlowAutomationPlugin extends Plugin {
       text("PaperFlow 自动化", "PaperFlow automation"),
       `${text("状态", "Status")}: ${this.settings.enabled ? text("已启用", "enabled") : text("已停用", "disabled")}`,
       `${text("当前作业", "Running")}: ${this.runningJob || text("无", "none")}`,
-      `${text("每日时间", "Daily time")}: ${this.settings.dailyLocalTime} Asia/Shanghai`,
+      `${text("每日时间", "Daily time")}: ${this.settings.dailyLocalTime} ${this.settings.timezone}`,
+      `${text("调度配置", "Scheduler config")}: ${this.schedulerConfigurationError || "OK"}`,
       `${text("Inbox 间隔", "Inbox interval")}: ${this.settings.inboxIntervalMinutes} min`,
       `${text("最近每日运行", "Last daily")}: ${runtime.lastDailyAt || "-"}`,
       `${text("最近 Inbox 运行", "Last Inbox")}: ${runtime.lastInboxAt || "-"}`,
@@ -766,6 +1285,15 @@ class PaperFlowAutomationPlugin extends Plugin {
     }
     if (!this.settings.enabled) {
       this.updateStatus(text("PaperFlow 自动化：已停用", "PaperFlow automation: disabled"));
+      return;
+    }
+    if (this.schedulerConfigurationError) {
+      const message = text(
+        `PaperFlow 自动化：时区配置错误：${this.schedulerConfigurationError}`,
+        `PaperFlow automation: timezone configuration error: ${this.schedulerConfigurationError}`
+      );
+      this.updateStatus(message);
+      new Notice(message, 12000);
       return;
     }
     await this.writeLocaleMarker();
@@ -905,10 +1433,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       this.settings.preferVaultPython && validVaultPython
         ? vaultPython
         : String(this.settings.pythonExecutable || "python");
-    const runtimeSource = path.resolve(root, ".paperflow", "src");
-    const source = fs.existsSync(runtimeSource)
-      ? runtimeSource
-      : path.resolve(root, "src");
+    const source = "";
 
     this.runningJob = kind;
     this.updateStatus(text(`PaperFlow：正在运行 ${kind}`, `PaperFlow: running ${kind}`));
@@ -917,8 +1442,9 @@ class PaperFlowAutomationPlugin extends Plugin {
 
     try {
       const result = await this.spawnPaperFlow(python, source, root, jobArguments(kind));
+      if (this.unloading) return;
       const now = new Date();
-      const clock = beijingClock(now);
+      const clock = workspaceClock(now, this.settings.timezone);
       const timestamp = now.toISOString();
       if (kind === "daily") {
         this.settings.runtime.lastDailyDate = clock.date;
@@ -974,7 +1500,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       if (trigger === "manual") new Notice(message, 12000);
     } finally {
       this.runningJob = null;
-      await this.saveSettings();
+      if (!this.unloading) await this.saveSettings();
     }
   }
 
@@ -1009,10 +1535,7 @@ class PaperFlowAutomationPlugin extends Plugin {
       this.settings.preferVaultPython && validVaultPython
         ? vaultPython
         : String(this.settings.pythonExecutable || "python");
-    const runtimeSource = path.resolve(root, ".paperflow", "src");
-    const source = fs.existsSync(runtimeSource)
-      ? runtimeSource
-      : path.resolve(root, "src");
+    const source = "";
     const started = Date.now();
     const output = [];
     let result = { code: 0, stdout: "", stderr: "" };
@@ -1029,6 +1552,7 @@ class PaperFlowAutomationPlugin extends Plugin {
           root,
           ["-m", "paperflow.cli", ...argumentsList]
         );
+        if (this.unloading) return result;
         const detail = (result.stdout || result.stderr || "").trim();
         if (detail) output.push(detail);
         if (result.code !== 0) break;
@@ -1058,39 +1582,260 @@ class PaperFlowAutomationPlugin extends Plugin {
       return { code: -1, stdout: "", stderr: message };
     } finally {
       this.runningJob = null;
-      await this.saveSettings();
-      this.refreshControlCenter();
+      if (!this.unloading) {
+        await this.saveSettings();
+        this.refreshControlCenter();
+      }
     }
   }
 
-  spawnPaperFlow(python, source, root, args) {
+  timeoutForJob(kind = "") {
+    const configured = this.settings.jobTimeoutSeconds || {};
+    const key = String(kind || "default");
+    const value = Number(configured[key] ?? configured.default ?? 1800);
+    return Math.min(24 * 60 * 60, Math.max(1, value));
+  }
+
+  async loadWorkspaceTimezone() {
+    const target = path.resolve(
+      this.vaultRoot(),
+      ".paperflow",
+      "workspace.yaml"
+    );
+    try {
+      this.settings.timezone = workspaceTimezoneFromYaml(
+        await fs.promises.readFile(target, "utf8")
+      );
+      this.schedulerConfigurationError = "";
+    } catch (error) {
+      this.schedulerConfigurationError = String(error?.message || error);
+    }
+  }
+
+  async cancelActiveJob(reason = "user") {
+    const child = this.activeChild;
+    if (!child) return false;
+    this.activeJobAbortReason = String(reason || "user");
+    this.settings.runtime.lastAbortReason = this.activeJobAbortReason;
+    await terminateProcessTree(child, {
+      gracefulMs: this.settings.processTerminationGraceMs,
+      force: true
+    });
+    return true;
+  }
+
+  spawnPaperFlow(python, source, root, args, options = {}) {
     return new Promise((resolve, reject) => {
-      const child = spawn(python, args, {
+      if (
+        this.activeChild &&
+        this.activeChild.exitCode === null &&
+        this.activeChild.signalCode === null
+      ) {
+        reject(new Error("A PaperFlow child process is already running"));
+        return;
+      }
+      const action = String(options.action || this.runningJob || "paperflow");
+      const timeoutSeconds = Number(
+        options.timeoutSeconds ?? this.timeoutForJob(action)
+      );
+      const logDirectory = path.resolve(root, ".paperflow", "logs", "automation");
+      fs.mkdirSync(logDirectory, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const safeAction = action.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const logPath = path.resolve(logDirectory, `${stamp}-${safeAction}.log`);
+      const log = fs.createWriteStream(logPath, {
+        encoding: "utf8",
+        flags: "a"
+      });
+      let child;
+      try {
+        child = spawn(python, args, {
         cwd: root,
         shell: false,
         windowsHide: true,
+        detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
           PAPERFLOW_VAULT: root,
-          ...(fs.existsSync(source)
-            ? {
-                PYTHONPATH: process.env.PYTHONPATH
-                  ? `${source}${path.delimiter}${process.env.PYTHONPATH}`
-                  : source
-              }
-            : {}),
           PYTHONUTF8: "1"
         }
       });
+      } catch (error) {
+        log.end();
+        reject(error);
+        return;
+      }
+      this.activeChild = child;
+      this.activeJob = action;
+      this.activeJobStartedAt = new Date().toISOString();
+      this.activeJobAbortReason = "";
+      this.settings.runtime.activeJob = {
+        action,
+        pid: Number(child.pid),
+        started_at: this.activeJobStartedAt,
+        log: path.relative(root, logPath).replaceAll("\\", "/")
+      };
+      this.settings.runtime.lastAutomationLog =
+        path.relative(root, logPath).replaceAll("\\", "/");
       let stdout = "";
       let stderr = "";
       const append = (current, chunk) => (current + chunk.toString("utf8")).slice(-16000);
-      child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk); });
-      child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk); });
-      child.once("error", reject);
-      child.once("close", (code) => resolve({ code: Number(code ?? -1), stdout, stderr }));
+      const writeLog = (streamName, chunk) => {
+        log.write(`[${streamName}] ${redactAutomationLog(chunk.toString("utf8"))}`);
+      };
+      child.stdout.on("data", (chunk) => {
+        stdout = append(stdout, chunk);
+        writeLog("stdout", chunk);
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr = append(stderr, chunk);
+        writeLog("stderr", chunk);
+      });
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled || this.activeChild !== child) return;
+        this.activeJobAbortReason = "timeout";
+        this.settings.runtime.lastAbortReason = "timeout";
+        void terminateProcessTree(child, {
+          gracefulMs: options.gracefulMs ?? this.settings.processTerminationGraceMs,
+          force: true
+        });
+      }, Math.max(1, timeoutSeconds * 1000));
+      const clearActive = () => {
+        clearTimeout(timeout);
+        log.end();
+        if (this.activeChild === child) {
+          this.activeChild = null;
+          this.activeJob = null;
+          this.settings.runtime.activeJob = null;
+        }
+      };
+      child.once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearActive();
+        reject(error);
+      });
+      child.once("close", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        const abortReason = this.activeJobAbortReason;
+        clearActive();
+        const exitCode = abortReason === "timeout"
+          ? 124
+          : abortReason
+            ? 130
+            : Number(code ?? -1);
+        resolve({
+          code: exitCode,
+          stdout,
+          stderr,
+          signal: signal || "",
+          timedOut: abortReason === "timeout",
+          cancelled: Boolean(abortReason) && abortReason !== "timeout",
+          abortReason,
+          logPath
+        });
+      });
     });
+  }
+}
+
+class PaperFlowAnnotationModal extends Modal {
+  constructor(app, plugin, context, initialLink, adapter) {
+    super(app);
+    this.plugin = plugin;
+    this.context = context;
+    this.initialLink = initialLink;
+    this.adapter = adapter;
+  }
+
+  field(parent, labelText, tag = "input") {
+    const label = parent.createEl("label", { cls: "paperflow-annotation-field" });
+    label.createEl("span", { text: labelText });
+    return label.createEl(tag);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("paperflow-annotation-modal");
+    contentEl.createEl("div", {
+      cls: "paperflow-eyebrow",
+      text: text("私有标注 / 中央写入", "PRIVATE ANNOTATION / CENTRAL WRITER")
+    });
+    contentEl.createEl("h2", {
+      text: text("创建 PDF 标注", "Create PDF annotation")
+    });
+    contentEl.createEl("p", {
+      text: this.adapter.ok
+        ? text("已从 PDF++ 读取并校验当前选区链接。", "The current PDF++ selection link was captured and verified.")
+        : text(
+            "未能可靠读取 PDF 选区。请粘贴 PDF++ 复制的选区链接，或填写页码；PaperFlow 不会伪造选区。",
+            "The PDF selection could not be read reliably. Paste a PDF++ selection link or enter a page; PaperFlow will not fabricate a selection."
+          )
+    });
+    contentEl.createEl("small", {
+      text: `${this.context.paperUid} · ${this.context.pdfPath} · v${this.context.pdfVersion}`
+    });
+
+    const parsed = parsePdfAnnotationLink(this.initialLink);
+    const page = this.field(contentEl, text("页码", "Page"));
+    page.type = "number";
+    page.min = "1";
+    page.value = String(parsed.page);
+    const link = this.field(contentEl, text("PDF / PDF++ 链接", "PDF / PDF++ link"));
+    link.value = this.initialLink;
+    page.addEventListener("change", () => {
+      try {
+        const current = parsePdfAnnotationLink(link.value);
+        if (!current.selection) link.value = nativePdfPageLink(this.context.pdfPath, page.value);
+      } catch {
+        link.value = nativePdfPageLink(this.context.pdfPath, page.value);
+      }
+    });
+
+    const kind = this.field(contentEl, text("类型", "Type"), "select");
+    for (const [value, zh, en] of [
+      ["highlight", "高亮", "Highlight"],
+      ["passage-comment", "评论", "Comment"],
+      ["question", "问题", "Question"],
+      ["critique", "批评", "Critique"]
+    ]) {
+      const option = kind.createEl("option", { text: text(zh, en) });
+      option.value = value;
+    }
+    kind.value = "highlight";
+    const selectedText = this.field(contentEl, text("所选文本（可选）", "Selected text (optional)"), "textarea");
+    selectedText.placeholder = text("粘贴实际看到的文字；不会写进 selection= 坐标", "Paste the text you actually see; it is not used as selection= coordinates");
+    const body = this.field(contentEl, text("评论 / 问题（可选）", "Comment / question (optional)"), "textarea");
+
+    const actions = contentEl.createDiv({ cls: "paperflow-modal-actions" });
+    const cancel = actions.createEl("button", { text: text("取消", "Cancel") });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", {
+      cls: "mod-cta",
+      text: text("保存并刷新标注索引", "Save and refresh annotation index")
+    });
+    save.addEventListener("click", async () => {
+      try {
+        const payload = annotationPayload(this.context, {
+          pdfLink: link.value,
+          page: page.value,
+          kind: kind.value,
+          selectedText: selectedText.value,
+          body: body.value
+        });
+        const result = await this.plugin.runControlAction("annotation-create", payload);
+        if (result.code === 0) this.close();
+      } catch (error) {
+        new Notice(text(`标注未保存：${error.message}`, `Annotation was not saved: ${error.message}`), 12000);
+      }
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
   }
 }
 
@@ -1488,7 +2233,12 @@ class PaperFlowControlCenterView extends ItemView {
     copy.createEl("strong", { text: title });
     entry.createEl("p", { text: description });
     const actions = this.buttonRow(entry);
-    if (options.target) {
+    if (options.onClick) {
+      const button = actions.createEl("button", { cls: "paperflow-action" });
+      setIcon(button, options.actionIcon);
+      button.createSpan({ text: options.label });
+      button.addEventListener("click", options.onClick);
+    } else if (options.target) {
       this.vaultButton(actions, options.label, options.actionIcon, options.target);
     } else {
       this.button(
@@ -1550,6 +2300,18 @@ class PaperFlowControlCenterView extends ItemView {
         label: text("打开阅读队列", "Open reading queue"),
         actionIcon: "arrow-up-right",
         target: "00 Dashboard/Bases/Reading Queue.base"
+      }
+    );
+    this.taskEntry(
+      shelf,
+      text("标注", "ANNOTATE"),
+      text("标注当前 PDF", "Annotate the current PDF"),
+      text("优先读取 PDF++ 选区；不可用时明确退化到页码与手填文本", "Prefer the PDF++ selection; otherwise fall back explicitly to a page and manual text"),
+      "highlighter",
+      {
+        label: text("创建标注", "Create annotation"),
+        actionIcon: "message-square-plus",
+        onClick: () => void this.plugin.openAnnotationModal({ preferSelection: true })
       }
     );
     this.taskEntry(
@@ -1634,6 +2396,35 @@ class PaperFlowControlCenterView extends ItemView {
       "00 Dashboard/Bases/Paper Requests.base"
     );
     this.button(quick, text("运行状态", "Run status"), "activity", "status");
+    this.button(quick, text("数据健康", "Data health"), "heart-pulse", "health");
+    const reading = quick.createEl("button", {
+      text: text("打开阅读工作区", "Open reading workspace")
+    });
+    reading.addClass("paperflow-button");
+    reading.addEventListener("click", () => {
+      void this.plugin.openPaperReadingWorkspace().catch((error) => {
+        new Notice(error.message, 10000);
+      });
+    });
+    const annotate = quick.createEl("button", {
+      text: text("标注当前 PDF", "Annotate current PDF")
+    });
+    annotate.addClass("paperflow-button");
+    annotate.addEventListener("click", () => {
+      void this.plugin.openAnnotationModal({ preferSelection: true });
+    });
+
+    const featureNav = container.createDiv({ cls: "paperflow-feature-nav" });
+    for (const [label, target] of [
+      [text("阅读", "Reading"), "00 Dashboard/Bases/Paper Library.base"],
+      [text("标注", "Annotations"), "00 Dashboard/Bases/Annotations.base"],
+      [text("评审", "Reviews"), "00 Dashboard/Bases/Reviews.base"],
+      [text("社区", "Community"), "00 Dashboard/Bases/Community Contributions.base"],
+      [text("发布贡献", "Publish Contributions"), "00 Dashboard/Bases/Publication Outbox.base"]
+    ]) {
+      const button = featureNav.createEl("button", { text: label });
+      button.addEventListener("click", () => void this.app.workspace.openLinkText(target, "", false));
+    }
 
     const focusHeader = container.createDiv({ cls: "paperflow-section-heading" });
     focusHeader.createEl("span", { text: text("执行与配置", "EXECUTE & CONFIGURE") });
@@ -1647,6 +2438,7 @@ class PaperFlowControlCenterView extends ItemView {
     this.renderPaperCard(grid);
     this.renderAnalyzeCard(grid);
     this.renderAiCard(grid);
+    this.renderWorkspaceArtifactsCard(grid);
     this.renderActivityCard(grid);
 
     const advanced = container.createEl("details", {
@@ -1732,6 +2524,7 @@ class PaperFlowControlCenterView extends ItemView {
         ["configured", text("使用已保存设置", "Use saved settings")],
         ["codex", "Codex"],
         ["claude", "Claude Code"],
+        ["chatgpt-web", "ChatGPT Web"],
         ["mock", text("Mock（测试）", "Mock (test)")]
       ]
     );
@@ -1775,6 +2568,7 @@ class PaperFlowControlCenterView extends ItemView {
     this.selectInput(pair, "aiProvider", "Provider", [
       ["codex", "Codex"],
       ["claude", "Claude Code"],
+      ["chatgpt-web", "ChatGPT Web"],
       ["mock", "Mock"]
     ]);
     this.textInput(
@@ -1792,7 +2586,8 @@ class PaperFlowControlCenterView extends ItemView {
         ["low", text("低", "Low")],
         ["medium", text("中", "Medium")],
         ["high", text("高", "High")],
-        ["xhigh", text("极高", "Extra high")]
+        ["xhigh", text("极高", "Extra high")],
+        ["max", text("最高", "Maximum")]
       ]
     );
     const tools = body.createDiv({ cls: "paperflow-agent-boundary" });
@@ -1834,6 +2629,12 @@ class PaperFlowControlCenterView extends ItemView {
       "aiReuseFeed",
       text("复用订阅 Feed 分析", "Reuse subscribed Feed analysis")
     );
+    this.toggleInput(
+      body,
+      "chatgptWebUploadApproved",
+      text("允许向 ChatGPT 上传论文 PDF", "Allow PDF upload to ChatGPT"),
+      text("仅上传运行时暂存副本；不保存网页登录凭证", "Only a staged copy is uploaded; web credentials are not stored")
+    );
     const actions = this.buttonRow(body);
     this.button(
       actions,
@@ -1848,7 +2649,8 @@ class PaperFlowControlCenterView extends ItemView {
         reasoningEffort: this.control().aiReasoningEffort,
         fallback: this.control().aiFallback,
         reuseFeed: this.control().aiReuseFeed,
-        reanalyzeWhen: this.control().aiReanalyzeWhen
+        reanalyzeWhen: this.control().aiReanalyzeWhen,
+        allowPdfUpload: this.control().chatgptWebUploadApproved
       }),
       "primary"
     );
@@ -2086,11 +2888,30 @@ class PaperFlowControlCenterView extends ItemView {
     this.button(actions, text("全量验证", "Validate all"), "shield-check", "validate-all");
     this.button(actions, text("重试失败", "Retry failed"), "rotate-ccw", "retry-failed");
     this.button(actions, text("重建索引", "Rebuild index"), "database", "rebuild-index");
+    this.button(actions, text("重建关系图谱", "Rebuild relationship graph"), "network", "rebuild-relationships");
     this.button(actions, text("重建 Bases", "Rebuild Bases"), "table-properties", "rebuild-bases");
     this.button(actions, text("验证配置", "Validate config"), "file-check-2", "config-validate");
     this.button(actions, text("查看配置", "Show config"), "settings-2", "config-show");
     this.button(actions, "Form Flow status", "file-check", "form-flow-status");
     this.button(actions, text("检查更新", "Check updates"), "circle-arrow-up", "update-check");
+  }
+
+  renderWorkspaceArtifactsCard(grid) {
+    const body = this.section(
+      grid,
+      "04",
+      text("阅读工作区", "READING WORKSPACE"),
+      text("独立 Hub、AI 分析、用户笔记与模板集", "Independent Hub, AI analysis, user notes, and template sets"),
+      "paperflow-card-accent"
+    );
+    const actions = this.buttonRow(body);
+    this.button(actions, text("模板集列表", "List template sets"), "layout-template", "templates-list");
+    this.button(actions, text("验证模板集", "Validate templates"), "badge-check", "templates-validate");
+    this.button(actions, text("使用中文模板", "Use Chinese templates"), "languages", "templates-use", () => ({ setId: "academic-zh" }));
+    this.button(actions, text("用户笔记迁移预览", "User-note migration preview"), "file-search", "user-notes-plan");
+    this.button(actions, text("应用用户笔记迁移", "Apply user-note migration"), "file-output", "user-notes-apply", () => ({}), "danger");
+    const hint = body.createEl("p", { cls: "paperflow-card-hint" });
+    hint.setText(text("迁移前请确认同步插件处于稳定状态；应用操作会保留备份。", "Ensure sync is settled before applying; a backup is kept."));
   }
 
   renderActivityCard(grid) {
@@ -2108,6 +2929,14 @@ class PaperFlowControlCenterView extends ItemView {
     this.runtimeEls.output = body.createEl("pre", {
       cls: "paperflow-output"
     });
+    this.runtimeEls.cancel = body.createEl("button", {
+      text: text("取消当前任务", "Cancel current job"),
+      cls: "paperflow-action"
+    });
+    this.runtimeEls.cancel.addEventListener(
+      "click",
+      () => void this.plugin.cancelActiveJob("user")
+    );
   }
 
   updateRuntime() {
@@ -2129,6 +2958,9 @@ class PaperFlowControlCenterView extends ItemView {
       runtime.lastControlOutput ||
       text("操作输出将在这里显示。", "Command output will appear here.")
     );
+    if (this.runtimeEls.cancel) {
+      this.runtimeEls.cancel.hidden = !this.plugin.activeChild;
+    }
   }
 }
 
@@ -2188,6 +3020,32 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName(text("启用 PDF 标注入口", "Enable PDF annotation entry"))
+      .setDesc(text(
+        "提供命令面板、Ribbon、文件菜单和控制中心入口；所有写入仍由 PaperFlow CLI 完成。",
+        "Adds command-palette, ribbon, file-menu, and Control Center entries; all writes still go through the PaperFlow CLI."
+      ))
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.pdfAnnotationEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.pdfAnnotationEnabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName(text("优先从 PDF++ 复制当前选区", "Prefer copying the current selection from PDF++"))
+      .setDesc(text(
+        "仅在命令和剪贴板均可用时调用；失败会打开手动表单，不启用 PDF 直接编辑。",
+        "Used only when both the command and clipboard are available; failures open the manual form and never enable direct PDF editing."
+      ))
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.preferPdfPlusSelectionLinks)
+        .onChange(async (value) => {
+          this.plugin.settings.preferPdfPlusSelectionLinks = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
       .setName(text("Inbox 轮询间隔（分钟）", "Inbox interval (minutes)"))
       .addText((input) => input
         .setValue(String(this.plugin.settings.inboxIntervalMinutes))
@@ -2201,7 +3059,7 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName(text("每日运行时间", "Daily local time"))
-      .setDesc("Asia/Shanghai, HH:mm")
+      .setDesc(`${this.plugin.settings.timezone}, HH:mm（时区来自 Workspace）`)
       .addText((input) => input
         .setValue(this.plugin.settings.dailyLocalTime)
         .onChange(async (value) => {
@@ -2231,11 +3089,24 @@ module.exports = PaperFlowAutomationPlugin;
 module.exports.__test = {
   PAPER_PROPERTY_LABELS_ZH,
   controlCommands,
+  activePaperContext,
+  annotationPayload,
+  copyPdfPlusSelectionLink,
   githubUrl,
   isInboxRequestPath,
   mergedSettings,
   intervalDue,
   isChinese,
   propertyLabelCss,
-  text
+  openReadingWorkspace,
+  nativePdfPageLink,
+  parsePdfAnnotationLink,
+  PDF_PLUS_SELECTION_COMMAND,
+  safePaperId,
+  text,
+  workspaceClock,
+  workspaceTimezoneFromYaml,
+  terminateProcessTree,
+  windowsProcessTreeCommand,
+  redactAutomationLog
 };

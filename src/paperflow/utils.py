@@ -43,6 +43,14 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path: Path, block_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(block_size), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def safe_slug(value: str) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in value)
 

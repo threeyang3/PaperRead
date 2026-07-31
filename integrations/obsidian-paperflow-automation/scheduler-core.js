@@ -1,24 +1,33 @@
 "use strict";
 
-const TIME_ZONE = "Asia/Shanghai";
+const DEFAULT_TIME_ZONE = "Asia/Shanghai";
 
-function beijingClock(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(now);
+function workspaceClock(now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(now);
+  } catch (error) {
+    throw new Error(`Invalid Workspace timezone: ${timeZone}`, { cause: error });
+  }
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return {
     date: `${values.year}-${values.month}-${values.day}`,
     time: `${values.hour}:${values.minute}:${values.second}`,
     minutes: Number(values.hour) * 60 + Number(values.minute)
   };
+}
+
+function beijingClock(now = new Date()) {
+  return workspaceClock(now, DEFAULT_TIME_ZONE);
 }
 
 function parseLocalTime(value) {
@@ -30,7 +39,7 @@ function parseLocalTime(value) {
 }
 
 function shouldRunDaily(settings, now = new Date()) {
-  const clock = beijingClock(now);
+  const clock = workspaceClock(now, settings.timezone || DEFAULT_TIME_ZONE);
   return {
     due:
       Boolean(settings.catchUpDailyAfterStartup) &&
@@ -59,7 +68,9 @@ function isInboxRequestPath(value) {
 }
 
 module.exports = {
-  TIME_ZONE,
+  DEFAULT_TIME_ZONE,
+  TIME_ZONE: DEFAULT_TIME_ZONE,
+  workspaceClock,
   beijingClock,
   parseLocalTime,
   shouldRunDaily,

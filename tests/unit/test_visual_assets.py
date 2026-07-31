@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
+import httpx
+import pytest
 from jsonschema import validate
 
 from paperflow.pipeline.visuals import (
@@ -78,6 +81,152 @@ def test_extract_visual_assets_prefers_architecture_and_writes_manifest(
         ).read_text(encoding="utf-8")
     )
     validate(manifest, schema)
+
+
+def test_visual_extraction_reuses_content_identity_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    kwargs = {
+        "root": tmp_path,
+        "paper_uid": "arxiv:cache-test",
+        "max_assets": 1,
+    }
+    first = extract_visual_assets(
+        pdf,
+        tmp_path / "paper.assets",
+        **kwargs,
+    )
+    assert first
+
+    def unexpected_open(*_args, **_kwargs):
+        raise AssertionError("cached extraction reopened the PDF")
+
+    monkeypatch.setattr("paperflow.pipeline.visuals.fitz.open", unexpected_open)
+    second = extract_visual_assets(
+        pdf,
+        tmp_path / "paper.assets",
+        **kwargs,
+    )
+
+    assert second == first
+    assert list((tmp_path / ".paperflow/cache/visuals").glob("*.json"))
+
+
+def test_visual_cache_repairs_missing_asset(tmp_path: Path) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    asset_dir = tmp_path / "paper.assets"
+    first = extract_visual_assets(
+        pdf,
+        asset_dir,
+        root=tmp_path,
+        paper_uid="arxiv:repair-test",
+        max_assets=1,
+    )
+    missing = tmp_path / first[0]["path"]
+    missing.unlink()
+
+    second = extract_visual_assets(
+        pdf,
+        asset_dir,
+        root=tmp_path,
+        paper_uid="arxiv:repair-test",
+        max_assets=1,
+    )
+
+    assert second == first
+    assert missing.is_file()
+
+
+def test_failed_visual_rebuild_preserves_previous_assets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    asset_dir = tmp_path / "paper.assets"
+    extract_visual_assets(
+        pdf,
+        asset_dir,
+        root=tmp_path,
+        paper_uid="arxiv:preserve-test",
+        max_assets=1,
+    )
+    before = {
+        path.name: path.read_bytes()
+        for path in asset_dir.iterdir()
+        if path.is_file()
+    }
+
+    def fail_selection(*_args, **_kwargs):
+        raise RuntimeError("simulated extractor failure")
+
+    monkeypatch.setattr(
+        "paperflow.pipeline.visuals._select_candidates",
+        fail_selection,
+    )
+    with pytest.raises(RuntimeError, match="simulated extractor failure"):
+        extract_visual_assets(
+            pdf,
+            asset_dir,
+            root=tmp_path,
+            paper_uid="arxiv:preserve-test",
+            max_assets=2,
+        )
+
+    after = {
+        path.name: path.read_bytes()
+        for path in asset_dir.iterdir()
+        if path.is_file()
+    }
+    assert after == before
+    assert not list(tmp_path.glob(".paper.assets.staging-*"))
+
+
+def test_arxiv_html_original_image_is_preferred_over_pdf_crop(tmp_path: Path) -> None:
+    pdf = tmp_path / "paper.pdf"
+    _synthetic_paper(pdf)
+    image_document = fitz.open()
+    image_page = image_document.new_page(width=320, height=180)
+    image_page.draw_rect(fitz.Rect(20, 20, 300, 160), color=(1, 0, 0))
+    original_png = image_page.get_pixmap(alpha=False).tobytes("png")
+    image_document.close()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/html/2607.00001v1":
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html; charset=utf-8"},
+                text=(
+                    '<figure class="ltx_figure">'
+                    '<img src="x1.png"/>'
+                    '<figcaption>Figure 1: Overview of the model architecture '
+                    'and training pipeline.</figcaption></figure>'
+                ),
+            )
+        if request.url.path == "/html/2607.00001v1/x1.png":
+            return httpx.Response(
+                200,
+                headers={"content-type": "image/png"},
+                content=original_png,
+            )
+        return httpx.Response(404)
+
+    assets = extract_visual_assets(
+        pdf,
+        tmp_path / "paper.assets",
+        root=tmp_path,
+        paper_uid="arxiv:2607.00001",
+        max_assets=1,
+        arxiv_id="2607.00001",
+        arxiv_version=1,
+        html_transport=httpx.MockTransport(handler),
+    )
+
+    assert assets[0]["source_type"] == "arxiv-html"
+    assert assets[0]["source_url"] == "https://arxiv.org/html/2607.00001v1/x1.png"
+    assert (tmp_path / assets[0]["path"]).read_bytes() == original_png
 
 
 def test_architecture_crop_prefers_complete_figure_width(tmp_path: Path) -> None:
@@ -229,7 +378,7 @@ def test_visual_guide_renders_and_preserves_user_notes(tmp_path: Path) -> None:
     assert "## 论文视觉导读" in first
     assert "![[80 Attachments/Papers/test.assets/figure-1-p2.png|950]]" in first
     assert "架构、系统与方法图" in first
-    assert "已从原 PDF 提取 1 张可追溯关键图片" in first
+    assert "收录 1 张可追溯关键图片" in first
     assert "[[80 Attachments/Papers/test.pdf#page=2|在原 PDF 中打开本页]]" in first
     note.write_text(
         first.replace(
@@ -243,7 +392,10 @@ def test_visual_guide_renders_and_preserves_user_notes(tmp_path: Path) -> None:
 
     second = note.read_text(encoding="utf-8")
     assert "我的不可覆盖笔记" in second
-    assert "system_template_version: 4" in second
+    assert "system_template_version: 6" in second
+    assert "## 基本信息" not in second
+    assert "\n\n\n" not in second
+    assert "ai_recommendation:" not in second.split("---", 2)[1]
 
 
 def test_layer_paths_remain_rebuildable_derived_data() -> None:
@@ -324,4 +476,49 @@ def test_visual_migration_creates_full_workspace_backup(tmp_path: Path) -> None:
     migrated = YAML(typ="safe").load(
         workspace_path.read_text(encoding="utf-8")
     )
-    assert migrated["versions"]["templates"] == 4
+    assert migrated["versions"]["templates"] == 6
+
+
+def test_visual_refresh_updates_only_derived_layer(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from paperflow.cli import _refresh_visual_records
+
+    record_path = tmp_path / ".paperflow/data/papers/arxiv_2607.00001.json"
+    record_path.parent.mkdir(parents=True)
+    record = {
+        "paper_uid": "arxiv:2607.00001",
+        "paper_arxiv_id": "2607.00001",
+        "paper_arxiv_version": 2,
+        "paper_title": "Composed title",
+        "extraction": {},
+        "layer_paths": {
+            "raw": ".paperflow/data/raw/arxiv/2607.00001/v2.json"
+        },
+    }
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    raw_path = tmp_path / record["layer_paths"]["raw"]
+    raw_path.parent.mkdir(parents=True)
+    raw_path.write_bytes(b'{"immutable":"raw"}')
+    before = raw_path.read_bytes()
+
+    def fake_refresh(_root, value, **_kwargs):
+        value["extraction"] = {
+            "visual_assets": [],
+            "visual_extraction_status": "no-captioned-figures",
+        }
+        return value
+
+    monkeypatch.setattr("paperflow.cli.refresh_record_visuals", fake_refresh)
+    monkeypatch.setattr("paperflow.cli.render_uid", lambda *_args, **_kwargs: None)
+    context = SimpleNamespace(root=tmp_path, workspace=object())
+
+    result = _refresh_visual_records(context, [record_path], max_assets=12)
+
+    assert result[0]["status"] == "no-captioned-figures"
+    assert raw_path.read_bytes() == before
+    derived = json.loads(
+        (tmp_path / ".paperflow/data/derived/2607.00001.json")
+        .read_text(encoding="utf-8")
+    )
+    assert derived["derived"]["extraction"]["visual_assets"] == []

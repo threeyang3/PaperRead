@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from paperflow.paths.templates import ALLOWED_VARIABLES, SafePathTemplate, resolve_inside
+from paperflow.paths.templates import ALLOWED_VARIABLES, SafePathTemplate, resolve_inside, safe_component
+from paperflow.text_quality import display_title, short_title
 from paperflow.workspace import WorkspaceSettings
 
 
@@ -13,12 +14,16 @@ def record_variables(record: dict[str, Any], *, profile: str = "full_analysis") 
     return {
         "source": str(record.get("paper_source") or "arxiv"),
         "paper_id": str(record.get("paper_arxiv_id") or record.get("paper_uid", "")).replace(":", "_"),
+        "uid": str(record.get("paper_uid", "")).replace(":", "_"),
         "arxiv_id": record.get("paper_arxiv_id", ""),
         "version": record.get("paper_arxiv_version", 1),
         "year": record.get("paper_year") or submitted[:4],
         "month": submitted[5:7] if len(submitted) >= 7 else "",
         "day": submitted[8:10] if len(submitted) >= 10 else "",
         "title": record.get("paper_title", ""),
+        "display_title": record.get("paper_display_title") or display_title(str(record.get("paper_title") or "")),
+        "short_title": record.get("paper_short_title") or short_title(str(record.get("paper_title") or "")),
+        "file_name": record.get("file_name") or f"{safe_component(record.get('paper_arxiv_id') or record.get('paper_uid') or 'paper')}.md",
         "first_author": record.get("paper_first_author", ""),
         "primary_category": record.get("paper_primary_category", ""),
         "category": record.get("paper_primary_category", ""),
@@ -30,6 +35,9 @@ def record_variables(record: dict[str, Any], *, profile: str = "full_analysis") 
         "analysis_profile": profile,
         "analysis_id": record.get("analysis_id", ""),
         "date": submitted[:10],
+        "annotation_id": record.get("annotation_id", ""),
+        "contribution_id": record.get("contribution_id", ""),
+        "creator": record.get("creator", ""),
     }
 
 
@@ -45,7 +53,7 @@ def preview_record_paths(
         "paper_uid": record.get("paper_uid", ""),
         "dependencies": {},
     }
-    for name in ["raw_metadata", "ai_analysis", "user_data", "pdf", "note"]:
+    for name in ["raw_metadata", "ai_analysis", "user_data", "pdf", "note", "paper_hub", "ai_analysis_note", "user_note"]:
         rule = getattr(settings.paths, name)
         template = SafePathTemplate(
             rule.template,

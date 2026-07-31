@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paperflow.local/schemas/paper-note.schema.json",
+  "title": "PaperFlow flat Obsidian paper frontmatter",
+  "type": "object",
+  "required": [
+    "type",
+    "schema_version",
+    "system_template_version",
+    "title",
+    "aliases",
+    "paper_uid",
+    "paper_title",
+    "paper_title_display",
+    "paper_cites",
+    "paper_citation_ids",
+    "ai_related_papers",
+    "user_added_tags"
+  ],
+  "properties": {
+    "type": {"const": "paper"},
+    "schema_version": {"const": 2},
+    "system_template_version": {"const": 5},
+    "title": {"type": "string"},
+    "aliases": {"type": "array", "items": {"type": "string"}},
+    "paper_uid": {"type": "string"},
+    "paper_title": {"type": "string"},
+    "paper_title_display": {"type": "string"},
+    "ai_topic_links": {"type": "array", "items": {"type": "string"}},
+    "ai_method_links": {"type": "array", "items": {"type": "string"}},
+    "ai_dataset_links": {"type": "array", "items": {"type": "string"}},
+    "paper_cites": {"type": "array", "items": {"type": "string"}},
+    "paper_citation_ids": {"type": "array", "items": {"type": "string"}},
+    "ai_related_papers": {"type": "array", "items": {"type": "string"}},
+    "user_added_tags": {"type": "array", "items": {"type": "string"}}
+  }
+}

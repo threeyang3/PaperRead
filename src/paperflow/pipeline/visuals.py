@@ -1,14 +1,47 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
+import tempfile
+import uuid
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import fitz
+import httpx
 
 from paperflow.utils import atomic_json
+from paperflow.utils import sha256_file
+
+
+VISUAL_EXTRACTOR_VERSION = "visuals-v1"
+
+
+def _cached_visual_assets(
+    root: Path,
+    cache_path: Path,
+    identity: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if cached.get("identity") != identity or not isinstance(cached.get("assets"), list):
+        return None
+    for asset in cached["assets"]:
+        try:
+            candidate = (root / str(asset["path"])).resolve()
+            candidate.relative_to(root.resolve())
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not candidate.is_file() or sha256_file(candidate) != asset.get("sha256"):
+            return None
+    return cached["assets"]
 
 
 CAPTION_RE = re.compile(
@@ -58,6 +91,12 @@ REFERENCE_START_RE = re.compile(
     r"^(?:shows?|depicts?|illustrates?|presents?|provides?)\b",
     re.IGNORECASE,
 )
+ARXIV_ID_RE = re.compile(r"^(?:arxiv:)?([0-9]{4}\.[0-9]{4,5})(?:v([0-9]+))?$", re.I)
+MAX_HTML_IMAGE_BYTES = 25 * 1024 * 1024
+HTML_VOID_TAGS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "source", "track", "wbr",
+}
 
 
 @dataclass(frozen=True)
@@ -68,6 +107,132 @@ class CaptionCandidate:
     rectangle: fitz.Rect
     kind: str
     score: float
+
+
+@dataclass(frozen=True)
+class HtmlFigure:
+    figure_number: str
+    caption: str
+    source_url: str
+
+
+class _ArxivFigureParser(HTMLParser):
+    """Extract single-image captioned figures from arXiv's LaTeXML HTML."""
+
+    def __init__(self, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url.rstrip("/") + "/"
+        self.depth = 0
+        self.images: list[str] = []
+        self.caption_parts: list[str] = []
+        self.in_caption = False
+        self.figures: list[HtmlFigure] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        classes = set(str(values.get("class") or "").split())
+        if tag == "figure" and "ltx_figure" in classes and self.depth == 0:
+            self.depth = 1
+            self.images = []
+            self.caption_parts = []
+            return
+        if not self.depth:
+            return
+        if tag == "img" and values.get("src"):
+            self.images.append(urljoin(self.base_url, str(values["src"])))
+        if tag in HTML_VOID_TAGS:
+            return
+        self.depth += 1
+        if tag == "figcaption":
+            self.in_caption = True
+
+    def handle_data(self, data: str) -> None:
+        if self.depth and self.in_caption:
+            self.caption_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in HTML_VOID_TAGS:
+            return
+        if not self.depth:
+            return
+        if tag == "figcaption":
+            self.in_caption = False
+        self.depth -= 1
+        if tag != "figure" or self.depth:
+            return
+        caption = _normalized_text(" ".join(self.caption_parts))
+        match = CAPTION_RE.match(caption)
+        if match and len(self.images) == 1:
+            self.figures.append(
+                HtmlFigure(
+                    figure_number=match.group(1).lower(),
+                    caption=_normalized_text(match.group(2)),
+                    source_url=self.images[0],
+                )
+            )
+        self.images = []
+        self.caption_parts = []
+
+
+def _safe_arxiv_image_url(url: str, paper_ref: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "arxiv.org"
+        and parsed.path.startswith(f"/html/{paper_ref}/")
+    )
+
+
+def _arxiv_html_figures(
+    arxiv_id: str,
+    version: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[dict[str, HtmlFigure], httpx.Client] | tuple[dict[str, HtmlFigure], None]:
+    match = ARXIV_ID_RE.fullmatch(arxiv_id.strip())
+    if not match:
+        return {}, None
+    paper_ref = f"{match.group(1)}v{version}"
+    html_url = f"https://arxiv.org/html/{paper_ref}"
+    client = httpx.Client(
+        transport=transport,
+        timeout=httpx.Timeout(12.0, connect=5.0),
+        follow_redirects=True,
+        headers={"User-Agent": "PaperFlow/1.5 (figure extraction)"},
+    )
+    try:
+        response = client.get(html_url)
+        response.raise_for_status()
+        if "text/html" not in response.headers.get("content-type", ""):
+            client.close()
+            return {}, None
+        parser = _ArxivFigureParser(html_url)
+        parser.feed(response.text)
+        figures = {
+            item.figure_number: item
+            for item in parser.figures
+            if _safe_arxiv_image_url(item.source_url, paper_ref)
+        }
+        return figures, client
+    except (httpx.HTTPError, UnicodeError):
+        client.close()
+        return {}, None
+
+
+def _fetch_html_png(client: httpx.Client, figure: HtmlFigure) -> tuple[bytes, int, int] | None:
+    try:
+        response = client.get(figure.source_url)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").split(";", 1)[0]
+        payload = response.content
+        if content_type != "image/png" or not payload or len(payload) > MAX_HTML_IMAGE_BYTES:
+            return None
+        pixmap = fitz.Pixmap(payload)
+        if pixmap.width < 80 or pixmap.height < 60:
+            return None
+        return payload, pixmap.width, pixmap.height
+    except (httpx.HTTPError, RuntimeError, ValueError):
+        return None
 
 
 def _normalized_text(value: str) -> str:
@@ -134,35 +299,43 @@ def _caption_candidates(document: fitz.Document) -> list[CaptionCandidate]:
 def _select_candidates(
     candidates: list[CaptionCandidate],
     max_assets: int,
+    *,
+    quality_threshold: float = 48.0,
 ) -> list[CaptionCandidate]:
-    """Build a balanced visual guide with architecture figures first."""
-    ranked = sorted(
-        candidates,
-        key=lambda item: (-item.score, item.page_index, item.figure_number),
-    )
+    """Select a variable number of non-duplicate, high-value figures."""
+    ranked = sorted(candidates, key=lambda item: (-item.score, item.page_index))
     selected: list[CaptionCandidate] = []
-    selected_keys: set[tuple[int, str]] = set()
-
-    def take(kind: str, limit: int) -> None:
-        for candidate in ranked:
-            if len(selected) >= max_assets or limit <= 0:
-                return
-            key = (candidate.page_index, candidate.figure_number)
-            if candidate.kind == kind and key not in selected_keys:
-                selected.append(candidate)
-                selected_keys.add(key)
-                limit -= 1
-
-    take("architecture", min(3, max_assets))
-    take("result", min(2, max(0, max_assets - len(selected))))
-    take("figure", min(1, max(0, max_assets - len(selected))))
-    for candidate in ranked:
-        if len(selected) >= max_assets:
+    covered: set[str] = set()
+    selected_terms: list[set[str]] = []
+    remaining = list(ranked)
+    while remaining and len(selected) < max_assets:
+        scored: list[tuple[float, CaptionCandidate, set[str]]] = []
+        for candidate in remaining:
+            terms = {
+                term
+                for term in re.findall(r"[a-z0-9]{3,}", candidate.caption.casefold())
+                if term not in {"figure", "shows", "using", "with", "from", "that"}
+            }
+            duplicate = max(
+                (
+                    len(terms & previous) / max(1, len(terms | previous))
+                    for previous in selected_terms
+                ),
+                default=0.0,
+            )
+            coverage_bonus = 14.0 if candidate.kind not in covered else 0.0
+            marginal = candidate.score + coverage_bonus - duplicate * 45.0
+            scored.append((marginal, candidate, terms))
+        marginal, candidate, terms = max(
+            scored, key=lambda item: (item[0], -item[1].page_index)
+        )
+        required_coverage = candidate.kind in {"architecture", "result"} and candidate.kind not in covered
+        if marginal < quality_threshold and not required_coverage:
             break
-        key = (candidate.page_index, candidate.figure_number)
-        if key not in selected_keys:
-            selected.append(candidate)
-            selected_keys.add(key)
+        selected.append(candidate)
+        selected_terms.append(terms)
+        covered.add(candidate.kind)
+        remaining.remove(candidate)
 
     kind_order = {"architecture": 0, "result": 1, "figure": 2}
     return sorted(
@@ -306,73 +479,150 @@ def extract_visual_assets(
     *,
     root: Path,
     paper_uid: str,
-    max_assets: int = 6,
+    max_assets: int = 12,
+    quality_threshold: float = 48.0,
     dpi: int = 180,
+    arxiv_id: str = "",
+    arxiv_version: int = 1,
+    html_transport: httpx.BaseTransport | None = None,
 ) -> list[dict[str, Any]]:
     """Extract caption-backed paper figures as rebuildable derived assets."""
     if max_assets < 0:
         raise ValueError("max_assets must be non-negative")
     asset_dir = _safe_asset_directory(root, asset_dir)
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    pdf_sha256 = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    asset_dir.parent.mkdir(parents=True, exist_ok=True)
+    pdf_sha256 = sha256_file(pdf_path)
+    identity = {
+        "extractor_version": VISUAL_EXTRACTOR_VERSION,
+        "paper_uid": paper_uid,
+        "pdf_sha256": pdf_sha256,
+        "asset_dir": asset_dir.relative_to(root.resolve()).as_posix(),
+        "max_assets": max_assets,
+        "quality_threshold": quality_threshold,
+        "dpi": dpi,
+        "arxiv_id": arxiv_id,
+        "arxiv_version": arxiv_version,
+    }
+    cache_key = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cache_path = root / ".paperflow/cache/visuals" / f"{cache_key}.json"
+    cached_assets = _cached_visual_assets(root, cache_path, identity)
+    if cached_assets is not None:
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        atomic_json(
+            asset_dir / "manifest.json",
+            {
+                "schema_version": 1,
+                "paper_uid": paper_uid,
+                "pdf_sha256": pdf_sha256,
+                "assets": cached_assets,
+            },
+        )
+        return cached_assets
+    staging_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{asset_dir.name}.staging-",
+            dir=str(asset_dir.parent),
+        )
+    )
     assets: list[dict[str, Any]] = []
     generated_names: set[str] = set()
-    with fitz.open(pdf_path) as document:
-        candidates = _select_candidates(
-            _caption_candidates(document),
-            max_assets,
+    html_figures: dict[str, HtmlFigure] = {}
+    html_client: httpx.Client | None = None
+    if arxiv_id:
+        html_figures, html_client = _arxiv_html_figures(
+            arxiv_id,
+            arxiv_version,
+            transport=html_transport,
         )
-        for candidate in candidates:
-            page = document[candidate.page_index]
-            clip = _crop_rectangle(page, candidate)
-            if clip.width < 80 or clip.height < 60:
-                continue
-            safe_number = re.sub(r"[^0-9a-z]+", "-", candidate.figure_number)
-            filename = (
-                f"figure-{safe_number}-p{candidate.page_index + 1}.png"
+    try:
+        with fitz.open(pdf_path) as document:
+            candidates = _select_candidates(
+                _caption_candidates(document),
+                max_assets,
+                quality_threshold=quality_threshold,
             )
-            target = asset_dir / filename
-            temporary = target.with_name(f".{target.name}.tmp.png")
-            pixmap = page.get_pixmap(
-                matrix=fitz.Matrix(dpi / 72, dpi / 72),
-                clip=clip,
-                alpha=False,
-            )
-            pixmap.save(temporary)
-            temporary.replace(target)
-            generated_names.add(filename)
-            assets.append(
-                {
+            for candidate in candidates:
+                page = document[candidate.page_index]
+                safe_number = re.sub(r"[^0-9a-z]+", "-", candidate.figure_number)
+                filename = f"figure-{safe_number}-p{candidate.page_index + 1}.png"
+                target = staging_dir / filename
+                temporary = target.with_name(f".{target.name}.tmp.png")
+                html_figure = html_figures.get(candidate.figure_number)
+                downloaded = (
+                    _fetch_html_png(html_client, html_figure)
+                    if html_client is not None and html_figure is not None
+                    else None
+                )
+                if downloaded is not None:
+                    payload, width, height = downloaded
+                    temporary.write_bytes(payload)
+                    source_type = "arxiv-html"
+                    source_url = html_figure.source_url
+                else:
+                    clip = _crop_rectangle(page, candidate)
+                    if clip.width < 80 or clip.height < 60:
+                        continue
+                    pixmap = page.get_pixmap(
+                        matrix=fitz.Matrix(dpi / 72, dpi / 72),
+                        clip=clip,
+                        alpha=False,
+                    )
+                    pixmap.save(temporary)
+                    width, height = pixmap.width, pixmap.height
+                    source_type = "pdf-crop"
+                    source_url = ""
+                temporary.replace(target)
+                generated_names.add(filename)
+                asset = {
                     "id": f"figure-{safe_number}",
                     "figure_number": candidate.figure_number,
                     "kind": candidate.kind,
                     "caption": candidate.caption,
                     "page": candidate.page_index + 1,
-                    "path": target.relative_to(root.resolve()).as_posix(),
-                    "width": pixmap.width,
-                    "height": pixmap.height,
-                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                    "path": (asset_dir / filename)
+                    .relative_to(root.resolve())
+                    .as_posix(),
+                    "width": width,
+                    "height": height,
+                    "sha256": sha256_file(target),
                     "score": round(candidate.score, 2),
+                    "source_type": source_type,
                 }
-            )
-    manifest_path = asset_dir / "manifest.json"
-    if manifest_path.exists():
-        for child in asset_dir.iterdir():
-            if (
-                child.is_file()
-                and GENERATED_IMAGE_RE.fullmatch(child.name)
-                and child.name not in generated_names
-            ):
-                child.unlink()
-    atomic_json(
-        manifest_path,
-        {
-            "schema_version": 1,
-            "paper_uid": paper_uid,
-            "pdf_sha256": pdf_sha256,
-            "assets": assets,
-        },
-    )
+                if source_url:
+                    asset["source_url"] = source_url
+                assets.append(asset)
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    finally:
+        if html_client is not None:
+            html_client.close()
+    manifest = {
+        "schema_version": 1,
+        "paper_uid": paper_uid,
+        "pdf_sha256": pdf_sha256,
+        "assets": assets,
+    }
+    try:
+        atomic_json(staging_dir / "manifest.json", manifest)
+        previous = asset_dir.with_name(
+            f".{asset_dir.name}.previous-{uuid.uuid4().hex}"
+        )
+        if asset_dir.exists():
+            asset_dir.replace(previous)
+        try:
+            staging_dir.replace(asset_dir)
+        except Exception:
+            if previous.exists() and not asset_dir.exists():
+                previous.replace(asset_dir)
+            raise
+        shutil.rmtree(previous, ignore_errors=True)
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    atomic_json(cache_path, {"identity": identity, "assets": assets})
     return assets
 
 
@@ -380,7 +630,8 @@ def refresh_record_visuals(
     root: Path,
     record: dict[str, Any],
     *,
-    max_assets: int = 6,
+    max_assets: int = 12,
+    quality_threshold: float = 48.0,
 ) -> dict[str, Any]:
     pdf_relative = str(record.get("paper_pdf_path") or "")
     if not pdf_relative:
@@ -399,6 +650,9 @@ def refresh_record_visuals(
         root=root,
         paper_uid=str(record["paper_uid"]),
         max_assets=max_assets,
+        quality_threshold=quality_threshold,
+        arxiv_id=str(record.get("paper_arxiv_id") or ""),
+        arxiv_version=int(record.get("paper_version") or record.get("source_version") or 1),
     )
     extraction["visual_extraction_status"] = (
         "complete" if extraction["visual_assets"] else "no-captioned-figures"

@@ -1,4 +1,5 @@
 .env
+.venv/
 .paperflow/.venv/
 .paperflow/cache/**
 .paperflow/logs/**
@@ -26,6 +27,8 @@ paperflow.yaml
 90 System/
 dist/
 build/
+# Disposable Core/Zotero downloads, profiles, databases, browser caches, and logs.
+var/
 *.pyc
 __pycache__/
 .pytest_cache/

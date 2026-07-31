@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,9 +12,13 @@ from urllib.parse import unquote, urlparse
 
 from ruamel.yaml import YAML
 import httpx
+import fitz
 
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
 from paperflow.versioning import check_reader_version
+from paperflow.sync_safety import assert_no_sync_conflicts
+
+MAX_LINKED_PDF_BYTES = 100 * 1024 * 1024
 
 
 def _sha256(path: Path) -> str:
@@ -84,7 +89,10 @@ def sync_feed(
     dry_run: bool = False,
     auto_download_pdf: bool = False,
     auto_render_notes: bool = False,
+    capabilities: list[str] | None = None,
+    community_note_root: str = "70 Community",
 ) -> dict[str, Any]:
+    assert_no_sync_conflicts(workspace)
     if trust not in {"metadata-only", "metadata-and-ai", "disabled"}:
         raise ValueError(f"Unsupported trust mode: {trust}")
     if trust == "disabled":
@@ -95,6 +103,16 @@ def sync_feed(
         feed = YAML(typ="safe").load(
             (feed_root / "feed.yaml").read_text(encoding="utf-8")
         )
+        feed_version = int(feed.get("feed_schema_version", 1))
+        requested_capabilities = set(capabilities or ["raw", "ai"])
+        advertised = feed.get("capabilities") or {
+            "raw": True,
+            "ai": True,
+            "community": False,
+        }
+        enabled_capabilities = {
+            name for name in requested_capabilities if advertised.get(name, False)
+        }
         manifests = [
             json.loads(line)
             for line in (feed_root / "manifests/papers.jsonl")
@@ -102,7 +120,7 @@ def sync_feed(
             .splitlines()
             if line
         ]
-        if trust == "metadata-and-ai":
+        if trust == "metadata-and-ai" and "ai" in enabled_capabilities:
             manifests.extend(
                 json.loads(line)
                 for line in (feed_root / "manifests/analyses.jsonl")
@@ -176,6 +194,21 @@ def sync_feed(
                         feed_id=str(feed["feed_id"]),
                     )
                     rendered_notes += 1
+        community = {
+            "dry_run": dry_run,
+            "accepted": 0,
+            "private_user_records_modified": 0,
+        }
+        if "community" in enabled_capabilities:
+            from paperflow.community.subscriber import ingest_community
+
+            community = ingest_community(
+                workspace,
+                feed_root,
+                str(feed["feed_id"]),
+                dry_run=dry_run,
+                community_note_root=community_note_root,
+            )
         return {
             "name": name,
             "feed_id": feed["feed_id"],
@@ -189,6 +222,9 @@ def sync_feed(
             "user_records_modified": 0,
             "remote_code_executed": False,
             "validation": validation,
+            "feed_schema_version": feed_version,
+            "capabilities": sorted(enabled_capabilities),
+            "community": community,
         }
 
 
@@ -198,7 +234,11 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
     if not source_url:
         return False
     paper_id = str(item.get("source_id") or item["paper_uid"]).replace(":", "_")
-    target = workspace / "80 Attachments/Papers" / f"{paper_id}.pdf"
+    year = str(item.get("year") or "Unclassified")
+    version = int(item.get("version") or 1)
+    target = (
+        workspace / "80 Attachments/Papers" / year / paper_id / f"v{version}.pdf"
+    )
     if target.exists():
         if not target.read_bytes()[:5] == b"%PDF-":
             raise ValueError(f"Existing PDF has an invalid header: {target}")
@@ -208,24 +248,56 @@ def _download_linked_pdf(workspace: Path, item: dict[str, Any]) -> bool:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".tmp")
+    temporary.unlink(missing_ok=True)
     digest = hashlib.sha256()
     size = 0
+    header = bytearray()
+    maximum_size = MAX_LINKED_PDF_BYTES
+    expected_size = pdf.get("expected_size")
+    if expected_size is not None and int(expected_size) > maximum_size:
+        raise ValueError(
+            f"Refusing PDF larger than {maximum_size} bytes: {source_url}"
+        )
     with httpx.stream(
         "GET", source_url, timeout=60, follow_redirects=True
     ) as response:
         response.raise_for_status()
-        with temporary.open("wb") as output:
-            for chunk in response.iter_bytes():
-                digest.update(chunk)
-                size += len(chunk)
-                output.write(chunk)
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > maximum_size:
+            raise ValueError(
+                f"Refusing PDF larger than {maximum_size} bytes: {source_url}"
+            )
+        try:
+            with temporary.open("xb") as output:
+                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    if len(header) < 5:
+                        header.extend(chunk[: 5 - len(header)])
+                    digest.update(chunk)
+                    size += len(chunk)
+                    if size > maximum_size:
+                        raise ValueError(
+                            f"Downloaded PDF exceeds {maximum_size} bytes: {source_url}"
+                        )
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
     try:
-        if temporary.read_bytes()[:5] != b"%PDF-":
+        if bytes(header) != b"%PDF-":
             raise ValueError(f"Downloaded file is not a PDF: {source_url}")
+        try:
+            with fitz.open(filename=temporary, filetype="pdf") as document:
+                if document.page_count < 1:
+                    raise ValueError("PDF has no pages")
+        except Exception as exc:
+            raise ValueError(f"Downloaded PDF is structurally invalid: {source_url}") from exc
         expected = str(pdf.get("expected_sha256") or "")
         if expected and digest.hexdigest() != expected:
             raise ValueError(f"Downloaded PDF checksum mismatch: {source_url}")
-        expected_size = pdf.get("expected_size")
         if expected_size is not None and size != int(expected_size):
             raise ValueError(f"Downloaded PDF size mismatch: {source_url}")
         temporary.replace(target)
@@ -243,8 +315,11 @@ def _render_local_note(
     feed_id: str,
 ) -> Path:
     from paperflow.config import load_config
+    from paperflow.data.compose import compose_record
     from paperflow.obsidian.note_renderer import render_paper
+    from paperflow.paths.service import preview_record_paths
     from paperflow.pipeline.import_paper import pending_analysis
+    from paperflow.workspace import load_workspace_settings
 
     raw = json.loads(
         resolve_feed_file(feed_root, item["path"]).read_text(encoding="utf-8")
@@ -258,40 +333,38 @@ def _render_local_note(
         .splitlines()
         if line and json.loads(line).get("paper_uid") == raw["paper_uid"]
     ]
+    selected_analysis = None
     if analyses:
         selected = analyses[-1]
-        analysis = json.loads(
+        selected_analysis = json.loads(
             resolve_feed_file(feed_root, selected["path"]).read_text(
                 encoding="utf-8"
             )
         )
-        record.update(analysis["analysis"])
-        record["system_selected_analysis_id"] = analysis["analysis_id"]
+        record.update(selected_analysis["analysis"])
+        record["system_selected_analysis_id"] = selected_analysis["analysis_id"]
         record["system_selected_analysis_publisher"] = feed_id
-        record["ai_analysis_provider"] = analysis["identity"].get(
+        record["ai_analysis_provider"] = selected_analysis["identity"].get(
             "provider", ""
         )
-        record["ai_analysis_model"] = analysis["identity"].get("model", "")
-        record["ai_analysis_prompt_version"] = analysis["identity"].get(
+        record["ai_analysis_model"] = selected_analysis["identity"].get("model", "")
+        record["ai_analysis_prompt_version"] = selected_analysis["identity"].get(
             "prompt_version", ""
         )
-        record["ai_analyzed_at"] = analysis.get("created_at", "")
+        record["ai_analyzed_at"] = selected_analysis.get("created_at", "")
     cfg = load_config(workspace)
-    paper_id = str(raw.get("source_id") or raw["paper_uid"]).replace(":", "_")
-    year = record.get("paper_year") or str(
-        record.get("paper_submitted_date") or ""
-    )[:4]
-    relative = Path(str(year or "Unclassified")) / f"{paper_id}.md"
-    note = cfg.path("paper_folder") / relative
-    pdf = workspace / "80 Attachments/Papers" / f"{paper_id}.pdf"
-    record["paper_pdf_path"] = (
-        pdf.relative_to(workspace).as_posix() if pdf.exists() else ""
+    record = compose_record(
+        workspace,
+        raw,
+        analysis=selected_analysis,
+        overlay=record,
     )
+    paper_id = str(raw.get("source_id") or raw["paper_uid"]).replace(":", "_")
+    record.setdefault("paper_arxiv_id", paper_id.removeprefix("arxiv_"))
     record.setdefault("paper_title", paper_id)
     record.setdefault("paper_authors", [])
     record.setdefault("paper_first_author", "")
     for key in [
-        "paper_arxiv_id",
         "paper_abs_url",
         "paper_project_url",
         "paper_code_url",
@@ -302,6 +375,16 @@ def _render_local_note(
         "ai_analyzed_at",
     ]:
         record.setdefault(key, "")
+    # Keep subscriptions on the same readable filename contract as manual
+    # imports and the formal path migration.  Hard-coding ``{paper_id}.md``
+    # here used to reintroduce ID-only notes after a migration.
+    _, settings = load_workspace_settings(workspace)
+    note = workspace / preview_record_paths(workspace, settings, record)["note"]["new_path"]
+    if not record.get("paper_pdf_path"):
+        matches = list((workspace / "80 Attachments/Papers").rglob(f"{paper_id}.pdf"))
+        record["paper_pdf_path"] = (
+            matches[0].relative_to(workspace).as_posix() if matches else ""
+        )
     record.setdefault("paper_has_code", bool(record["paper_code_url"]))
     record.setdefault("paper_has_dataset", bool(record["paper_dataset_url"]))
     record.setdefault(

@@ -1,0 +1,40 @@
+# Zotero AI Markdown 投影
+
+`paperflow zotero render-ai --paper arxiv:2504.16054` 生成的是 AI Raw 的读者视图，不是
+第二份可编辑事实源：
+
+- YAML 保存标题、作者、日期、URL、状态和 Zotero item key；正文只呈现摘要、贡献、方法、
+  证据、局限和费曼问题，避免把作者/主页等元数据再次复制到正文。
+- 投影标记为 `artifact_permission: USER_EDITABLE_PROJECTION`，写入前计算内容哈希；已有内容不同
+  时返回 `manual-review-required`，不覆盖用户修改。
+- Vault 模式默认写入 `.paperflow/data/zotero/markdown/`；独立 Core Data Root 模式写入
+  `documents/zotero/`。`attach-ai-markdown` 生成由 Zotero 插件执行的附件动作；插件通过
+  `Zotero.Attachments.importFromFile({file, parentItemID, contentType, charset})` 写入，
+  Core 不直接写 Zotero。相同内容按 SHA-256 复用，不同内容生成新版本，不覆盖用户附件。
+- 可用 `--target zotero|obsidian|both` 选择投影目标；`both` 会同时生成 Zotero 与
+  Obsidian 系统文件，并在 `data/derived/ai-render-state/` 保存单一 primary writer、内容
+  哈希和目标状态。任一目标被用户修改时，重渲染都返回 `manual-review-required`。
+- Zotero 插件手动分析会读取本机 `analysisTarget` 偏好并把目标传给 Core；Core 在分析
+  完成后按同一目标渲染，避免分析结果和 Markdown 投影由两个写入器竞争。
+- Vault 的 Zotero 自动事件流水线固定以标准 `render_uid` 输出作为 Obsidian 主投影；
+  `target: zotero` 只请求次级 Zotero Markdown。这样不会在 `20 AI Analyses` 根目录
+  另造一份 compact AI 文档。插件轮询 Core job，完成后自动附加 Zotero Markdown 并
+  重建 mapping；导入阶段本身不依赖 AI Markdown。
+- Obsidian 的 AI Markdown、个人笔记、费曼答案、复盘和复现仍是独立目标；AI Raw 更新
+  不会覆盖用户输出。
+
+独立 Core Data Root 在没有 Obsidian Workspace 时也可运行默认 `mock` 分析：
+`state/jobs/*.json` 记录任务，`data/ai/<profile>/<paper>/v<version>/` 保存不可变
+AI Raw，`current.json` 只指向当前分析，`documents/zotero/` 保存 Markdown 投影。
+配置为 Claude/Codex/ChatGPT Web 等外部 Provider 时，Core 会明确要求 Workspace，
+不会静默降级为另一模型。
+
+费曼问题可执行 `paperflow zotero feynman init --paper <uid> --apply` 投影到独立的用户答案文件；答案写入 `.paperflow/data/user/feynman/`（standalone Core 为 `data/user/feynman/`），属于 `USER_MANAGED`，不会被 AI 重分析、订阅更新或 Markdown 重渲染覆盖。
+
+## 已验证闭环
+
+2026-07-28 的隔离 Zotero 9.0.6 验收以 π0.5（`arxiv:2504.16054`）为样本：
+Zotero 条目 `8XL74URF` 下的 AI Markdown 附件 `I7N92IGU` 与
+`20 AI Analyses/2025/2504.16054.analysis.md` 同时存在，mapping 在插件重新快照后
+保持一致。重复导入复用同哈希分析，不会覆盖用户修改的 Markdown；手动“附加 AI
+Markdown”只作为作业中断后的恢复入口。

@@ -25,6 +25,11 @@ def test_init_and_load_arbitrary_vault(tmp_path: Path) -> None:
         "https://github.com/threeyang3/PaperRead"
     )
     assert settings.updates.require_confirm_apply is True
+    assert settings.zotero.enabled is True
+    assert settings.zotero.collections.primary.name == "PaperFlow"
+    assert settings.zotero.analysis_trigger.mode == "collection_only"
+    assert settings.zotero.environment.core_service_port == 23140
+    assert settings.integrations.zotero.enabled is True
 
 
 def test_layering_local_environment_and_cli(
@@ -81,7 +86,10 @@ def test_resources_install_internal_obsidian_automation(tmp_path: Path) -> None:
     manifest = __import__("json").loads(
         (plugin / "manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["version"] == "1.3.2"
+    assert manifest["version"] == "1.5.0"
+    main_js = (plugin / "main.js").read_text(encoding="utf-8")
+    assert 'require("./' not in main_js
+    assert not (plugin / "reading-workspace.js").exists()
     assert "controlCenter" in __import__("json").loads(
         (plugin / "data.json").read_text(encoding="utf-8")
     )
@@ -95,8 +103,8 @@ def test_resources_install_internal_obsidian_automation(tmp_path: Path) -> None:
             / ".paperflow/state/integrations/paperflow-automation.json"
         ).read_text(encoding="utf-8")
     )
-    assert state["plugin_version"] == "1.3.2"
-    assert state["integration_version"] == 7
+    assert state["plugin_version"] == "1.5.0"
+    assert state["integration_version"] == 10
 
     main = plugin / "main.js"
     main.write_text("// user customization\n", encoding="utf-8")

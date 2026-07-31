@@ -29,6 +29,62 @@ class RawPaperRecord(VersionedRecord):
     extracted_text_sha256: str = ""
 
 
+class PublicPaperMetadata(BaseModel):
+    """Explicit public projection of bibliographic metadata.
+
+    Internal Raw metadata is intentionally more permissive for source adapters
+    and migrations. Public Feed records must never inherit that permissiveness.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    paper_title: str = ""
+    paper_authors: list[str] = Field(default_factory=list)
+    paper_year: int | None = None
+    paper_submitted_date: str | None = None
+    paper_updated_date: str | None = None
+    paper_primary_category: str = ""
+    paper_categories: list[str] = Field(default_factory=list)
+    paper_abstract: str = ""
+    paper_pdf_url: str = ""
+    paper_abs_url: str = ""
+    paper_doi: str = ""
+    paper_license: str = ""
+
+
+class PublicRawPaperRecord(BaseModel):
+    """Allowlisted public Raw record, separate from the internal Raw model."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = VERSIONS.raw_data_schema_version
+    paper_uid: str
+    source: str
+    source_id: str
+    source_version: int = 1
+    metadata: PublicPaperMetadata
+    source_license: str = ""
+    pdf_sha256: str = ""
+
+    @classmethod
+    def from_internal(cls, record: RawPaperRecord) -> "PublicRawPaperRecord":
+        allowed = PublicPaperMetadata.model_fields
+        metadata = {
+            key: value
+            for key, value in record.metadata.items()
+            if key in allowed
+        }
+        return cls(
+            paper_uid=record.paper_uid,
+            source=record.source,
+            source_id=record.source_id,
+            source_version=record.source_version,
+            metadata=PublicPaperMetadata.model_validate(metadata),
+            source_license=record.source_license,
+            pdf_sha256=record.pdf_sha256,
+        )
+
+
 class AnalysisIdentity(BaseModel):
     provider: str
     model: str

@@ -1,8 +1,8 @@
 # PaperFlow 产品化现状审计
 
 > 本文是 2026-07-17 的历史审计快照，不是当前安装或运维说明。当前状态请以
-> [用户与维护者指南](../维护者与用户指南.md)和
-> [验证矩阵](../verification-matrix.md)为准。
+> [用户与维护者指南](../../维护者与用户指南.md)和
+> [验证矩阵](../../verification-matrix.md)为准。
 >
 > 审计时间：2026-07-17 15:13（Asia/Shanghai）  
 > 审计对象：`E:/ObsidianVaults/ArxivLearn`  

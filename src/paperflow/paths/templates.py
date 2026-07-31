@@ -15,6 +15,9 @@ ALLOWED_VARIABLES = {
     "month",
     "day",
     "title",
+    "display_title",
+    "short_title",
+    "file_name",
     "first_author",
     "primary_category",
     "category",
@@ -26,6 +29,10 @@ ALLOWED_VARIABLES = {
     "analysis_profile",
     "analysis_id",
     "date",
+    "uid",
+    "annotation_id",
+    "contribution_id",
+    "creator",
 }
 
 ALLOWED_FILTERS = {

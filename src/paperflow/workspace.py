@@ -9,7 +9,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from ruamel.yaml import YAML
@@ -29,6 +29,8 @@ class WorkspaceVersions(StrictModel):
     feed: int = VERSIONS.public_feed_schema_version
     templates: int = VERSIONS.template_bundle_version
     form_flow: int = VERSIONS.form_flow_integration_version
+    annotations: int = VERSIONS.annotation_schema_version
+    community: int = VERSIONS.community_data_schema_version
 
 
 class PathRule(StrictModel):
@@ -62,11 +64,23 @@ class WorkspacePaths(StrictModel):
     derived_data: PathRule = PathRule(root=".paperflow/data/derived")
     pdf: PathRule = PathRule(
         root="80 Attachments/Papers",
-        template="{{year}}/{{paper_id}}.pdf",
+        template="{{year}}/{{paper_id}}/v{{version}}.pdf",
     )
     note: PathRule = PathRule(
         root="10 Papers",
-        template="{{year}}/{{paper_id}}.md",
+        template="{{year}}/{{short_title|slug}}-{{paper_id}}.md",
+    )
+    paper_hub: PathRule = PathRule(
+        root="10 Papers",
+        template="{{year}}/{{short_title|slug}}-{{paper_id}}.md",
+    )
+    ai_analysis_note: PathRule = PathRule(
+        root="20 AI Analyses",
+        template="{{year}}/{{paper_id}}.analysis.md",
+    )
+    user_note: PathRule = PathRule(
+        root="60 User Notes",
+        template="{{year}}/{{paper_id}}.notes.md",
     )
     base: PathRule = PathRule(root="00 Dashboard/Bases")
     dashboard: PathRule = PathRule(root="00 Dashboard")
@@ -78,6 +92,28 @@ class WorkspacePaths(StrictModel):
     processed_inbox: PathRule = PathRule(root="50 Inbox/Processed Requests")
     failed_inbox: PathRule = PathRule(root="50 Inbox/Failed Imports")
     manual_review: PathRule = PathRule(root="50 Inbox/Manual Review")
+    annotation_note: PathRule = PathRule(
+        root="60 Annotations",
+        template="{{paper_id}}/{{annotation_id}}.annotation.md",
+    )
+    paper_review: PathRule = PathRule(
+        root="60 Reviews",
+        template="{{year}}/{{paper_id}}.review.md",
+    )
+    community_note: PathRule = PathRule(
+        root="70 Community",
+        template="{{year}}/{{paper_id}}.community.md",
+    )
+    user_annotations: PathRule = PathRule(
+        root=".paperflow/data/user/annotations",
+        template="{{paper_id}}/{{annotation_id}}.json",
+    )
+    community_cache: PathRule = PathRule(
+        root=".paperflow/data/community/subscriptions"
+    )
+    community_outbox: PathRule = PathRule(
+        root=".paperflow/data/community/outbox"
+    )
     cache: PathRule = PathRule(root=".paperflow/cache")
     logs: PathRule = PathRule(root=".paperflow/logs")
     backups: PathRule = PathRule(root=".paperflow/backups")
@@ -100,13 +136,18 @@ class ProviderConfig(StrictModel):
     permission_mode: Literal["restricted"] = "restricted"
     timeout_seconds: int = Field(default=1800, ge=1, le=14400)
     extra_args: list[str] = Field(default_factory=list)
+    browser_executable: str = ""
+    browser_profile_dir: str = ""
+    base_url: str = "https://chatgpt.com/"
+    allow_pdf_upload: bool = False
+    model_preference: list[str] = Field(default_factory=list)
 
 
 class AIProfile(StrictModel):
-    provider: Literal["codex", "claude", "mock"]
+    provider: Literal["codex", "claude", "chatgpt-web", "mock"]
     model: str = ""
     timeout_seconds: int = Field(default=1800, ge=1, le=14400)
-    reasoning_effort: Literal["", "low", "medium", "high", "xhigh"] = ""
+    reasoning_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = ""
     fallback_profile: str = ""
     reuse_feed_analysis: bool = True
     reanalyze_when: Literal[
@@ -139,6 +180,26 @@ class DownloadSettings(StrictModel):
     timeout_seconds: int = Field(default=60, ge=1, le=3600)
     max_retries: int = Field(default=3, ge=0, le=20)
     request_interval_seconds: float = Field(default=3, ge=0)
+
+
+class VisualSettings(StrictModel):
+    selection_mode: Literal["adaptive"] = "adaptive"
+    quality_threshold: float = Field(default=48.0, ge=0, le=200)
+    safety_max_assets: int = Field(default=12, ge=0, le=50)
+
+
+class RelationshipSettings(StrictModel):
+    semantic_threshold: float = Field(default=0.35, ge=0, le=1)
+    max_semantic_links: int = Field(default=8, ge=0, le=100)
+    entity_types: list[Literal["topic", "method", "dataset", "author"]] = Field(
+        default_factory=lambda: ["topic", "method", "dataset"]
+    )
+
+
+class SyncCompatibilitySettings(StrictModel):
+    enabled: bool = True
+    settle_seconds: int = Field(default=3, ge=0, le=300)
+    refuse_conflict_files: bool = True
 
 
 class ObsidianBasesSettings(StrictModel):
@@ -181,6 +242,7 @@ class PublishingSettings(StrictModel):
     include_rendered_notes: bool = False
     data_license: str = ""
     pdf_policy: Literal["link-only", "include-when-licensed"] = "link-only"
+    include_community_contributions: bool = False
 
 
 class Subscription(StrictModel):
@@ -192,6 +254,9 @@ class Subscription(StrictModel):
     priority: int = Field(default=50, ge=0, le=100)
     auto_download_pdf: bool = True
     auto_render_notes: bool = True
+    capabilities: list[Literal["raw", "ai", "community"]] = Field(
+        default_factory=lambda: ["raw", "ai"]
+    )
 
 
 class SubscriptionSettings(StrictModel):
@@ -219,6 +284,69 @@ class AnalysisSelection(StrictModel):
     minimum_confidence: float = Field(default=0.6, ge=0, le=1)
 
 
+class AnnotationSettings(StrictModel):
+    adapter: Literal["pdf-plus", "native", "local", "legacy"] = "pdf-plus"
+    direct_pdf_editing: bool = False
+    reanchor_fuzzy_threshold: float = Field(default=0.86, ge=0, le=1)
+
+
+class CommunitySettings(StrictModel):
+    enabled: bool = True
+    publish_enabled: bool = False
+    maximum_quote_characters: int = Field(default=500, ge=0, le=500)
+    default_license: str = ""
+    show_small_sample_warning_below: int = Field(default=5, ge=1, le=100)
+
+
+class IntegrationToggle(StrictModel):
+    enabled: bool = True
+
+
+class IntegrationsSettings(StrictModel):
+    """Feature switches shared by Core integrations."""
+
+    zotero: IntegrationToggle = IntegrationToggle()
+    obsidian: IntegrationToggle = IntegrationToggle()
+
+
+class ZoteroEnvironmentSettings(StrictModel):
+    auto_detect: bool = True
+    do_not_assume_default_data_dir: bool = True
+    local_api_url: str = "http://127.0.0.1:23119/api/"
+    core_service_port: int = Field(default=23140, ge=1024, le=65535)
+
+
+class ZoteroPrimaryCollectionSettings(StrictModel):
+    name: str = "PaperFlow"
+    create_if_missing: bool = True
+    collection_key: str = ""
+
+
+class ZoteroCollectionsSettings(StrictModel):
+    primary: ZoteroPrimaryCollectionSettings = ZoteroPrimaryCollectionSettings()
+
+
+class ZoteroMigrationSettings(StrictModel):
+    attachment_mode: Literal["stored", "linked"] = "stored"
+    preserve_original_pdf: bool = True
+    require_hash_verification: bool = True
+
+
+class ZoteroAnalysisTriggerSettings(StrictModel):
+    mode: Literal["manual", "ask", "automatic", "collection_only", "tag_only"] = "collection_only"
+    collections: list[str] = Field(default_factory=lambda: ["PaperFlow"])
+    debounce_seconds: int = Field(default=10, ge=0, le=3600)
+    require_pdf: bool = True
+
+
+class ZoteroSettings(StrictModel):
+    enabled: bool = True
+    environment: ZoteroEnvironmentSettings = ZoteroEnvironmentSettings()
+    collections: ZoteroCollectionsSettings = ZoteroCollectionsSettings()
+    migration: ZoteroMigrationSettings = ZoteroMigrationSettings()
+    analysis_trigger: ZoteroAnalysisTriggerSettings = ZoteroAnalysisTriggerSettings()
+
+
 class WorkspaceSettings(StrictModel):
     workspace_name: str = "PaperFlow Workspace"
     versions: WorkspaceVersions = WorkspaceVersions()
@@ -231,16 +359,26 @@ class WorkspaceSettings(StrictModel):
     ai: AISettings
     discovery: DiscoverySettings = DiscoverySettings()
     downloads: DownloadSettings = DownloadSettings()
+    visuals: VisualSettings = VisualSettings()
+    relationships: RelationshipSettings = RelationshipSettings()
+    sync_compatibility: SyncCompatibilitySettings = SyncCompatibilitySettings()
     obsidian: ObsidianSettings = ObsidianSettings()
     publishing: PublishingSettings = PublishingSettings()
     subscriptions: SubscriptionSettings = SubscriptionSettings()
     updates: UpdateSettings = UpdateSettings()
     analysis_selection: AnalysisSelection = AnalysisSelection()
+    annotations: AnnotationSettings = AnnotationSettings()
+    community: CommunitySettings = CommunitySettings()
+    integrations: IntegrationsSettings = IntegrationsSettings()
+    zotero: ZoteroSettings = ZoteroSettings()
 
     @field_validator("timezone")
     @classmethod
     def timezone_required(cls, value: str) -> str:
-        ZoneInfo(value)
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA timezone: {value}") from exc
         return value
 
 
@@ -255,6 +393,8 @@ def default_workspace_dict() -> dict[str, Any]:
             "feed": VERSIONS.public_feed_schema_version,
             "templates": VERSIONS.template_bundle_version,
             "form_flow": VERSIONS.form_flow_integration_version,
+            "annotations": VERSIONS.annotation_schema_version,
+            "community": VERSIONS.community_data_schema_version,
         },
         "timezone": "Asia/Shanghai",
         "language": "auto",
@@ -292,6 +432,19 @@ def default_workspace_dict() -> dict[str, Any]:
                     "timeout_seconds": 30,
                     "extra_args": [],
                 },
+                "chatgpt-web": {
+                    "executable": "msedge",
+                    "model": "",
+                    "sandbox": "read-only",
+                    "permission_mode": "restricted",
+                    "timeout_seconds": 3600,
+                    "extra_args": [],
+                    "browser_executable": "",
+                    "browser_profile_dir": "%LOCALAPPDATA%/PaperFlow/ChatGPTWeb",
+                    "base_url": "https://chatgpt.com/",
+                    "allow_pdf_upload": False,
+                    "model_preference": ["Pro", "Thinking", "GPT-5.6", "GPT-5"],
+                },
             },
             "profiles": {
                 "triage": {
@@ -321,6 +474,15 @@ def default_workspace_dict() -> dict[str, Any]:
                     "reuse_feed_analysis": True,
                     "reanalyze_when": "identity-changed",
                 },
+                "web_analysis": {
+                    "provider": "chatgpt-web",
+                    "model": "",
+                    "timeout_seconds": 3600,
+                    "reasoning_effort": "",
+                    "fallback_profile": "",
+                    "reuse_feed_analysis": True,
+                    "reanalyze_when": "identity-changed",
+                },
                 "reanalysis": {
                     "provider": "claude",
                     "model": "",
@@ -337,11 +499,18 @@ def default_workspace_dict() -> dict[str, Any]:
         },
         "discovery": DiscoverySettings().model_dump(mode="json"),
         "downloads": DownloadSettings().model_dump(mode="json"),
+        "visuals": VisualSettings().model_dump(mode="json"),
+        "relationships": RelationshipSettings().model_dump(mode="json"),
+        "sync_compatibility": SyncCompatibilitySettings().model_dump(mode="json"),
         "obsidian": ObsidianSettings().model_dump(mode="json"),
         "publishing": PublishingSettings().model_dump(mode="json"),
         "subscriptions": SubscriptionSettings().model_dump(mode="json"),
         "updates": UpdateSettings().model_dump(mode="json"),
         "analysis_selection": AnalysisSelection().model_dump(mode="json"),
+        "annotations": AnnotationSettings().model_dump(mode="json"),
+        "community": CommunitySettings().model_dump(mode="json"),
+        "integrations": IntegrationsSettings().model_dump(mode="json"),
+        "zotero": ZoteroSettings().model_dump(mode="json"),
     }
 
 
@@ -506,6 +675,11 @@ def install_workspace_resources(
             root / "90 System/Templates",
             False,
         ),
+        (
+            _distribution_resource("prompts"),
+            root / ".paperflow/prompts",
+            True,
+        ),
     ]
     for source_root, destination_root, managed in mappings:
         for source in sorted(source_root.rglob("*")):
@@ -660,6 +834,7 @@ def _install_automation_plugin(
             (bundle / "default-data.json").read_text(encoding="utf-8")
         )
         default_data["dailyLocalTime"] = settings.obsidian.daily_local_time
+        default_data["timezone"] = settings.timezone
         default_data[
             "inboxIntervalMinutes"
         ] = settings.obsidian.inbox_interval_minutes
@@ -673,6 +848,33 @@ def _install_automation_plugin(
         )
         temporary.replace(data_path)
         actions.append({"file": "data.json", "action": "initialized"})
+    else:
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+        runtime = data.pop("runtime", None)
+        if runtime is not None:
+            backup = backup_root / "data.json"
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(data_path, backup)
+            runtime_path = root / ".paperflow/runtime/plugin-state.json"
+            runtime_path.parent.mkdir(parents=True, exist_ok=True)
+            if not runtime_path.exists():
+                runtime_path.write_text(
+                    json.dumps(runtime, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            temporary = data_path.with_name(data_path.name + ".tmp")
+            temporary.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(data_path)
+            actions.append(
+                {
+                    "file": "data.json",
+                    "action": "split-runtime-state",
+                    "backup": backup.relative_to(root).as_posix(),
+                }
+            )
     enabled_path = root / ".obsidian/community-plugins.json"
     enabled = []
     if enabled_path.exists():

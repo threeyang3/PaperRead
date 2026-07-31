@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "dry_run": true,
+  "papers": [
+    {
+      "paper_uid": "arxiv:2504.16054",
+      "item_action": "reuse",
+      "collection_action": "add-membership"
+    }
+  ]
+}
