@@ -119,4 +119,3 @@ def apply_entity_display_labels(root: Path) -> dict[str, Any]:
     with history.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(result, ensure_ascii=False) + "\n")
     return result
-

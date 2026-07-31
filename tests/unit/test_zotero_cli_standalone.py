@@ -53,4 +53,3 @@ def test_standalone_conflicts_reports_only_marked_files(tmp_path: Path) -> None:
     value = json.loads(result.stdout)
     assert value["count"] == 1
     assert "paper-NSConflict.json" in value["conflicts"][0]
-

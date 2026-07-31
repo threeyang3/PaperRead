@@ -66,4 +66,3 @@ def build_paper_view_model(root, settings, record: dict[str, Any]) -> dict[str, 
     model["paper_display_title"] = paper["display_title"]
     model["system_template_context_version"] = PAPER_VIEW_MODEL_CONTEXT_VERSION
     return model
-

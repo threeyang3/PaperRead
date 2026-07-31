@@ -34,4 +34,3 @@ def test_entity_display_labels_preserves_body(tmp_path: Path) -> None:
     _note(tmp_path / "20 Topics/Foo.md", "Foo", "topic")
     apply_entity_display_labels(tmp_path)
     assert "我的方法笔记" in path.read_text(encoding="utf-8")
-
