@@ -23,7 +23,7 @@ jobs:
       - run: python -m pytest
       - run: python scripts/build_release.py
       - run: python -m pytest tests/packaging -q
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: false
           files: dist/*
