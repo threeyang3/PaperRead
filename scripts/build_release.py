@@ -111,9 +111,13 @@ def main() -> None:
         "PaperFlow-portable-*.zip",
         "PaperFlow-Offline-Installer-*.zip",
         "PaperFlow-Template-Vault-*.zip",
+        "PaperFlow-Obsidian-*.zip",
         "schemas-*.zip",
         "templates-*.zip",
         "PaperFlow-Zotero-*.xpi",
+        "main.js",
+        "manifest.json",
+        "styles.css",
     ]:
         for stale in DIST.glob(pattern):
             stale.unlink()
@@ -223,6 +227,13 @@ def main() -> None:
     zip_tree(template_vault, vault_stage, vault_stage.name)
     audit_archive(template_vault, template_vault=True)
     shutil.rmtree(vault_stage)
+
+    obsidian_source = ROOT / "integrations/obsidian-paperflow-automation"
+    obsidian_plugin = DIST / f"PaperFlow-Obsidian-{VERSION}.zip"
+    zip_tree(obsidian_plugin, obsidian_source, "paperflow-automation")
+    audit_archive(obsidian_plugin)
+    for name in ["main.js", "manifest.json", "styles.css"]:
+        shutil.copy2(obsidian_source / name, DIST / name)
 
     zip_tree(DIST / f"schemas-{VERSION}.zip", ROOT / "schemas", "schemas")
     zip_tree(DIST / f"templates-{VERSION}.zip", ROOT / "templates", "templates")
