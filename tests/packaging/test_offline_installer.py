@@ -58,6 +58,13 @@ def test_windows_offline_installer_executes_console_script_without_recursion(
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell
     archive_path = DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip"
+    if not archive_path.is_file():
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts/build_release.py")],
+            cwd=ROOT,
+            check=True,
+            timeout=300,
+        )
     assert archive_path.is_file()
     extraction = tmp_path / "包含 中文 and spaces"
     with zipfile.ZipFile(archive_path) as archive:
