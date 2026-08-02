@@ -19,6 +19,7 @@ from paperflow.clock import WorkspaceClock, parse_aware_datetime
 from paperflow.security.artifacts import PublishScanner
 from paperflow.security.paths import (
     assert_distinct_storage_components,
+    encode_storage_component_v2,
     resolve_under,
     safe_storage_component,
 )
@@ -67,6 +68,37 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _canonical_feed_inventory(root: Path) -> dict[str, str]:
+    """Hash every managed Feed file while ignoring volatile timestamps."""
+
+    if not root.exists():
+        return {}
+    inventory: dict[str, str] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative.startswith("checksums/") or ".git" in Path(relative).parts:
+            continue
+        if Path(relative).parts[0] not in MANAGED_FEED_PATHS:
+            continue
+        if relative == "manifests/current.json":
+            value = json.loads(path.read_text(encoding="utf-8"))
+            value.pop("generated_at", None)
+            payload = _json_line(value).encode("utf-8")
+            inventory[relative] = hashlib.sha256(payload).hexdigest()
+        elif relative == "feed.yaml":
+            from ruamel.yaml import YAML
+
+            value = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+            value.pop("generated_at", None)
+            payload = _json_line(value).encode("utf-8")
+            inventory[relative] = hashlib.sha256(payload).hexdigest()
+        else:
+            inventory[relative] = _sha256(path)
+    return inventory
 
 
 def _json_line(value: Any) -> str:
@@ -317,15 +349,15 @@ def _publish_community(
     by_paper: dict[str, list[dict[str, Any]]] = {}
     contributors: set[str] = set()
     reviews = 0
+    manifest_root = destination / "manifests/community"
+    manifest_root.mkdir(parents=True, exist_ok=True)
     for source in records:
         value = CommunityContribution.model_validate_json(source.read_text(encoding="utf-8"))
         findings = scan_community_contribution(value.model_dump(mode="json"))
         if findings:
             raise RuntimeError(f"{source}: {', '.join(findings)}")
         relative = source.relative_to(root / ".paperflow/data/community/outbox")
-        target = resolve_under(
-            destination, *relative.parts, label="Community Feed staging path"
-        )
+        target = resolve_under(destination, *relative.parts, label="Community Feed staging path")
         _copy_if_changed(source, target)
         entry = {
             "paper_uid": value.paper_uid,
@@ -340,8 +372,8 @@ def _publish_community(
         reviews += int(value.kind == "paper-review")
     for paper_uid, entries in sorted(by_paper.items()):
         path = resolve_under(
-            destination / "manifests/community",
-            f"{safe_storage_component(paper_uid, label='paper_uid')}.jsonl",
+            manifest_root,
+            f"{encode_storage_component_v2(paper_uid, label='paper_uid')}.jsonl",
             label="Community manifest path",
         )
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -350,6 +382,8 @@ def _publish_community(
             encoding="utf-8",
             newline="\n",
         )
+    if not by_paper:
+        (manifest_root / "all.jsonl").write_text("", encoding="utf-8", newline="\n")
     return len(records), reviews, len(contributors)
 
 
@@ -628,6 +662,21 @@ def _build_feed_tree(
         if not schema_source.is_file():
             raise FileNotFoundError(f"Required Feed schema is missing: {name}")
         _copy_if_changed(schema_source, schema_dir / name)
+    canonical_changed = _canonical_feed_inventory(destination) != (
+        _canonical_feed_inventory(previous_feed) if previous_feed is not None else {}
+    )
+    if canonical_changed and not content_changed:
+        generated_at = WorkspaceClock(settings.timezone).iso_now()
+        current["generated_at"] = generated_at
+        feed["generated_at"] = generated_at
+        (manifests / "current.json").write_text(
+            json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        dump_yaml(destination / "feed.yaml", feed)
+        feed_yaml.write_bytes(feed_yaml.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+    content_changed = canonical_changed
     checksums = []
     for path in sorted(
         item
@@ -739,6 +788,17 @@ def validate_feed(feed_root: Path) -> dict[str, Any]:
         target = resolve_feed_file(feed_root, relative)
         if not target.is_file() or _sha256(target) != expected:
             raise ValueError(f"Checksum mismatch: {relative}")
+    actual_paths = {
+        path.relative_to(feed_root).as_posix()
+        for path in feed_root.rglob("*")
+        if path.is_file()
+        and not path.relative_to(feed_root).as_posix().startswith("checksums/")
+        and ".git" not in path.relative_to(feed_root).parts
+    }
+    if checksum_paths != actual_paths:
+        missing = sorted(actual_paths - checksum_paths)
+        extra = sorted(checksum_paths - actual_paths)
+        raise ValueError(f"checksum inventory mismatch: unlisted={missing}, missing={extra}")
     schemas = feed.get("schemas", {})
     raw_schema_path = resolve_feed_file(
         feed_root,
@@ -811,7 +871,10 @@ def validate_feed(feed_root: Path) -> dict[str, Any]:
                 raise ValueError(f"Incomplete AI provenance: missing {provenance_key}")
     community_count = 0
     if found_version >= 2 and feed.get("capabilities", {}).get("community"):
+        from paperflow.community.manifest import load_community_manifest
         from paperflow.community.privacy import scan_community_contribution
+
+        load_community_manifest(feed_root)
 
         community_keys: set[tuple[str, str, int]] = set()
         community_validator = Draft202012Validator(

@@ -87,6 +87,72 @@ function automationLogText(chunk) {
   return redactAutomationLog(buffer.toString("utf8"));
 }
 
+function createAutomationLogRedactor() {
+  let pending = "";
+  let discardingSensitiveLine = false;
+  const maximumPending = 8192;
+  return {
+    push(chunk) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk ?? ""), "utf8");
+      const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
+      if (sample.includes(0)) {
+        pending = "";
+        return automationLogText(buffer);
+      }
+      let incoming = buffer.toString("utf8");
+      if (discardingSensitiveLine) {
+        const newline = incoming.indexOf("\n");
+        if (newline < 0) return "";
+        discardingSensitiveLine = false;
+        incoming = incoming.slice(newline + 1);
+      }
+      pending += incoming;
+      const boundary = pending.lastIndexOf("\n");
+      if (boundary < 0) {
+        if (pending.length <= maximumPending) return "";
+        if (/\b(?:set-cookie|cookie|authorization|password|secret|token|api[_-]?key)\b/i.test(pending)) {
+          const safe = redactAutomationLog(pending);
+          pending = "";
+          discardingSensitiveLine = true;
+          return safe;
+        }
+        const emit = pending.slice(0, pending.length - 512);
+        pending = pending.slice(-512);
+        return emit;
+      }
+      const complete = pending.slice(0, boundary + 1);
+      pending = pending.slice(boundary + 1);
+      return redactAutomationLog(complete);
+    },
+    flush() {
+      const complete = redactAutomationLog(pending);
+      pending = "";
+      return complete;
+    }
+  };
+}
+
+function redactCommandArguments(argumentsList) {
+  const sensitive = /^(?:--body|--selected-text|--token|--secret|--cookie|--authorization|--api[_-]?key|--password)$/i;
+  const output = [];
+  for (let index = 0; index < argumentsList.length; index += 1) {
+    const value = String(argumentsList[index]);
+    const equals = value.indexOf("=");
+    if (equals > 0 && sensitive.test(value.slice(0, equals))) {
+      output.push(`${value.slice(0, equals)}=[REDACTED]`);
+    } else if (sensitive.test(value)) {
+      output.push(value);
+      if (index + 1 < argumentsList.length) {
+        output.push("[REDACTED]");
+        index += 1;
+      }
+    } else {
+      output.push(value);
+    }
+  }
+  return output;
+}
+
 async function terminateProcessTree(
   child,
   {
@@ -1599,7 +1665,7 @@ class PaperFlowAutomationPlugin extends Plugin {
     this.refreshControlCenter();
     try {
       for (const argumentsList of commands) {
-        output.push(`$ paperflow ${argumentsList.join(" ")}`);
+        output.push(`$ paperflow ${redactCommandArguments(argumentsList).join(" ")}`);
         result = await this.spawnPaperFlow(
           python,
           source,
@@ -1734,23 +1800,28 @@ class PaperFlowAutomationPlugin extends Plugin {
         path.relative(root, logPath).replaceAll("\\", "/");
       let stdout = "";
       let stderr = "";
+      const stdoutRedactor = createAutomationLogRedactor();
+      const stderrRedactor = createAutomationLogRedactor();
       let logBytes = 0;
       const append = (current, chunk) => (current + chunk.toString("utf8")).slice(-16000);
-      const writeLog = (streamName, chunk) => {
+      const writeLog = (streamName, text) => {
+        if (!text) return;
         if (logBytes >= AUTOMATION_LOG_MAX_BYTES) return;
-        const entry = Buffer.from(`[${streamName}] ${automationLogText(chunk)}`, "utf8");
+        const entry = Buffer.from(`[${streamName}] ${text}`, "utf8");
         const remaining = AUTOMATION_LOG_MAX_BYTES - logBytes;
         const bounded = entry.subarray(0, remaining);
         log.write(bounded);
         logBytes += bounded.length;
       };
       child.stdout.on("data", (chunk) => {
-        stdout = append(stdout, automationLogText(chunk));
-        writeLog("stdout", chunk);
+        const text = stdoutRedactor.push(chunk);
+        stdout = append(stdout, text);
+        writeLog("stdout", text);
       });
       child.stderr.on("data", (chunk) => {
-        stderr = append(stderr, automationLogText(chunk));
-        writeLog("stderr", chunk);
+        const text = stderrRedactor.push(chunk);
+        stderr = append(stderr, text);
+        writeLog("stderr", text);
       });
       let settled = false;
       const timeout = setTimeout(() => {
@@ -1774,12 +1845,24 @@ class PaperFlowAutomationPlugin extends Plugin {
       child.once("error", (error) => {
         if (settled) return;
         settled = true;
+        const stdoutTail = stdoutRedactor.flush();
+        const stderrTail = stderrRedactor.flush();
+        stdout = append(stdout, stdoutTail);
+        stderr = append(stderr, stderrTail);
+        writeLog("stdout", stdoutTail);
+        writeLog("stderr", stderrTail);
         clearActive();
         reject(error);
       });
       child.once("close", (code, signal) => {
         if (settled) return;
         settled = true;
+        const stdoutTail = stdoutRedactor.flush();
+        const stderrTail = stderrRedactor.flush();
+        stdout = append(stdout, stdoutTail);
+        stderr = append(stderr, stderrTail);
+        writeLog("stdout", stdoutTail);
+        writeLog("stderr", stderrTail);
         const abortReason = this.activeJobAbortReason;
         clearActive();
         const exitCode = abortReason === "timeout"
@@ -3170,5 +3253,7 @@ module.exports.__test = {
   windowsProcessTreeCommand,
   redactAutomationLog,
   automationLogText,
+  createAutomationLogRedactor,
+  redactCommandArguments,
   AUTOMATION_LOG_MAX_BYTES
 };

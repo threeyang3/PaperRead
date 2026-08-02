@@ -8,6 +8,7 @@ from typing import Any
 from paperflow.community.models import CommunityContribution
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.community.publisher import verify_content_sha256
+from paperflow.community.manifest import load_community_manifest
 from paperflow.obsidian.frontmatter import dump_frontmatter, read_note
 from paperflow.text_quality import display_title
 from paperflow.utils import atomic_json, atomic_write, iso_utc
@@ -98,7 +99,7 @@ def ingest_community(
         resolved_note_root.relative_to(resolved_vault)
     except ValueError as exc:
         raise ValueError("Community note root must stay inside the vault") from exc
-    files = sorted(feed_root.glob("papers/*/community/*/*/r*.json"))
+    files = [entry.source for entry in load_community_manifest(feed_root)]
     accepted: list[CommunityContribution] = []
     planned = []
     feed_component = safe_storage_component(feed_id, label="feed_id")

@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import inspect
 from pathlib import Path
 
 import pytest
 
 from paperflow.data.records import AIAnalysisRecord, AnalysisIdentity, RawPaperRecord
 from paperflow.feed import build_feed, validate_feed
+from paperflow.feed.subscriber import _render_local_note
 from paperflow.workspace import WorkspaceSettings, default_workspace_dict
 
 
@@ -349,3 +351,37 @@ def test_feed_manifest_identity_matches_raw_file(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="identity mismatch"):
         validate_feed(feed)
+
+
+def test_feed_rejects_file_missing_from_checksum_inventory(tmp_path: Path) -> None:
+    root, _ = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(root, _settings(), feed)
+    rogue = feed / "papers/rogue.json"
+    rogue.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum inventory mismatch"):
+        validate_feed(feed)
+
+
+def test_feed_content_changed_includes_schema_and_policy_files(tmp_path: Path) -> None:
+    root, _ = _workspace(tmp_path)
+    feed = tmp_path / "feed"
+    build_feed(root, _settings(), feed)
+    schema = root / "schemas/feed.schema.json"
+    schema.parent.mkdir(parents=True, exist_ok=True)
+    source = Path("schemas/feed.schema.json").read_text(encoding="utf-8")
+    schema.write_text(
+        source.replace('"title":', '"$comment":"changed","title":', 1), encoding="utf-8"
+    )
+
+    rebuilt = build_feed(root, _settings(), feed)
+
+    assert rebuilt["content_changed"] is True
+
+
+def test_remote_source_id_is_not_resolved_with_pdf_glob() -> None:
+    implementation = inspect.getsource(_render_local_note)
+
+    assert ".rglob(" not in implementation
+    assert "source_version" in implementation

@@ -273,6 +273,28 @@ async function main() {
     assert.ok(!output.includes(secret), `${input} leaked through as ${output}`);
     assert.match(output, /\[REDACTED\]/);
   }
+  const streamingRedactor = AutomationPlugin.__test.createAutomationLogRedactor();
+  assert.equal(streamingRedactor.push("Authorization: Bea"), "");
+  const splitOutput = streamingRedactor.push("rer split-secret\n");
+  assert.ok(!splitOutput.includes("split-secret"));
+  assert.match(splitOutput, /\[REDACTED\]/);
+  assert.equal(streamingRedactor.flush(), "");
+  const summarized = AutomationPlugin.__test.redactCommandArguments([
+    "annotation",
+    "create",
+    "--paper-uid",
+    "arxiv:1",
+    "--body",
+    "private annotation body",
+    "--selected-text=private selection",
+    "--token",
+    "private-token"
+  ]);
+  assert.deepEqual(summarized, [
+    "annotation", "create", "--paper-uid", "arxiv:1",
+    "--body", "[REDACTED]", "--selected-text=[REDACTED]",
+    "--token", "[REDACTED]"
+  ]);
   assert.equal(typeof AutomationPlugin.__test.openReadingWorkspace, "function");
   assert.equal(
     AutomationPlugin.__test.workspaceTimezoneFromYaml(

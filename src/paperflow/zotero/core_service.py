@@ -656,6 +656,39 @@ class PaperFlowCoreService:
             _write_job_state(self.root, value)
             return value
 
+    def _finalize_job(
+        self, job_id: str, *, status: str, result: Any, error: str | None = None
+    ) -> dict[str, Any]:
+        """Commit one terminal state while resolving a concurrent cancel."""
+
+        with self.job_state_lock:
+            value = _read_job_state(self.root, job_id)
+            current = str(value.get("status") or "")
+            if current in JOB_TERMINAL_STATES:
+                return value
+            final_status = status
+            if current == "cancellation-requested" and status in {
+                "completed",
+                "skipped",
+            }:
+                final_status = "completed-after-cancel-request"
+            if final_status not in JOB_TERMINAL_STATES:
+                final_status = "failed"
+                error = error or f"invalid worker terminal status: {status}"
+            if final_status not in JOB_TRANSITIONS.get(current, set()):
+                raise ValueError(
+                    f"invalid job state transition: {current} -> {final_status}"
+                )
+            value.update(
+                status=final_status,
+                finished_at=iso_utc(),
+                result=result,
+                error=error,
+                updated_at=iso_utc(),
+            )
+            _write_job_state(self.root, value)
+            return value
+
     def _worker_loop(self) -> None:
         while not self.worker_stop.is_set():
             try:
@@ -674,7 +707,24 @@ class PaperFlowCoreService:
                 self.active_job_id = str(job.get("job_id") or "")
                 self.active_job_cancel.clear()
                 try:
-                    self._run_job(job)
+                    try:
+                        self._run_job(job)
+                    except Exception as exc:
+                        # A programming or persistence error in one job must
+                        # remain observable without killing the queue worker.
+                        job_id = str(job.get("job_id") or "")
+                        try:
+                            state = _read_job_state(self.root, job_id)
+                            if state.get("status") == "queued":
+                                self._update_job_state(job_id, status="running")
+                            self._finalize_job(
+                                job_id,
+                                status="failed",
+                                result={},
+                                error=f"unexpected worker failure: {exc}",
+                            )
+                        except Exception:
+                            pass
                 finally:
                     self.active_job_id = None
                     self.active_job_cancel.clear()
@@ -889,12 +939,13 @@ class PaperFlowCoreService:
                 for key, value in result.items()
                 if key not in {"job_id", "kind", "paper_uid", "status"}
             }
-        self._update_job_state(
+        finalized = self._finalize_job(
             job_id,
             status=str(result.get("status") or "failed"),
-            finished_at=iso_utc(),
             result=persisted_result,
+            error=str(result.get("error") or "") or None,
         )
+        result["status"] = finalized["status"]
         _append_event(self.root, "jobs", result)
         self.active_job_id = None
         self.active_job_cancel.clear()
@@ -1726,6 +1777,7 @@ class PaperFlowCoreService:
             "analysis_profile": analysis_profile,
             "source_content_hash": source_content_hash,
             "target": target,
+            "zotero_item_key": str(body.get("zotero_item_key") or ""),
         }
         idempotency_key = hashlib.sha256(
             json.dumps(
@@ -1795,17 +1847,29 @@ class PaperFlowCoreService:
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued job or request cooperative cancellation of a runner."""
 
-        value = _read_job_state(self.root, job_id)
-        status = str(value.get("status") or "")
+        with self.job_state_lock:
+            value = _read_job_state(self.root, job_id)
+            status = str(value.get("status") or "")
+            if status == "queued":
+                updated = self._update_job_state(
+                    job_id,
+                    status="cancelled",
+                    finished_at=iso_utc(),
+                    cancellation_requested_at=iso_utc(),
+                    cancelled_at=iso_utc(),
+                    error=None,
+                )
+            elif status == "running":
+                if self.active_job_id == job_id:
+                    self.active_job_cancel.set()
+                updated = self._update_job_state(
+                    job_id,
+                    status="cancellation-requested",
+                    cancellation_requested_at=iso_utc(),
+                )
+            else:
+                updated = value
         if status == "queued":
-            updated = self._update_job_state(
-                job_id,
-                status="cancelled",
-                finished_at=iso_utc(),
-                cancellation_requested_at=iso_utc(),
-                cancelled_at=iso_utc(),
-                error=None,
-            )
             _append_event(
                 self.root,
                 "jobs",
@@ -1818,13 +1882,6 @@ class PaperFlowCoreService:
             )
             return {"ok": True, "job_id": job_id, "status": "cancelled", "cancelled": True}
         if status == "running":
-            if self.active_job_id == job_id:
-                self.active_job_cancel.set()
-            updated = self._update_job_state(
-                job_id,
-                status="cancellation-requested",
-                cancellation_requested_at=iso_utc(),
-            )
             return {
                 "ok": True,
                 "job_id": job_id,

@@ -8,22 +8,22 @@ database.
 
 from __future__ import annotations
 
-import hashlib
 import json
-import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-import httpx
 from ruamel.yaml import YAML
 
 from paperflow.community.models import CommunityContribution
+from paperflow.community.manifest import load_community_manifest
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.community.publisher import verify_content_sha256
 from paperflow.community.subscriber import community_rating_summary, render_community_note
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
 from paperflow.feed.subscriber import _acquire, _sha256
+from paperflow.feed.conflicts import copy_preserving_conflicts
+from paperflow.net.pdf_download import DEFAULT_MAX_PDF_BYTES, download_pdf_safely
 from paperflow.security.artifacts import PermissionGuard
 from paperflow.security.paths import (
     assert_distinct_storage_components,
@@ -33,41 +33,19 @@ from paperflow.security.paths import (
 from paperflow.versioning import check_reader_version
 from paperflow.zotero.store import data_root
 from paperflow.zotero.mapping_index import mapping_for_paper
-from paperflow.utils import atomic_json, iso_beijing
+from paperflow.utils import atomic_json, iso_utc
 
 
 def _paper_id(value: str) -> str:
     return safe_storage_component(value, label="paper_uid")
 
 
-def _copy_verified(
-    source: Path,
-    target: Path,
-    expected_sha256: str,
-    *,
-    dry_run: bool,
-    cancellation_token: Any | None = None,
-) -> tuple[str, bool]:
-    source_hash = _sha256(source)
-    if expected_sha256 and source_hash != expected_sha256:
-        raise ValueError(f"Manifest hash mismatch: {source}")
-    if target.is_file():
-        if _sha256(target) == source_hash:
-            return target.as_posix(), False
-        target = target.with_name(target.stem + "-conflict" + target.suffix)
-    if dry_run:
-        return target.as_posix(), True
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    shutil.copy2(source, temporary)
-    temporary.replace(target)
-    return target.as_posix(), True
-
-
 def _download_pdf(
-    root: Path, item: dict[str, Any], *, cancellation_token: Any | None = None
+    root: Path,
+    item: dict[str, Any],
+    *,
+    cancellation_token: Any | None = None,
+    maximum_size: int = DEFAULT_MAX_PDF_BYTES,
 ) -> bool:
     pdf = item.get("pdf") or {}
     source_url = str(pdf.get("source_url") or "")
@@ -77,48 +55,16 @@ def _download_pdf(
     target = resolve_under(
         root / "documents/zotero", f"{paper_id}.pdf", label="Core subscription PDF"
     )
-    if target.exists():
-        with target.open("rb") as stream:
-            header = stream.read(5)
-        if header != b"%PDF-":
-            raise ValueError(f"Existing PDF has an invalid header: {target}")
-        expected = str(pdf.get("expected_sha256") or "")
-        if expected and _sha256(target) != expected:
-            raise ValueError(f"Existing PDF checksum mismatch: {target}")
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    digest = hashlib.sha256()
-    size = 0
-    try:
-        with httpx.stream("GET", source_url, timeout=60, follow_redirects=True) as response:
-            if cancellation_token is not None:
-                cancellation_token.raise_if_cancelled()
-            response.raise_for_status()
-            with temporary.open("wb") as output:
-                for chunk in response.iter_bytes():
-                    if cancellation_token is not None:
-                        cancellation_token.raise_if_cancelled()
-                    digest.update(chunk)
-                    size += len(chunk)
-                    output.write(chunk)
-        with temporary.open("rb") as stream:
-            header = stream.read(5)
-        if header != b"%PDF-":
-            raise ValueError(f"Downloaded file is not a PDF: {source_url}")
-        expected = str(pdf.get("expected_sha256") or "")
-        if expected and digest.hexdigest() != expected:
-            raise ValueError(f"Downloaded PDF checksum mismatch: {source_url}")
-        expected_size = pdf.get("expected_size")
-        if expected_size is not None and size != int(expected_size):
-            raise ValueError(f"Downloaded PDF size mismatch: {source_url}")
-        if cancellation_token is not None:
-            cancellation_token.raise_if_cancelled()
-        temporary.replace(target)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-    return True
+    expected_size = pdf.get("expected_size")
+    result = download_pdf_safely(
+        source_url,
+        target,
+        expected_sha256=str(pdf.get("expected_sha256") or ""),
+        expected_size=int(expected_size) if expected_size is not None else None,
+        maximum_size=maximum_size,
+        cancellation_token=cancellation_token,
+    )
+    return result.status == "created"
 
 
 def _zotero_mapping_exists(root: Path, paper_uid: str) -> bool:
@@ -164,10 +110,17 @@ def _update_subscription_inbox(
         "schema_version": 1,
         "artifact_permission": "REMOTE_READ_ONLY",
         "paper_uid": paper_uid,
-        "title": str(metadata.get("paper_title_display") or metadata.get("paper_title") or item.get("title") or ""),
+        "title": str(
+            metadata.get("paper_title_display")
+            or metadata.get("paper_title")
+            or item.get("title")
+            or ""
+        ),
         "authors": metadata.get("paper_authors") or metadata.get("authors") or [],
         "abstract": str(metadata.get("paper_abstract") or metadata.get("abstract") or ""),
-        "url": str(metadata.get("paper_abs_url") or metadata.get("paper_pdf_url") or item.get("url") or ""),
+        "url": str(
+            metadata.get("paper_abs_url") or metadata.get("paper_pdf_url") or item.get("url") or ""
+        ),
         "source": str(item.get("source") or ""),
         "source_id": str(item.get("source_id") or ""),
         "source_version": int(item.get("version") or item.get("source_version") or 1),
@@ -176,8 +129,8 @@ def _update_subscription_inbox(
         "source_sha256": source_sha256,
         "pdf": item.get("pdf") if isinstance(item.get("pdf"), dict) else {},
         "status": status,
-        "created_at": str(existing.get("created_at") or iso_beijing()),
-        "updated_at": iso_beijing(),
+        "created_at": str(existing.get("created_at") or iso_utc()),
+        "updated_at": iso_utc(),
     }
     for key in ("decision_at", "zotero_item_key", "decision_note"):
         if key in existing:
@@ -194,7 +147,7 @@ def _ingest_community(
     *,
     dry_run: bool,
 ) -> dict[str, Any]:
-    files = sorted(feed_root.glob("papers/*/community/*/*/r*.json"))
+    files = [entry.source for entry in load_community_manifest(feed_root)]
     accepted: list[CommunityContribution] = []
     planned: list[str] = []
     for source in files:
@@ -294,13 +247,19 @@ def sync_core_feed(
         enabled = {value for value in requested if advertised.get(value, False)}
         manifests = [
             json.loads(line)
-            for line in (feed_root / "manifests/papers.jsonl").read_text(encoding="utf-8").splitlines()
+            for line in (feed_root / "manifests/papers.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line
         ]
         if trust == "metadata-and-ai" and "ai" in enabled:
             analysis_manifest = feed_root / "manifests/analyses.jsonl"
             if analysis_manifest.is_file():
-                manifests.extend(json.loads(line) for line in analysis_manifest.read_text(encoding="utf-8").splitlines() if line)
+                manifests.extend(
+                    json.loads(line)
+                    for line in analysis_manifest.read_text(encoding="utf-8").splitlines()
+                    if line
+                )
         feed_component = safe_storage_component(feed_id, label="feed_id")
         paper_components = assert_distinct_storage_components(
             [item["paper_uid"] for item in manifests], label="paper_uid"
@@ -339,36 +298,50 @@ def sync_core_feed(
                     label="Standalone Raw subscription path",
                 )
                 raw_items.append(item)
-            target_path, wrote = _copy_verified(
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
+            outcome = copy_preserving_conflicts(
                 source,
                 target,
-                expected,
+                source_id=feed_component,
+                expected_sha256=expected,
                 dry_run=dry_run,
-                cancellation_token=cancellation_token,
             )
-            if wrote:
+            if outcome.status in {"created", "conflict-created"}:
                 created += 1
             else:
                 reused += 1
-            if "conflict" in Path(target_path).name:
-                conflicts.append({"paper_uid": str(item["paper_uid"]), "target": str(target_path), "policy": "preserve-both"})
+            if outcome.status.startswith("conflict-"):
+                conflicts.append(
+                    {
+                        "paper_uid": str(item["paper_uid"]),
+                        "target": str(outcome.path),
+                        "policy": "preserve-both",
+                        "status": outcome.status,
+                        "sha256": outcome.sha256,
+                    }
+                )
 
             if not dry_run and not is_ai:
                 raw = json.loads(source.read_text(encoding="utf-8"))
                 metadata = dict(raw.get("metadata") or raw)
                 metadata["paper_uid"] = str(item["paper_uid"])
-                metadata.setdefault("paper_arxiv_id", str(item.get("source_id") or "").removeprefix("arxiv_"))
+                metadata.setdefault(
+                    "paper_arxiv_id", str(item.get("source_id") or "").removeprefix("arxiv_")
+                )
                 paper_target = root / "data/papers" / f"{paper_id}.json"
                 if not paper_target.exists():
                     PermissionGuard(root).authorize(paper_target, "RAW_VERSIONED")
                     atomic_json(paper_target, metadata)
-                inbox_statuses.append(_update_subscription_inbox(
-                    root,
-                    {**item, "metadata": metadata},
-                    feed_id=feed_id,
-                    source_path=source.relative_to(feed_root).as_posix(),
-                    source_sha256=expected or _sha256(source),
-                ))
+                inbox_statuses.append(
+                    _update_subscription_inbox(
+                        root,
+                        {**item, "metadata": metadata},
+                        feed_id=feed_id,
+                        source_path=source.relative_to(feed_root).as_posix(),
+                        source_sha256=expected or _sha256(source),
+                    )
+                )
 
         downloaded = (
             sum(

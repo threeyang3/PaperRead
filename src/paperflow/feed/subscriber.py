@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,12 +8,12 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from ruamel.yaml import YAML
-import httpx
-import fitz
-
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
+from paperflow.feed.conflicts import copy_preserving_conflicts
+from paperflow.net.pdf_download import download_pdf_safely
 from paperflow.security.paths import (
     assert_distinct_storage_components,
+    encode_storage_component_v2,
     resolve_under,
     safe_storage_component,
 )
@@ -27,17 +24,17 @@ MAX_LINKED_PDF_BYTES = 100 * 1024 * 1024
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    from paperflow.feed.conflicts import sha256_file
+
+    return sha256_file(path)
 
 
 def _local_source(url: str) -> Path | None:
     parsed = urlparse(url)
     if parsed.scheme == "file":
-        return Path(unquote(parsed.path.lstrip("/"))) if parsed.netloc else Path(unquote(parsed.path))
+        return (
+            Path(unquote(parsed.path.lstrip("/"))) if parsed.netloc else Path(unquote(parsed.path))
+        )
     candidate = Path(url)
     return candidate.resolve() if candidate.exists() else None
 
@@ -77,9 +74,7 @@ def inspect_feed(url: str, branch: str = "main") -> dict[str, Any]:
     with TemporaryDirectory(prefix="paperflow-feed-") as temporary:
         root = _acquire(url, branch, Path(temporary) / "feed")
         validation = validate_feed(root)
-        metadata = YAML(typ="safe").load(
-            (root / "feed.yaml").read_text(encoding="utf-8")
-        )
+        metadata = YAML(typ="safe").load((root / "feed.yaml").read_text(encoding="utf-8"))
         check_reader_version(str(metadata["minimum_reader_version"]))
         return {"feed": metadata, "validation": validation}
 
@@ -110,9 +105,7 @@ def sync_feed(
         if cancellation_token is not None:
             cancellation_token.raise_if_cancelled(side_effects=True)
         validation = validate_feed(feed_root)
-        feed = YAML(typ="safe").load(
-            (feed_root / "feed.yaml").read_text(encoding="utf-8")
-        )
+        feed = YAML(typ="safe").load((feed_root / "feed.yaml").read_text(encoding="utf-8"))
         feed_version = int(feed.get("feed_schema_version", 1))
         requested_capabilities = set(capabilities or ["raw", "ai"])
         advertised = feed.get("capabilities") or {
@@ -178,39 +171,34 @@ def sync_feed(
                     f"v{version}.json",
                     label="Feed Raw subscription path",
                 )
-            if target.exists():
-                if _sha256(target) == item["sha256"]:
-                    reused += 1
-                    continue
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
+            outcome = copy_preserving_conflicts(
+                source,
+                target,
+                source_id=feed_component,
+                expected_sha256=str(item["sha256"]),
+                dry_run=dry_run,
+            )
+            if outcome.status in {"created", "conflict-created"}:
+                created += 1
+            else:
+                reused += 1
+            if outcome.status.startswith("conflict-"):
                 conflicts.append(
                     {
-                        "paper_uid": item["paper_uid"],
-                        "target": target.relative_to(workspace).as_posix(),
+                        "paper_uid": str(item["paper_uid"]),
+                        "target": outcome.path.relative_to(workspace).as_posix(),
                         "policy": "preserve-both",
+                        "status": outcome.status,
+                        "sha256": outcome.sha256,
                     }
                 )
-                target = target.with_name(
-                    target.stem + f"-{feed_component}" + target.suffix
-                )
-            if not dry_run:
-                if cancellation_token is not None:
-                    cancellation_token.raise_if_cancelled()
-                target.parent.mkdir(parents=True, exist_ok=True)
-                temporary_target = target.with_name(target.name + ".tmp")
-                shutil.copy2(source, temporary_target)
-                temporary_target.replace(target)
-            created += 1
         if not dry_run:
-            paper_items = [
-                item
-                for item in manifests
-                if "analysis_id" not in item
-            ]
+            paper_items = [item for item in manifests if "analysis_id" not in item]
             if auto_download_pdf:
                 for item in paper_items:
-                    if _download_linked_pdf(
-                        workspace, item, cancellation_token=cancellation_token
-                    ):
+                    if _download_linked_pdf(workspace, item, cancellation_token=cancellation_token):
                         downloaded_pdfs += 1
             if auto_render_notes:
                 for item in paper_items:
@@ -265,7 +253,7 @@ def _download_linked_pdf(
     source_url = str(pdf.get("source_url") or "")
     if not source_url:
         return False
-    paper_id = safe_storage_component(
+    paper_id = encode_storage_component_v2(
         item.get("source_id") or item["paper_uid"], label="source_id"
     )
     year = safe_storage_component(item.get("year") or "Unclassified", label="paper year")
@@ -277,78 +265,16 @@ def _download_linked_pdf(
         f"v{version}.pdf",
         label="linked PDF path",
     )
-    if target.exists():
-        if not target.read_bytes()[:5] == b"%PDF-":
-            raise ValueError(f"Existing PDF has an invalid header: {target}")
-        expected = str(pdf.get("expected_sha256") or "")
-        if expected and _sha256(target) != expected:
-            raise ValueError(f"Existing PDF checksum mismatch: {target}")
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".tmp")
-    temporary.unlink(missing_ok=True)
-    digest = hashlib.sha256()
-    size = 0
-    header = bytearray()
-    maximum_size = MAX_LINKED_PDF_BYTES
     expected_size = pdf.get("expected_size")
-    if expected_size is not None and int(expected_size) > maximum_size:
-        raise ValueError(
-            f"Refusing PDF larger than {maximum_size} bytes: {source_url}"
-        )
-    with httpx.stream(
-        "GET", source_url, timeout=60, follow_redirects=True
-    ) as response:
-        if cancellation_token is not None:
-            cancellation_token.raise_if_cancelled()
-        response.raise_for_status()
-        content_length = response.headers.get("content-length")
-        if content_length and int(content_length) > maximum_size:
-            raise ValueError(
-                f"Refusing PDF larger than {maximum_size} bytes: {source_url}"
-            )
-        try:
-            with temporary.open("xb") as output:
-                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                    if cancellation_token is not None:
-                        cancellation_token.raise_if_cancelled()
-                    if not chunk:
-                        continue
-                    if len(header) < 5:
-                        header.extend(chunk[: 5 - len(header)])
-                    digest.update(chunk)
-                    size += len(chunk)
-                    if size > maximum_size:
-                        raise ValueError(
-                            f"Downloaded PDF exceeds {maximum_size} bytes: {source_url}"
-                        )
-                    output.write(chunk)
-                output.flush()
-                os.fsync(output.fileno())
-        except Exception:
-            temporary.unlink(missing_ok=True)
-            raise
-    try:
-        if bytes(header) != b"%PDF-":
-            raise ValueError(f"Downloaded file is not a PDF: {source_url}")
-        try:
-            with fitz.open(filename=temporary, filetype="pdf") as document:
-                if document.page_count < 1:
-                    raise ValueError("PDF has no pages")
-        except Exception as exc:
-            raise ValueError(f"Downloaded PDF is structurally invalid: {source_url}") from exc
-        expected = str(pdf.get("expected_sha256") or "")
-        if expected and digest.hexdigest() != expected:
-            raise ValueError(f"Downloaded PDF checksum mismatch: {source_url}")
-        if expected_size is not None and size != int(expected_size):
-            raise ValueError(f"Downloaded PDF size mismatch: {source_url}")
-        if cancellation_token is not None:
-            cancellation_token.raise_if_cancelled()
-        temporary.replace(target)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-    return True
+    result = download_pdf_safely(
+        source_url,
+        target,
+        expected_sha256=str(pdf.get("expected_sha256") or ""),
+        expected_size=int(expected_size) if expected_size is not None else None,
+        maximum_size=MAX_LINKED_PDF_BYTES,
+        cancellation_token=cancellation_token,
+    )
+    return result.status == "created"
 
 
 def _render_local_note(
@@ -365,9 +291,7 @@ def _render_local_note(
     from paperflow.pipeline.import_paper import pending_analysis
     from paperflow.workspace import load_workspace_settings
 
-    raw = json.loads(
-        resolve_feed_file(feed_root, item["path"]).read_text(encoding="utf-8")
-    )
+    raw = json.loads(resolve_feed_file(feed_root, item["path"]).read_text(encoding="utf-8"))
     record = {**raw["metadata"], **pending_analysis()}
     record["paper_uid"] = raw["paper_uid"]
     analyses = [
@@ -381,16 +305,12 @@ def _render_local_note(
     if analyses:
         selected = analyses[-1]
         selected_analysis = json.loads(
-            resolve_feed_file(feed_root, selected["path"]).read_text(
-                encoding="utf-8"
-            )
+            resolve_feed_file(feed_root, selected["path"]).read_text(encoding="utf-8")
         )
         record.update(selected_analysis["analysis"])
         record["system_selected_analysis_id"] = selected_analysis["analysis_id"]
         record["system_selected_analysis_publisher"] = feed_id
-        record["ai_analysis_provider"] = selected_analysis["identity"].get(
-            "provider", ""
-        )
+        record["ai_analysis_provider"] = selected_analysis["identity"].get("provider", "")
         record["ai_analysis_model"] = selected_analysis["identity"].get("model", "")
         record["ai_analysis_prompt_version"] = selected_analysis["identity"].get(
             "prompt_version", ""
@@ -403,7 +323,9 @@ def _render_local_note(
         analysis=selected_analysis,
         overlay=record,
     )
-    paper_id = str(raw.get("source_id") or raw["paper_uid"]).replace(":", "_")
+    paper_id = encode_storage_component_v2(
+        raw.get("source_id") or raw["paper_uid"], label="source_id"
+    )
     record.setdefault("paper_arxiv_id", paper_id.removeprefix("arxiv_"))
     record.setdefault("paper_title", paper_id)
     record.setdefault("paper_authors", [])
@@ -425,10 +347,19 @@ def _render_local_note(
     _, settings = load_workspace_settings(workspace)
     note = workspace / preview_record_paths(workspace, settings, record)["note"]["new_path"]
     if not record.get("paper_pdf_path"):
-        matches = list((workspace / "80 Attachments/Papers").rglob(f"{paper_id}.pdf"))
-        record["paper_pdf_path"] = (
-            matches[0].relative_to(workspace).as_posix() if matches else ""
+        year = encode_storage_component_v2(
+            raw.get("year") or raw.get("metadata", {}).get("paper_year") or "Unclassified",
+            label="paper year",
         )
+        version = int(raw.get("source_version") or raw.get("version") or 1)
+        pdf = resolve_under(
+            workspace / "80 Attachments/Papers",
+            year,
+            paper_id,
+            f"v{version}.pdf",
+            label="linked PDF path",
+        )
+        record["paper_pdf_path"] = pdf.relative_to(workspace).as_posix() if pdf.is_file() else ""
     record.setdefault("paper_has_code", bool(record["paper_code_url"]))
     record.setdefault("paper_has_dataset", bool(record["paper_dataset_url"]))
     record.setdefault(

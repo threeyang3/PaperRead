@@ -81,6 +81,45 @@ def safe_storage_component(
     return encoded
 
 
+def encode_storage_component_v2(
+    value: object,
+    *,
+    label: str,
+    max_length: int = 100,
+) -> str:
+    """Encode a logical identifier injectively for new managed writes.
+
+    ``~XX`` represents one UTF-8 byte.  Escaping ``~`` itself makes the
+    representation unambiguous while leaving legacy-safe ASCII unchanged.
+    """
+
+    if max_length < 24:
+        raise ValueError("max_length must be at least 24")
+    raw = "" if value is None else str(value)
+    normalized = unicodedata.normalize("NFKC", raw)
+    if not normalized or normalized != normalized.strip():
+        raise PathSecurityError(f"invalid {label}")
+    if "\x00" in normalized or normalized in {".", ".."}:
+        raise PathSecurityError(f"invalid {label}")
+    if "/" in normalized or "\\" in normalized or _DRIVE_PATH.match(normalized):
+        raise PathSecurityError(f"path syntax is forbidden in {label}")
+    if normalized.split(".", 1)[0].upper() in _WINDOWS_RESERVED:
+        raise PathSecurityError(f"reserved storage name is forbidden in {label}")
+    encoded = "".join(
+        character
+        if character in _SAFE_ASCII
+        else "".join(f"~{byte:02X}" for byte in character.encode("utf-8"))
+        for character in normalized
+    ).rstrip(" .")
+    if len(encoded) > max_length:
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+        prefix_length = max_length - len(digest) - 2
+        encoded = f"{encoded[:prefix_length].rstrip(' .-')}~h{digest}"
+    if not encoded or encoded in {".", ".."}:
+        raise PathSecurityError(f"invalid {label}")
+    return encoded
+
+
 def assert_distinct_storage_components(
     values: Iterable[object],
     *,

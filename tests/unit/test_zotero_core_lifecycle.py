@@ -71,6 +71,63 @@ def test_duplicate_job_idempotency(tmp_path: Path) -> None:
     assert len(list((tmp_path / "state/jobs").glob("*.json"))) == 1
 
 
+def test_idempotency_distinguishes_zotero_projection_identity(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    common = {
+        "paper_uid": UID,
+        "provider": "mock",
+        "analysis_profile": "full_analysis",
+        "source_content_hash": "pdf-hash",
+        "target": "zotero",
+    }
+
+    first = service.enqueue_job("analysis", {**common, "zotero_item_key": "ITEMA"})
+    second = service.enqueue_job("analysis", {**common, "zotero_item_key": "ITEMB"})
+
+    assert second["job_id"] != first["job_id"]
+    assert second["reused"] is False
+
+
+def test_finalize_resolves_cancel_completion_atomically(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    queued = service.enqueue_job("analysis", {"paper_uid": UID})
+    service._update_job_state(queued["job_id"], status="running")
+    service._update_job_state(queued["job_id"], status="cancellation-requested")
+
+    final = service._finalize_job(
+        queued["job_id"], status="completed", result={"projection": "written"}
+    )
+
+    assert final["status"] == "completed-after-cancel-request"
+    assert final["result"] == {"projection": "written"}
+
+
+def test_worker_survives_unexpected_job_runner_exception(tmp_path: Path) -> None:
+    _paper(tmp_path)
+    service = PaperFlowCoreService(tmp_path, port=0)
+    queued = service.enqueue_job("analysis", {"paper_uid": UID})
+    job = json.loads(_job_path(tmp_path, queued["job_id"]).read_text(encoding="utf-8"))
+
+    def crash(_job: dict[str, object]) -> None:
+        raise RuntimeError("unexpected runner failure")
+
+    service._run_job = crash  # type: ignore[method-assign]
+    service.jobs.put(job)
+    service._start_worker()
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and service.jobs.unfinished_tasks:
+            time.sleep(0.02)
+        assert service.worker is not None
+        assert service.worker.is_alive()
+    finally:
+        service.worker_stop.set()
+        if service.worker is not None:
+            service.worker.join(timeout=2)
+
+
 def test_cancel_queued_job(tmp_path: Path) -> None:
     _paper(tmp_path)
     service = PaperFlowCoreService(tmp_path, port=0)
