@@ -10,7 +10,7 @@ pydantic==2.12.4
 pymupdf==1.28.0
 ruamel.yaml==0.18.16
 typer==0.20.0
-tzdata==2025.3
+tzdata==2026.3
 zstandard==0.24.0
 
 pytest==9.1.1
