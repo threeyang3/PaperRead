@@ -142,7 +142,10 @@ def render_ai_projection(
     output: Path | None = None,
     apply_changes: bool = False,
     target: str = "zotero",
+    cancellation_token: Any | None = None,
 ) -> dict[str, Any]:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
     if target not in {"zotero", "obsidian", "both"}:
         raise ValueError("target must be zotero, obsidian, or both")
     record = _paper_record(root, paper_uid)
@@ -178,6 +181,8 @@ def render_ai_projection(
                 "conflicts": [path.as_posix() for path in modified],
             })
             return result
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled()
         for path in targets:
             # The Markdown file is a user-editable projection: Core may create
             # it initially, but a later render must stop when a user changed

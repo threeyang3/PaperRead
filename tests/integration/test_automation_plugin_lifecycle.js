@@ -253,6 +253,26 @@ async function main() {
     process.chdir(originalCwd);
   }
   assert.deepEqual(relativeModuleRequests, []);
+  const redact = AutomationPlugin.__test.redactAutomationLog;
+  const redactionCases = [
+    ["token=secret", "secret"],
+    ["token: secret", "secret"],
+    ['{"token": "json-secret-suffix"}', "json-secret-suffix"],
+    ["{'password': 'single-quoted-secret'}", "single-quoted-secret"],
+    ["Authorization: Bearer bearer-secret-suffix", "bearer-secret-suffix"],
+    ["authorization=Bearer lower-secret-suffix", "lower-secret-suffix"],
+    ["Cookie: session=cookie-secret-suffix", "cookie-secret-suffix"],
+    ["Set-Cookie: session=set-cookie-secret-suffix", "set-cookie-secret-suffix"],
+    ["OPENAI_API_KEY=env-openai-secret", "env-openai-secret"],
+    ["ANTHROPIC_API_KEY=env-anthropic-secret", "env-anthropic-secret"],
+    ["GITHUB_TOKEN=env-github-secret", "env-github-secret"],
+    ['PaSsWoRd: "mixed-case-secret"', "mixed-case-secret"]
+  ];
+  for (const [input, secret] of redactionCases) {
+    const output = redact(input);
+    assert.ok(!output.includes(secret), `${input} leaked through as ${output}`);
+    assert.match(output, /\[REDACTED\]/);
+  }
   assert.equal(typeof AutomationPlugin.__test.openReadingWorkspace, "function");
   assert.equal(
     AutomationPlugin.__test.workspaceTimezoneFromYaml(
@@ -711,6 +731,31 @@ async function main() {
   const fullLog = fs.readFileSync(bounded.logPath, "utf8");
   assert.match(fullLog, /token=\[REDACTED\]/);
   assert.ok(fullLog.length > 16000);
+  assert.equal(
+    path.relative(path.join(childRoot, ".paperflow", "logs", "automation"), bounded.logPath).startsWith(".."),
+    false
+  );
+
+  const binary = await plugin.spawnPaperFlow(
+    process.execPath,
+    "",
+    childRoot,
+    ["-e", "process.stdout.write(Buffer.from([0,1,2,3,4,5]))"],
+    { action: "binary-output", timeoutSeconds: 5 }
+  );
+  const binaryLog = fs.readFileSync(binary.logPath, "utf8");
+  assert.match(binaryLog, /binary output omitted/);
+  assert.ok(!binaryLog.includes("\u0000"));
+
+  const maximum = AutomationPlugin.__test.AUTOMATION_LOG_MAX_BYTES;
+  const oversized = await plugin.spawnPaperFlow(
+    process.execPath,
+    "",
+    childRoot,
+    ["-e", `process.stdout.write('x'.repeat(${maximum * 2}))`],
+    { action: "bounded-log", timeoutSeconds: 10 }
+  );
+  assert.ok(fs.statSync(oversized.logPath).size <= maximum);
 
   const activePromise = plugin.spawnPaperFlow(
     process.execPath,

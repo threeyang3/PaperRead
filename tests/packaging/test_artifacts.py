@@ -2,20 +2,38 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from paperflow._version import __version__ as VERSION
+
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
-VERSION = "1.5.0"
-pytestmark = pytest.mark.skipif(
-    not DIST.is_dir(),
-    reason="release artifacts are audited after scripts/build_release.py",
-)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def current_release_artifacts() -> None:
+    expected = (
+        DIST / f"paperflow-{VERSION}-py3-none-any.whl",
+        DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip",
+        DIST / f"PaperFlow-Template-Vault-{VERSION}.zip",
+        DIST / f"PaperFlow-Obsidian-{VERSION}.zip",
+        DIST / f"PaperFlow-Zotero-{VERSION}.xpi",
+        DIST / "SHA256SUMS",
+    )
+    if not all(path.is_file() for path in expected):
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts/build_release.py")],
+            cwd=ROOT,
+            check=True,
+            timeout=300,
+        )
 
 
 def test_fixed_release_artifacts_and_checksums() -> None:
@@ -50,21 +68,16 @@ def test_archives_have_product_resources_and_no_current_vault_data() -> None:
         wheel_names = set(archive.namelist())
         assert "paperflow/cli.py" in wheel_names
         assert "paperflow/resources/schemas/raw-paper.schema.json" in wheel_names
+        assert "paperflow/resources/integrations/obsidian-form-flow/integration.json" in wheel_names
         assert (
-            "paperflow/resources/integrations/obsidian-form-flow/integration.json"
-            in wheel_names
-        )
-        assert (
-            "paperflow/resources/integrations/obsidian-paperflow-automation/main.js"
-            in wheel_names
+            "paperflow/resources/integrations/obsidian-paperflow-automation/main.js" in wheel_names
         )
         assert (
             "paperflow/resources/integrations/obsidian-paperflow-automation/styles.css"
             in wheel_names
         )
         assert (
-            "paperflow/resources/integrations/obsidian-pdf-plus/compatibility.json"
-            in wheel_names
+            "paperflow/resources/integrations/obsidian-pdf-plus/compatibility.json" in wheel_names
         )
     source = DIST / f"paperflow-{VERSION}.tar.gz"
     with tarfile.open(source) as archive:
@@ -82,9 +95,7 @@ def test_archives_have_product_resources_and_no_current_vault_data() -> None:
         "/80 Attachments/",
         "/.obsidian/",
     ]
-    assert not [
-        name for name in source_names if any(value in name for value in banned)
-    ]
+    assert not [name for name in source_names if any(value in name for value in banned)]
 
 
 def test_offline_installer_contains_resources_and_no_user_data() -> None:
@@ -125,9 +136,7 @@ def test_obsidian_release_contains_installable_plugin_assets() -> None:
     assert plugin.is_file()
     with zipfile.ZipFile(plugin) as archive:
         names = set(archive.namelist())
-        manifest = json.loads(
-            archive.read("paperflow-automation/manifest.json")
-        )
+        manifest = json.loads(archive.read("paperflow-automation/manifest.json"))
     required = {
         "paperflow-automation/main.js",
         "paperflow-automation/manifest.json",
@@ -161,12 +170,16 @@ def test_zotero_xpi_is_valid_source_package() -> None:
     assert all("\\" not in name for name in names)
     assert manifest["version"] == VERSION
     assert manifest["applications"]["zotero"]["id"] == "paperflow-zotero@threeyang"
-    assert manifest["applications"]["zotero"]["update_url"].startswith("https://github.com/threeyang3/PaperRead/")
+    assert manifest["applications"]["zotero"]["update_url"].startswith(
+        "https://github.com/threeyang3/PaperRead/"
+    )
     assert manifest["applications"]["zotero"]["strict_min_version"] == "9.0"
     assert manifest["applications"]["zotero"]["strict_max_version"] == "10.99.99"
     assert "bootstrap.js" in names and "prefs.js" in names and "src/zotero-api.js" in names
     assert "install.rdf" not in names
-    assert not any("zotero.sqlite" in name or name.lower().endswith((".pdf", ".db")) for name in names)
+    assert not any(
+        "zotero.sqlite" in name or name.lower().endswith((".pdf", ".db")) for name in names
+    )
     # The XPI is intentionally unsigned for this local build. Zotero 9's
     # official build accepts ordinary third-party extension installs when the
     # manifest is complete; the Extension Proxy remains the safer development
@@ -192,4 +205,4 @@ def test_zotero_dev_profile_uses_confined_extension_proxy() -> None:
 def test_zotero_e2e_profile_confines_data_root_to_var() -> None:
     script = (ROOT / "scripts/zotero-e2e.ps1").read_text(encoding="utf-8")
     assert 'Join-Path $profile "zotero-data"' in script
-    assert 'extensions.zotero.useDataDir' in script
+    assert "extensions.zotero.useDataDir" in script

@@ -24,7 +24,7 @@ from paperflow.models import PaperMetadata
 from paperflow.paths.templates import safe_component
 from paperflow.security.artifacts import PermissionGuard
 from paperflow.text_quality import validate_text_quality
-from paperflow.utils import atomic_json, iso_beijing
+from paperflow.utils import atomic_json, iso_utc
 from paperflow.zotero.store import data_root, runtime_root
 
 
@@ -221,9 +221,12 @@ def analyze_standalone(
     provider_override: str = "",
     profile_override: str = "",
     model_override: str = "",
+    cancellation_token: Any | None = None,
 ) -> dict[str, Any]:
     """Run the configured standalone provider and write one immutable AI Raw revision."""
 
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
     root = root.resolve()
     runtime_root(root).mkdir(parents=True, exist_ok=True)
     source_path = _paper_path(root, paper_uid)
@@ -270,9 +273,13 @@ def analyze_standalone(
     with TemporaryDirectory(prefix=f"paperflow-{_paper_id(paper_uid)}-", dir=runtime_root(root)) as temporary:
         staged = Path(temporary) / "paper.txt"
         staged.write_text(staged_text, encoding="utf-8", newline="\n")
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled()
         analysis = adapter.analyze(metadata, staged).model_dump(mode="json")
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled(side_effects=True)
     validate_text_quality(analysis, label="standalone-ai")
-    now = iso_beijing()
+    now = iso_utc()
     value = AIAnalysisRecord(
         paper_uid=paper_uid,
         analysis_id=identity.analysis_id,
@@ -286,6 +293,8 @@ def analyze_standalone(
     guard = PermissionGuard(root)
     guard.authorize(target, "AI_VERSIONED")
     guard.authorize(pointer, "AI_VERSIONED")
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled(side_effects=True)
     if target.is_file():
         existing = json.loads(target.read_text(encoding="utf-8"))
         if existing != value:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import closing
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 from importlib import metadata
@@ -98,7 +99,7 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
             }
         )
 
-    add("可安装应用版本", APPLICATION_VERSION == "1.5.0", APPLICATION_VERSION)
+    add("可安装应用版本", APPLICATION_VERSION == "1.5.1", APPLICATION_VERSION)
     source_package = (
         project_root / "src/paperflow" if project_root is not None else package_root
     )
@@ -217,12 +218,12 @@ def audit(cfg: Config) -> list[dict[str, Any]]:
         "scheduler.enabled=false; Obsidian plugin lifecycle",
     )
     try:
-        sqlite_ok = (
+        with closing(
             sqlite3.connect(root / ".paperflow/state/paperflow.db")
-            .execute("PRAGMA integrity_check")
-            .fetchone()[0]
-            == "ok"
-        )
+        ) as connection:
+            sqlite_ok = (
+                connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            )
     except Exception:
         sqlite_ok = False
     add("SQLite 完整性", sqlite_ok, "PRAGMA integrity_check")

@@ -54,4 +54,14 @@ safe and does not overwrite User Data.
   路径、邮箱、凭据、活动 HTML、危险 URI、图片/PDF 或超长引用。不要手工改哈希。
 - **同步后没有社区内容**：确认订阅 capabilities 包含 `community`；旧配置默认
   只有 Raw/AI。
+- **Community outbox 出现在两个根目录**：Vault 的当前目录是
+  `.paperflow/data/community/outbox`，Standalone Core 是
+  `data/community/outbox`。历史错误目录只读保留，不会自动删除或合并；比较
+  contribution ID、revision 和 hash，冲突进入人工审查。
+- **作业取消后显示 `completed-after-cancel-request`**：取消发生时外部调用或写入
+  已完成，所以 Core 保留诚实终态。检查 result 与
+  `cancellation_requested_at`，不要当作从未执行的 cancelled 作业重新排队。
+- **Feed 因 unsafe identifier/path 被拒绝**：检查发布方的 `feed_id`、manifest
+  identity/path、creator 与 contribution ID。路径形态、NFKC 冲突和 symlink
+  越界必须在发布方修正，不要在订阅端手工清洗后绕过校验。
 - **Nutstore 冲突**：停止 PaperFlow，等待同步稳定，保留冲突副本后人工合并。

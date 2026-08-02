@@ -161,7 +161,7 @@ def load_config(root: Path | None = None) -> Config:
     data = YAML(typ="safe").load(legacy_file.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{legacy_file}: expected a YAML mapping")
-    timezone = str(data.get("vault", {}).get("timezone", "Asia/Shanghai"))
+    timezone = str(data.get("vault", {}).get("timezone", "UTC"))
     ZoneInfo(timezone)
     data.setdefault("vault", {})["path"] = resolved.as_posix()
     return Config(root=resolved, data=data)

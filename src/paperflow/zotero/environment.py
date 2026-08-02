@@ -181,7 +181,8 @@ def _probe_api(url: str = _DEFAULT_API_URL, timeout: float = 0.8) -> dict[str, A
                 "body_prefix": body.decode("utf-8", errors="replace")[:200],
             }
     except urllib.error.HTTPError as exc:
-        return {"enabled": True, "reachable": True, "status": exc.code}
+        with exc:
+            return {"enabled": True, "reachable": True, "status": exc.code}
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
         return {"enabled": "unknown", "reachable": False, "error": type(exc).__name__}
 

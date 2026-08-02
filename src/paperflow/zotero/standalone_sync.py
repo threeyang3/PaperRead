@@ -25,6 +25,11 @@ from paperflow.community.subscriber import community_rating_summary, render_comm
 from paperflow.feed.publisher import resolve_feed_file, validate_feed
 from paperflow.feed.subscriber import _acquire, _sha256
 from paperflow.security.artifacts import PermissionGuard
+from paperflow.security.paths import (
+    assert_distinct_storage_components,
+    resolve_under,
+    safe_storage_component,
+)
 from paperflow.versioning import check_reader_version
 from paperflow.zotero.store import data_root
 from paperflow.zotero.mapping_index import mapping_for_paper
@@ -32,10 +37,17 @@ from paperflow.utils import atomic_json, iso_beijing
 
 
 def _paper_id(value: str) -> str:
-    return str(value).replace(":", "_").replace("/", "_")
+    return safe_storage_component(value, label="paper_uid")
 
 
-def _copy_verified(source: Path, target: Path, expected_sha256: str) -> tuple[str, bool]:
+def _copy_verified(
+    source: Path,
+    target: Path,
+    expected_sha256: str,
+    *,
+    dry_run: bool,
+    cancellation_token: Any | None = None,
+) -> tuple[str, bool]:
     source_hash = _sha256(source)
     if expected_sha256 and source_hash != expected_sha256:
         raise ValueError(f"Manifest hash mismatch: {source}")
@@ -43,6 +55,10 @@ def _copy_verified(source: Path, target: Path, expected_sha256: str) -> tuple[st
         if _sha256(target) == source_hash:
             return target.as_posix(), False
         target = target.with_name(target.stem + "-conflict" + target.suffix)
+    if dry_run:
+        return target.as_posix(), True
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".tmp")
     shutil.copy2(source, temporary)
@@ -50,15 +66,21 @@ def _copy_verified(source: Path, target: Path, expected_sha256: str) -> tuple[st
     return target.as_posix(), True
 
 
-def _download_pdf(root: Path, item: dict[str, Any]) -> bool:
+def _download_pdf(
+    root: Path, item: dict[str, Any], *, cancellation_token: Any | None = None
+) -> bool:
     pdf = item.get("pdf") or {}
     source_url = str(pdf.get("source_url") or "")
     if not source_url:
         return False
     paper_id = _paper_id(str(item.get("source_id") or item["paper_uid"]))
-    target = root / "documents/zotero" / f"{paper_id}.pdf"
+    target = resolve_under(
+        root / "documents/zotero", f"{paper_id}.pdf", label="Core subscription PDF"
+    )
     if target.exists():
-        if target.read_bytes()[:5] != b"%PDF-":
+        with target.open("rb") as stream:
+            header = stream.read(5)
+        if header != b"%PDF-":
             raise ValueError(f"Existing PDF has an invalid header: {target}")
         expected = str(pdf.get("expected_sha256") or "")
         if expected and _sha256(target) != expected:
@@ -70,13 +92,19 @@ def _download_pdf(root: Path, item: dict[str, Any]) -> bool:
     size = 0
     try:
         with httpx.stream("GET", source_url, timeout=60, follow_redirects=True) as response:
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
             response.raise_for_status()
             with temporary.open("wb") as output:
                 for chunk in response.iter_bytes():
+                    if cancellation_token is not None:
+                        cancellation_token.raise_if_cancelled()
                     digest.update(chunk)
                     size += len(chunk)
                     output.write(chunk)
-        if temporary.read_bytes()[:5] != b"%PDF-":
+        with temporary.open("rb") as stream:
+            header = stream.read(5)
+        if header != b"%PDF-":
             raise ValueError(f"Downloaded file is not a PDF: {source_url}")
         expected = str(pdf.get("expected_sha256") or "")
         if expected and digest.hexdigest() != expected:
@@ -84,6 +112,8 @@ def _download_pdf(root: Path, item: dict[str, Any]) -> bool:
         expected_size = pdf.get("expected_size")
         if expected_size is not None and size != int(expected_size):
             raise ValueError(f"Downloaded PDF size mismatch: {source_url}")
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled()
         temporary.replace(target)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -176,7 +206,12 @@ def _ingest_community(
         if findings:
             raise ValueError(f"{source}: {findings}")
         relative = source.relative_to(feed_root)
-        target = root / "data/community/subscriptions" / feed_id / relative
+        target = resolve_under(
+            root / "data/community/subscriptions",
+            safe_storage_component(feed_id, label="feed_id"),
+            *relative.parts,
+            label="Standalone Community subscription path",
+        )
         planned.append(target.relative_to(root).as_posix())
         accepted.append(value)
         if not dry_run:
@@ -235,9 +270,12 @@ def sync_core_feed(
     auto_download_pdf: bool = False,
     auto_render_notes: bool = False,
     capabilities: list[str] | None = None,
+    cancellation_token: Any | None = None,
 ) -> dict[str, Any]:
     """Synchronize one validated feed into a standalone Core root."""
 
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
     if trust not in {"metadata-only", "metadata-and-ai", "disabled"}:
         raise ValueError(f"Unsupported trust mode: {trust}")
     if trust == "disabled":
@@ -245,6 +283,8 @@ def sync_core_feed(
     root = root.resolve()
     with TemporaryDirectory(prefix="paperflow-core-feed-") as temporary:
         feed_root = _acquire(url, branch, Path(temporary) / "feed")
+        if cancellation_token is not None:
+            cancellation_token.raise_if_cancelled(side_effects=True)
         validation = validate_feed(feed_root)
         feed = YAML(typ="safe").load((feed_root / "feed.yaml").read_text(encoding="utf-8"))
         check_reader_version(str(feed["minimum_reader_version"]))
@@ -261,6 +301,14 @@ def sync_core_feed(
             analysis_manifest = feed_root / "manifests/analyses.jsonl"
             if analysis_manifest.is_file():
                 manifests.extend(json.loads(line) for line in analysis_manifest.read_text(encoding="utf-8").splitlines() if line)
+        feed_component = safe_storage_component(feed_id, label="feed_id")
+        paper_components = assert_distinct_storage_components(
+            [item["paper_uid"] for item in manifests], label="paper_uid"
+        )
+        analysis_components = assert_distinct_storage_components(
+            [item["analysis_id"] for item in manifests if "analysis_id" in item],
+            label="analysis_id",
+        )
 
         created = 0
         reused = 0
@@ -268,16 +316,36 @@ def sync_core_feed(
         raw_items: list[dict[str, Any]] = []
         inbox_statuses: list[str] = []
         for item in manifests:
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
             source = resolve_feed_file(feed_root, item["path"])
             expected = str(item.get("sha256") or "")
             is_ai = "analysis_id" in item
-            paper_id = _paper_id(str(item["paper_uid"]))
+            paper_id = paper_components[str(item["paper_uid"])]
             if is_ai:
-                target = root / "data/ai/subscriptions" / feed_id / paper_id / f"{item['analysis_id']}.json"
+                target = resolve_under(
+                    root / "data/ai/subscriptions",
+                    feed_component,
+                    paper_id,
+                    f"{analysis_components[str(item['analysis_id'])]}.json",
+                    label="Standalone AI subscription path",
+                )
             else:
-                target = root / "data/raw/subscriptions" / feed_id / paper_id / f"v{item['version']}.json"
+                target = resolve_under(
+                    root / "data/raw/subscriptions",
+                    feed_component,
+                    paper_id,
+                    f"v{int(item['version'])}.json",
+                    label="Standalone Raw subscription path",
+                )
                 raw_items.append(item)
-            target_path, wrote = _copy_verified(source, target, expected)
+            target_path, wrote = _copy_verified(
+                source,
+                target,
+                expected,
+                dry_run=dry_run,
+                cancellation_token=cancellation_token,
+            )
             if wrote:
                 created += 1
             else:
@@ -302,13 +370,28 @@ def sync_core_feed(
                     source_sha256=expected or _sha256(source),
                 ))
 
-        downloaded = sum(_download_pdf(root, item) for item in raw_items) if not dry_run and auto_download_pdf else 0
+        downloaded = (
+            sum(
+                _download_pdf(root, item, cancellation_token=cancellation_token)
+                for item in raw_items
+            )
+            if not dry_run and auto_download_pdf
+            else 0
+        )
         rendered_notes = 0
         if not dry_run and auto_render_notes:
             from paperflow.zotero.markdown import render_ai_projection
 
             for item in raw_items:
-                render_ai_projection(root, str(item["paper_uid"]), target="zotero", apply_changes=True)
+                if cancellation_token is not None:
+                    cancellation_token.raise_if_cancelled()
+                render_ai_projection(
+                    root,
+                    str(item["paper_uid"]),
+                    target="zotero",
+                    apply_changes=True,
+                    cancellation_token=cancellation_token,
+                )
                 rendered_notes += 1
         community = {"dry_run": dry_run, "accepted": 0, "private_user_records_modified": 0}
         if "community" in enabled:

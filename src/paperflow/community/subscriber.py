@@ -5,12 +5,17 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from paperflow.community.models import CommunityContribution, CommunityRetraction
+from paperflow.community.models import CommunityContribution
 from paperflow.community.privacy import scan_community_contribution
 from paperflow.community.publisher import verify_content_sha256
 from paperflow.obsidian.frontmatter import dump_frontmatter, read_note
 from paperflow.text_quality import display_title
-from paperflow.utils import atomic_json, atomic_write, iso_beijing
+from paperflow.utils import atomic_json, atomic_write, iso_utc
+from paperflow.security.paths import (
+    assert_distinct_storage_components,
+    resolve_under,
+    safe_storage_component,
+)
 
 
 COMMUNITY_KIND_LABELS = {
@@ -85,7 +90,10 @@ def ingest_community(
     community_note_root: str = "70 Community",
 ) -> dict[str, Any]:
     resolved_vault = vault.resolve()
-    resolved_note_root = (vault / community_note_root).resolve()
+    note_parts = Path(community_note_root.replace("\\", "/")).parts
+    resolved_note_root = resolve_under(
+        vault, *note_parts, label="Community note root"
+    )
     try:
         resolved_note_root.relative_to(resolved_vault)
     except ValueError as exc:
@@ -93,6 +101,8 @@ def ingest_community(
     files = sorted(feed_root.glob("papers/*/community/*/*/r*.json"))
     accepted: list[CommunityContribution] = []
     planned = []
+    feed_component = safe_storage_component(feed_id, label="feed_id")
+    loaded: list[tuple[Path, CommunityContribution]] = []
     for source in files:
         payload = json.loads(source.read_text(encoding="utf-8"))
         value = CommunityContribution.model_validate(payload)
@@ -102,8 +112,18 @@ def ingest_community(
         findings = scan_community_contribution(normalized)
         if findings:
             raise ValueError(f"{source}: {findings}")
+        loaded.append((source, value))
+    paper_components = assert_distinct_storage_components(
+        [value.paper_uid for _, value in loaded], label="paper_uid"
+    )
+    for source, value in loaded:
         relative = source.relative_to(feed_root)
-        target = vault / ".paperflow/data/community/subscriptions" / feed_id / relative
+        target = resolve_under(
+            vault / ".paperflow/data/community/subscriptions",
+            feed_component,
+            *relative.parts,
+            label="Community subscription cache path",
+        )
         planned.append(target.relative_to(vault).as_posix())
         accepted.append(value)
         if not dry_run:
@@ -126,8 +146,16 @@ def ingest_community(
     rendered_notes = []
     for paper_uid in sorted({item.paper_uid for item in all_items.values()}):
         year = _paper_year(feed_root, paper_uid, vault)
-        paper_id = paper_uid.replace(":", "_")
-        output = resolved_note_root / year / f"{paper_id}.community.md"
+        paper_id = paper_components.get(
+            paper_uid, safe_storage_component(paper_uid, label="paper_uid")
+        )
+        year_component = safe_storage_component(year, label="paper year")
+        output = resolve_under(
+            resolved_note_root,
+            year_component,
+            f"{paper_id}.community.md",
+            label="Community note path",
+        )
         paper_title, pdf_path = _paper_context(vault, feed_root, paper_uid)
         rendered_notes.append(
             render_community_note(
@@ -191,7 +219,7 @@ def render_community_note(vault: Path, paper_uid: str,
         "cssclasses": ["paperflow-community"],
         "paper_uid": paper_uid,
         "community_count": len(visible),
-        "updated_at": iso_beijing(),
+        "updated_at": iso_utc(),
     }
     lines = [
         dump_frontmatter(metadata).rstrip(), "", f"# 社区观点 · {title}", "",

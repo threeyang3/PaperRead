@@ -5,7 +5,7 @@ from paperflow.config import Config
 from paperflow.database import Database
 from paperflow.obsidian.form_flow import parse_request, request_path_is_safe
 from paperflow.obsidian.frontmatter import read_note, write_note
-from paperflow.utils import iso_beijing
+from paperflow.utils import iso_utc
 from paperflow.logging_config import configure_logging
 from paperflow.i18n import normalize_locale
 from paperflow.utils import atomic_json
@@ -41,7 +41,7 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
                         {
                             "locale": normalize_locale(item.ui_locale),
                             "source": "form-flow-request",
-                            "updated_at": iso_beijing(),
+                            "updated_at": iso_utc(),
                         },
                     )
                 if item.status not in {"pending", "failed"}:
@@ -53,7 +53,7 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
                 db.record_request(item.request_id, str(path), "processing")
                 result = import_paper(cfg, item.paper_input, priority=item.priority, topic=item.topic_hint, run_ai=item.run_ai, favorite=item.favorite, queued=item.add_to_reading_queue, user_tags=item.user_tags, user_note=note, import_method="form-flow")
                 frontmatter["status"] = "completed"
-                frontmatter["processed_at"] = iso_beijing()
+                frontmatter["processed_at"] = iso_utc()
                 frontmatter["result_paper_uid"] = result["paper_uid"]
                 frontmatter["result_note"] = f"[[{result['note_path'].removesuffix('.md')}]]"
                 frontmatter["error"] = ""
@@ -66,7 +66,7 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
             except Exception as exc:
                 frontmatter, body = read_note(path)
                 frontmatter["status"] = "failed"
-                frontmatter["processed_at"] = iso_beijing()
+                frontmatter["processed_at"] = iso_utc()
                 frontmatter["error"] = str(exc)
                 write_note(path, frontmatter, body)
                 destination = cfg.path("failed_folder") / path.name

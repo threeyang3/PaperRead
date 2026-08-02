@@ -48,7 +48,11 @@ class ZoteroLocalApi:
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = response.read()
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        except HTTPError as exc:
+            with exc:
+                message = str(exc)
+            raise ZoteroLocalApiError(f"Zotero Local API unavailable: {message}") from exc
+        except (URLError, TimeoutError, OSError) as exc:
             raise ZoteroLocalApiError(f"Zotero Local API unavailable: {exc}") from exc
         try:
             return json.loads(raw.decode("utf-8"))

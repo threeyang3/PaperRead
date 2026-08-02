@@ -1,6 +1,6 @@
 # PaperFlow Control Center
 
-PaperFlow Automation 1.5.0 adds an Obsidian-native Control Center. It opens
+PaperFlow Automation 1.5.1 adds an Obsidian-native Control Center. It opens
 automatically after the Obsidian workspace is ready; this behavior can be
 disabled in the plugin settings. You can also open it from the left ribbon,
 the command palette, or the plugin settings page. It wraps common PaperFlow

@@ -182,3 +182,81 @@ def test_pdf_resolver_rejects_missing_index_entry(tmp_path: Path) -> None:
 
     with pytest.raises(PdfResolutionError, match="current version"):
         resolve_current_pdf(tmp_path, UID)
+
+
+def test_version_resolver_rejects_record_path_for_different_version(tmp_path: Path) -> None:
+    second = tmp_path / "80 Attachments/Papers/2026/2607.30001/v2.pdf"
+    _pdf(second, b"v2")
+    with pytest.raises(PdfResolutionError):
+        resolve_pdf_version(
+            tmp_path,
+            UID,
+            1,
+            {"paper_year": 2026, "paper_pdf_path": second.relative_to(tmp_path).as_posix()},
+        )
+
+
+def test_version_resolver_rejects_mismatched_v_filename(tmp_path: Path) -> None:
+    second = tmp_path / "80 Attachments/Papers/2026/2607.30001/v2.pdf"
+    digest = _pdf(second, b"v2")
+    _index(
+        tmp_path,
+        current=1,
+        versions=[
+            {
+                "version": 1,
+                "path": second.relative_to(tmp_path).as_posix(),
+                "sha256": digest,
+                "size": second.stat().st_size,
+            }
+        ],
+    )
+    with pytest.raises(PdfResolutionError, match="filename"):
+        resolve_pdf_version(tmp_path, UID, 1)
+
+
+def test_unversioned_legacy_pdf_only_resolves_under_explicit_policy(tmp_path: Path) -> None:
+    legacy = tmp_path / "80 Attachments/Papers/2026/2607.30001.pdf"
+    _pdf(legacy, b"legacy")
+    record = {
+        "paper_year": 2026,
+        "paper_arxiv_version": 1,
+        "paper_pdf_path": legacy.relative_to(tmp_path).as_posix(),
+    }
+    with pytest.raises(PdfResolutionError):
+        resolve_pdf_version(tmp_path, UID, 1, record)
+    assert resolve_current_pdf(tmp_path, UID, record).path == legacy
+
+
+def test_current_resolver_uses_current_version(tmp_path: Path) -> None:
+    first = tmp_path / "80 Attachments/Papers/2026/2607.30001/v1.pdf"
+    second = tmp_path / "80 Attachments/Papers/2026/2607.30001/v2.pdf"
+    _pdf(first, b"v1")
+    _pdf(second, b"v2")
+    record = {
+        "paper_year": 2026,
+        "paper_arxiv_version": 2,
+        "paper_pdf_path": second.relative_to(tmp_path).as_posix(),
+    }
+    assert resolve_current_pdf(tmp_path, UID, record).path == second
+
+
+def test_index_duplicate_version_is_rejected(tmp_path: Path) -> None:
+    first = tmp_path / "80 Attachments/Papers/2026/2607.30001/v1.pdf"
+    digest = _pdf(first, b"v1")
+    entry = {
+        "version": 1,
+        "path": first.relative_to(tmp_path).as_posix(),
+        "sha256": digest,
+        "size": first.stat().st_size,
+    }
+    _index(tmp_path, current=1, versions=[entry, dict(entry)])
+    with pytest.raises(PdfResolutionError, match="duplicated"):
+        resolve_current_pdf(tmp_path, UID)
+
+
+def test_fallback_multiple_candidates_is_rejected(tmp_path: Path) -> None:
+    _pdf(tmp_path / "80 Attachments/Papers/2026/2607.30001/v1.pdf", b"one")
+    _pdf(tmp_path / "80 Attachments/Papers/2607.30001/v1.pdf", b"two")
+    with pytest.raises(PdfResolutionError, match="found 2"):
+        resolve_pdf_version(tmp_path, UID, 1, {"paper_year": 2026})
