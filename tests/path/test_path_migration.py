@@ -107,7 +107,8 @@ def test_readable_paper_path_migration_is_explicit_and_preserves_id(
     value = YAML(typ="safe").load(workspace.read_text(encoding="utf-8"))
     value["paths"]["note"]["template"] = "{{year}}/{{paper_id}}.md"
     value["paths"]["paper_hub"]["template"] = "{{year}}/{{paper_id}}.md"
-    YAML().dump(value, workspace.open("w", encoding="utf-8", newline="\n"))
+    with workspace.open("w", encoding="utf-8", newline="\n") as stream:
+        YAML().dump(value, stream)
     record = {
         "paper_uid": "arxiv:2504.16054",
         "paper_source": "arxiv",
@@ -151,7 +152,8 @@ def test_readable_migration_updates_selected_derived_path(tmp_path: Path) -> Non
     value = YAML(typ="safe").load(workspace.read_text(encoding="utf-8"))
     value["paths"]["note"]["template"] = "{{year}}/{{paper_id}}.md"
     value["paths"]["paper_hub"]["template"] = "{{year}}/{{paper_id}}.md"
-    YAML().dump(value, workspace.open("w", encoding="utf-8", newline="\n"))
+    with workspace.open("w", encoding="utf-8", newline="\n") as stream:
+        YAML().dump(value, stream)
     record = {
         "paper_uid": "arxiv:2504.16054",
         "paper_source": "arxiv",

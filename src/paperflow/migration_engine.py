@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import uuid
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -339,7 +340,7 @@ def _verify_sqlite(root: Path) -> None:
     database = root / ".paperflow/state/paperflow.db"
     if not database.exists():
         return
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         result = connection.execute("PRAGMA integrity_check").fetchone()
     if not result or result[0] != "ok":
         raise RuntimeError(f"SQLite integrity check failed: {result}")

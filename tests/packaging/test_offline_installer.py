@@ -9,18 +9,28 @@ from pathlib import Path
 
 import pytest
 
+from paperflow._version import __version__ as VERSION
+
 
 ROOT = Path(__file__).parents[2]
 DIST = ROOT / "dist"
-VERSION = "1.5.0"
 
 
-@pytest.mark.skipif(
-    not DIST.is_dir(),
-    reason="release artifacts are audited after scripts/build_release.py",
-)
+def _offline_archive() -> Path:
+    archive = DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip"
+    if not archive.is_file():
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts/build_release.py")],
+            cwd=ROOT,
+            check=True,
+            timeout=300,
+        )
+    assert archive.is_file()
+    return archive
+
+
 def test_offline_bundle_does_not_claim_true_portability() -> None:
-    offline = DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip"
+    offline = _offline_archive()
     assert offline.is_file()
     assert not (DIST / f"PaperFlow-portable-{VERSION}.zip").exists()
     with zipfile.ZipFile(offline) as archive:
@@ -57,15 +67,7 @@ def test_windows_offline_installer_executes_console_script_without_recursion(
 ) -> None:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell
-    archive_path = DIST / f"PaperFlow-Offline-Installer-{VERSION}.zip"
-    if not archive_path.is_file():
-        subprocess.run(
-            [sys.executable, str(ROOT / "scripts/build_release.py")],
-            cwd=ROOT,
-            check=True,
-            timeout=300,
-        )
-    assert archive_path.is_file()
+    archive_path = _offline_archive()
     extraction = tmp_path / "包含 中文 and spaces"
     with zipfile.ZipFile(archive_path) as archive:
         archive.extractall(extraction)

@@ -1,7 +1,7 @@
 {
   "id": "paperflow-automation",
   "name": "PaperFlow Automation",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "minAppVersion": "1.9.0",
   "description": "在 Obsidian 内运行自动化，并提供 PDF 标注、阅读工作区、AI、Feed 与发布控制中心。",
   "author": "PaperFlow",

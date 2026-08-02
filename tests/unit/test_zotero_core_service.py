@@ -45,12 +45,14 @@ def test_core_service_is_loopback_and_token_protected(tmp_path: Path) -> None:
     assert status == 200 and health["ok"] is True
     with pytest.raises(urllib.error.HTTPError) as error:
         _request(service.url + "/papers/arxiv%3A2504.16054")
-    assert error.value.code == 401
+    with error.value:
+        assert error.value.code == 401
     status, paper = _request(service.url + "/papers/arxiv%3A2504.16054", token=service.token)
     assert status == 200 and paper["paper_uid"] == "arxiv:2504.16054"
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(service.url + "/zotero/pdf/arxiv%3A2504.16054", timeout=3)
-    assert error.value.code == 401
+    with error.value:
+        assert error.value.code == 401
     pdf_request = urllib.request.Request(
         service.url + "/zotero/pdf/arxiv%3A2504.16054",
         headers={"Authorization": f"Bearer {service.token}"},
@@ -228,7 +230,8 @@ def test_zotero_pairing_refreshes_random_session_after_restart(tmp_path: Path) -
                 "pairing_secret": "wrong-secret-value",
             },
         )
-    assert error.value.code == 401
+    with error.value:
+        assert error.value.code == 401
     second.stop()
 
 

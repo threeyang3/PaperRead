@@ -22,7 +22,7 @@ pip-audit. The Offline Installer contains no `paperflow.cmd` shim: after
 installation use the installed `paperflow` console script. It is an install
 bundle, not a truly portable Python runtime.
 
-For PaperFlow 1.5.0 source release candidates, run:
+For PaperFlow 1.5.1 source release candidates, run:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
@@ -63,6 +63,6 @@ software artifacts. An ArXiv-data push validates the Feed and builds the
 PaperRead software version.
 
 Normal feature-branch commits and draft PR updates do not create a release.
-Do not create a `v1.5.0` tag until the owner separately authorizes the public
+Do not create a `v1.5.1` tag until the owner separately authorizes the public
 GitHub Release. Never stage `.paperflow`, PDFs, current Vault notes, backups,
 logs, databases, Community outbox content, or subscription caches.

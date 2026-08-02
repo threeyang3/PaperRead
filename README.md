@@ -50,7 +50,7 @@ generated explanation sections where practical. Original paper titles,
 abstracts, quotations, citations, and extracted text are not mechanically
 translated.
 
-PaperFlow Automation 1.5.0 includes an Obsidian-native Control Center. It
+PaperFlow Automation 1.5.1 includes an Obsidian-native Control Center. It
 opens automatically after the Obsidian workspace is ready (this can be
 disabled in the plugin settings). Its first view is an extensible research task
 workspace: collecting and discovering papers, browsing the library, continuing

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Target version: 1.5.1 Release Candidate.
+
+- Closed SQLite connections explicitly in Doctor, acceptance and migration
+  integrity checks, eliminating the remaining test-suite ResourceWarnings.
+- Updated pinned GitHub Actions to their Node 24-compatible stable releases
+  while retaining immutable full-commit references.
+
 - Post-audit security hardening centralizes NFKC storage-component encoding,
   normalization-collision detection and resolved-root/symlink containment for
   Feed, Community and standalone subscription writes; dry-run validates the

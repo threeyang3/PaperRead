@@ -1,6 +1,6 @@
 # Obsidian-native automation
 
-PaperFlow Automation 1.5.0 runs three independent background tracks while
+PaperFlow Automation 1.5.1 runs three independent background tracks while
 Obsidian Desktop is open. Windows Task Scheduler is not used.
 
 ## Subscription synchronization

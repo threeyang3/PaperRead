@@ -90,7 +90,7 @@ paperflow zotero link --items-json examples/zotero/items.example.json --vault <v
 
 “同步身份与附件校验”菜单会把选中条目的公开 API 快照发送到已认证的 loopback Core，包含附件键、存储模式和可用 SHA-256，不包含本机路径。Core 校验通过后才写入 mapping；文件复制/链接仍由 Zotero 插件公开附件 API 执行。
 
-发布构建会生成 `PaperFlow-Zotero-1.5.0.xpi`。XPI 使用 Zotero 9+ 的
+发布构建会生成 `PaperFlow-Zotero-1.5.1.xpi`。XPI 使用 Zotero 9+ 的
 `manifest.json`（不是 `install.rdf`），并且 ZIP 成员路径固定为 `/`。但是 Zotero 9
 要求 applications.zotero.update_url、插件 ID 和兼容版本字段完整；缺少 update_url
 时“从文件安装”会报告插件不兼容。当前 XPI 是未签名源码构建包，但在 Zotero 9.0.6

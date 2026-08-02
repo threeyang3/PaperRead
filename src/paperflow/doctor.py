@@ -7,6 +7,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 from paperflow.config import Config
 from paperflow.clock import WorkspaceClock
@@ -129,7 +130,9 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
     )
     checks.append(("UI locale", cfg.ui_locale.locale in {"zh-CN", "en"}, f"{cfg.ui_locale.locale} ({cfg.ui_locale.source})"))
     try:
-        with sqlite3.connect(root / ".paperflow/state/paperflow.db") as connection:
+        with closing(
+            sqlite3.connect(root / ".paperflow/state/paperflow.db")
+        ) as connection:
             connection.execute("select 1")
         sqlite_ok = True
     except Exception:
@@ -139,7 +142,14 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
         ok, detail = _command(command)
         if command == "codex" and not ok:
             try:
-                completed = sqlite3.connect(root / ".paperflow/state/paperflow.db").execute("SELECT model,created_at FROM analysis_runs WHERE provider='codex' AND status='complete' ORDER BY created_at DESC LIMIT 1").fetchone()
+                with closing(
+                    sqlite3.connect(root / ".paperflow/state/paperflow.db")
+                ) as connection:
+                    completed = connection.execute(
+                        "SELECT model,created_at FROM analysis_runs "
+                        "WHERE provider='codex' AND status='complete' "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ).fetchone()
                 if completed:
                     ok, detail = True, f"verified by completed analysis: model={completed[0]}, at={completed[1]}"
             except Exception:
