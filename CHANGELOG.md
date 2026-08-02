@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Target version: 1.5.1 Release Candidate.
+## 1.5.1 - 2026-08-02
 
 - Closed SQLite connections explicitly in Doctor, acceptance and migration
   integrity checks, eliminating the remaining test-suite ResourceWarnings.
