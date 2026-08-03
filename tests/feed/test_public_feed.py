@@ -180,6 +180,8 @@ def test_standalone_core_sync_preserves_feed_contract(tmp_path: Path) -> None:
     assert inbox.is_file()
     inbox_record = json.loads(inbox.read_text(encoding="utf-8"))
     assert inbox_record["status"] == "pending-confirmation"
+    assert inbox_record["created_at"].endswith("+00:00")
+    assert inbox_record["updated_at"].endswith("+00:00")
     assert inbox_record["artifact_permission"] == "REMOTE_READ_ONLY"
     repeated = sync_core_feed(core, url=str(feed), name="core-feed", trust="metadata-and-ai")
     assert repeated["created"] == 0

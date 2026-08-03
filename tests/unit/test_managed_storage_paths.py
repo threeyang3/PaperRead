@@ -12,6 +12,7 @@ from paperflow.security.paths import (
     assert_distinct_storage_components,
     resolve_under,
     safe_storage_component,
+    encode_storage_component_v2,
 )
 
 
@@ -134,6 +135,19 @@ def test_safe_storage_component_preserves_legal_logical_id_stably() -> None:
     assert first == second
     assert ":" not in first
     assert "/" not in first and "\\" not in first
+
+
+def test_storage_encoding_v2_is_injective_for_legacy_collision() -> None:
+    colon = encode_storage_component_v2("arxiv:2607.00001", label="paper_uid")
+    underscore = encode_storage_component_v2("arxiv_2607.00001", label="paper_uid")
+
+    assert colon == "arxiv~3A2607.00001"
+    assert underscore == "arxiv_2607.00001"
+    assert colon.casefold() != underscore.casefold()
+
+
+def test_storage_encoding_v2_escapes_literal_tilde() -> None:
+    assert encode_storage_component_v2("a~3Ab", label="identifier") == "a~7E3Ab"
 
 
 @pytest.mark.parametrize("value", ["", " ", ".", "..", "CON", "nul.txt"])
