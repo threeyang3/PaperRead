@@ -105,6 +105,23 @@ def _json_line(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _write_checksum_inventory(root: Path) -> None:
+    checksums = [
+        f"{_sha256(path)}  {path.relative_to(root).as_posix()}"
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+        and not path.relative_to(root).as_posix().startswith("checksums/")
+        and ".git" not in path.relative_to(root).parts
+    ]
+    checksum_file = root / "checksums/sha256.txt"
+    checksum_file.parent.mkdir(parents=True, exist_ok=True)
+    checksum_file.write_text(
+        "\n".join(checksums) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def _copy_if_changed(source: Path, target: Path) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = source.read_bytes()
@@ -316,6 +333,11 @@ def _sync_managed_feed(staging: Path, destination: Path) -> None:
         _write_sync_journal(destination, transaction, phase="applying")
         for name in MANAGED_FEED_PATHS:
             _replace_managed_path(staging / name, destination / name)
+        _write_checksum_inventory(destination)
+        validate_feed(destination)
+        findings = scan_feed(destination)
+        if findings:
+            raise RuntimeError("Public Feed privacy scan failed:\n" + "\n".join(findings))
         _write_sync_journal(destination, transaction, phase="committed")
         _sync_journal_path(destination).unlink()
         shutil.rmtree(transaction, ignore_errors=True)
@@ -677,22 +699,7 @@ def _build_feed_tree(
         dump_yaml(destination / "feed.yaml", feed)
         feed_yaml.write_bytes(feed_yaml.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
     content_changed = canonical_changed
-    checksums = []
-    for path in sorted(
-        item
-        for item in destination.rglob("*")
-        if item.is_file()
-        and "checksums" not in item.parts
-        and ".git" not in item.relative_to(destination).parts
-    ):
-        checksums.append(f"{_sha256(path)}  {path.relative_to(destination).as_posix()}")
-    checksum_file = destination / "checksums/sha256.txt"
-    checksum_file.parent.mkdir(parents=True, exist_ok=True)
-    checksum_file.write_text(
-        "\n".join(checksums) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    _write_checksum_inventory(destination)
     validation = validate_feed(destination)
     findings = scan_feed(destination)
     if findings:

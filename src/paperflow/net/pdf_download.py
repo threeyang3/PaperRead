@@ -13,6 +13,8 @@ from typing import Any, Literal
 import fitz
 import httpx
 
+from paperflow.feed.conflicts import publish_without_overwrite
+
 
 DEFAULT_MAX_PDF_BYTES = 100 * 1024 * 1024
 
@@ -173,9 +175,13 @@ def download_pdf_safely(
             if existing_header == b"%PDF-" and existing_size == size and existing_hash == computed:
                 return DownloadedPdf(target, size, computed, "reused")
             raise FileExistsError(f"PDF target changed during download: {target}")
-        os.replace(temporary, target)
-        temporary = None
-        return DownloadedPdf(target, size, computed, "created")
+        if publish_without_overwrite(temporary, target):
+            temporary = None
+            return DownloadedPdf(target, size, computed, "created")
+        existing_size, existing_hash, existing_header = _hash_and_header(target)
+        if existing_header == b"%PDF-" and existing_size == size and existing_hash == computed:
+            return DownloadedPdf(target, size, computed, "reused")
+        raise FileExistsError(f"PDF target changed during download: {target}")
     finally:
         if temporary is not None:
             try:

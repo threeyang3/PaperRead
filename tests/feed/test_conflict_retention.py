@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
+from paperflow.feed.conflicts import copy_preserving_conflicts
 from paperflow.feed.subscriber import sync_feed
 from paperflow.zotero.standalone_sync import sync_core_feed
 
@@ -135,3 +137,22 @@ def test_conflict_filename_is_deterministic(tmp_path: Path, synchronize: Sync) -
     result = synchronize(target, feed)
 
     assert Path(result["conflicts"][0]["target"]).name.endswith(f"conflict-{digest[:12]}.json")
+
+
+def test_conflict_publish_never_uses_overwriting_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.json"
+    target = tmp_path / "target.json"
+    source.write_text('{"new": true}', encoding="utf-8")
+
+    def overwrite_probe(_source, destination) -> None:
+        Path(destination).write_text('{"racer": true}', encoding="utf-8")
+        raise AssertionError("overwriting replace must not publish immutable records")
+
+    monkeypatch.setattr(os, "replace", overwrite_probe)
+
+    result = copy_preserving_conflicts(source, target, source_id="feed")
+
+    assert result.status == "created"
+    assert target.read_text(encoding="utf-8") == '{"new": true}'

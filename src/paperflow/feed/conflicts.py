@@ -33,6 +33,17 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def publish_without_overwrite(temporary: Path, target: Path) -> bool:
+    """Atomically publish a same-filesystem temporary file if target is absent."""
+
+    try:
+        os.link(temporary, target)
+    except FileExistsError:
+        return False
+    temporary.unlink()
+    return True
+
+
 def conflict_target(original: Path, *, source_id: str, sha256: str) -> Path:
     """Return the auditable idempotent path for one conflicting payload."""
 
@@ -97,9 +108,16 @@ def copy_preserving_conflicts(
                     source_hash,
                 )
             raise RuntimeError("subscription target changed during atomic copy")
-        os.replace(temporary_path, selected)
-        temporary_path = None
-        return PreservedWrite(selected, status, source_hash)
+        if publish_without_overwrite(temporary_path, selected):
+            temporary_path = None
+            return PreservedWrite(selected, status, source_hash)
+        if sha256_file(selected) == source_hash:
+            return PreservedWrite(
+                selected,
+                "conflict-reused" if status == "conflict-created" else "reused",
+                source_hash,
+            )
+        raise RuntimeError("subscription target changed during atomic copy")
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -110,5 +128,6 @@ __all__ = [
     "WriteStatus",
     "conflict_target",
     "copy_preserving_conflicts",
+    "publish_without_overwrite",
     "sha256_file",
 ]

@@ -249,6 +249,7 @@ def test_feed_managed_sync_preserves_unmanaged_repository_files(tmp_path: Path) 
 
     assert (feed / "README.md").read_text(encoding="utf-8") == "publisher notes\n"
     assert (feed / ".git/config").read_text(encoding="utf-8") == "[core]\n"
+    assert validate_feed(feed)["checksums"] == "ok"
 
 
 def test_feed_recovers_persisted_interrupted_managed_sync(tmp_path: Path) -> None:
@@ -268,7 +269,11 @@ def test_feed_recovers_persisted_interrupted_managed_sync(tmp_path: Path) -> Non
     result = build_feed(root, _settings(), feed)
 
     assert result["content_changed"] is False
-    assert _inventory(feed) == before
+    after = _inventory(feed)
+    before.pop("checksums/sha256.txt")
+    after.pop("checksums/sha256.txt")
+    assert after == before
+    assert validate_feed(feed)["checksums"] == "ok"
     assert not publisher._sync_journal_path(feed).exists()
     assert not transaction.exists()
 

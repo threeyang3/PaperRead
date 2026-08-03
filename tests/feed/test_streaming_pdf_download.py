@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -323,3 +324,24 @@ def test_existing_valid_pdf_is_reused_without_read_bytes(
     )
 
     assert standalone_sync._download_pdf(tmp_path, item) is False
+
+
+def test_pdf_publish_never_uses_overwriting_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = fitz.open()
+    document.new_page()
+    payload = document.tobytes()
+    document.close()
+    monkeypatch.setattr(
+        pdf_download.httpx,
+        "stream",
+        lambda *_args, **_kwargs: FakeStream(FakeResponse([payload])),
+    )
+
+    def overwrite_probe(_source, _destination) -> None:
+        raise AssertionError("overwriting replace must not publish PDFs")
+
+    monkeypatch.setattr(os, "replace", overwrite_probe)
+
+    assert standalone_sync._download_pdf(tmp_path, _standalone_item(payload)) is True
