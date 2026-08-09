@@ -51,7 +51,19 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
                 frontmatter["status"] = "processing"
                 write_note(path, frontmatter, body)
                 db.record_request(item.request_id, str(path), "processing")
-                result = import_paper(cfg, item.paper_input, priority=item.priority, topic=item.topic_hint, run_ai=item.run_ai, favorite=item.favorite, queued=item.add_to_reading_queue, user_tags=item.user_tags, user_note=note, import_method="form-flow")
+                result = import_paper(
+                    cfg,
+                    item.paper_input,
+                    priority=item.priority,
+                    topic=item.topic_hint,
+                    run_ai=item.run_ai,
+                    favorite=item.favorite,
+                    queued=item.add_to_reading_queue,
+                    user_tags=item.user_tags,
+                    user_note=note,
+                    user_note_source_id=item.request_id,
+                    import_method="form-flow",
+                )
                 frontmatter["status"] = "completed"
                 frontmatter["processed_at"] = iso_utc()
                 frontmatter["result_paper_uid"] = result["paper_uid"]

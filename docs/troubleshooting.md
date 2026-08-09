@@ -22,6 +22,10 @@ paperflow paper inspect <paper_uid> --vault "D:\Notes\Research"
 不会再次下载；成功后再用 `inspect` 确认 AI JSON、AI Markdown、Provider、Model、
 时间和最新作业均已完成。
 
+如果失败来自 Form Flow，请保留 Failed Request 作为流程记录。请求中的用户备注
+已经在 AI 调用前进入 `60 User Notes`；把同一个 `request_id` 重新放回 Inbox
+处理不会重复追加。新的 Request ID 仍可向同一篇论文追加新的用户备注。
+
 If configuration is invalid, the error identifies the field, current value,
 and file to edit. If data is newer than the installed reader, upgrade the
 application rather than forcing a write. If migration fails, inspect

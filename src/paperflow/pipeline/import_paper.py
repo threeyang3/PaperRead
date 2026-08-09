@@ -16,7 +16,7 @@ from paperflow.database import Database
 from paperflow.models import PaperMetadata
 from paperflow.logging_config import configure_logging
 from paperflow.obsidian.frontmatter import read_note
-from paperflow.obsidian.artifacts import ensure_user_note
+from paperflow.obsidian.artifacts import ensure_user_note, ingest_user_note
 from paperflow.obsidian.note_renderer import render_paper
 from paperflow.sources.arxiv import ArxivSource
 from paperflow.sources.url_parser import parse_input
@@ -84,7 +84,7 @@ def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path,
     )
 
 
-def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "", run_ai: bool = True, force: bool = False, favorite: bool = False, queued: bool = False, user_tags: list[str] | None = None, user_note: str = "", import_method: str = "manual", provider: str | None = None, metadata_override: PaperMetadata | None = None, reuse_local_assets: bool = False) -> dict[str, Any]:
+def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "", run_ai: bool = True, force: bool = False, favorite: bool = False, queued: bool = False, user_tags: list[str] | None = None, user_note: str = "", user_note_source_id: str | None = None, import_method: str = "manual", provider: str | None = None, metadata_override: PaperMetadata | None = None, reuse_local_assets: bool = False) -> dict[str, Any]:
     ensure_layout(cfg)
     db = Database(cfg.root / ".paperflow/state/paperflow.db")
     logger = configure_logging(cfg.root)
@@ -105,6 +105,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         # important for user-authored notes and for workspaces migrated from
         # the former ID-only layout; only brand-new records use the readable
         # template above.
+        existing_record: dict[str, Any] = {}
         if json_path.exists():
             try:
                 existing_record = json.loads(json_path.read_text(encoding="utf-8"))
@@ -116,6 +117,30 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 note_path = cfg.root / existing_note
             if existing_pdf:
                 pdf_path = cfg.root / existing_pdf
+        # Explicit user-authored input must be persisted before system-work
+        # deduplication or AI execution. A duplicate paper import may skip
+        # system processing but must never discard a new Form Flow note.
+        if user_note:
+            if cfg.workspace is None:
+                raise RuntimeError(
+                    "Independent User Notes require a PaperFlow Workspace; "
+                    "migrate this legacy Vault before importing Form Flow notes."
+                )
+            user_note_record = metadata.model_dump(mode="json") | existing_record
+            user_note_record["paper_uid"] = metadata.paper_uid
+            user_note_record["paper_short_title"] = str(
+                user_note_record.get("paper_short_title")
+                or short_title(metadata.paper_title)
+            )
+            user_note_record["note_path"] = note_path.relative_to(cfg.root).as_posix()
+            ingest_user_note(
+                cfg.root,
+                cfg.workspace,
+                user_note_record,
+                content=user_note,
+                source_id=user_note_source_id,
+                locale=cfg.ui_locale.locale,
+            )
         if decision.action == "skip" and json_path.exists():
             db.set_import_job(job_id, paper_uid, "completed", "deduplicate")
             logger.info("Existing paper skipped", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "deduplicate"})
@@ -184,6 +209,8 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 ),
                 "note_path": note_path.relative_to(cfg.root).as_posix(),
                 "json_path": json_path.relative_to(cfg.root).as_posix(),
+                "paper_short_title": short_title(metadata.paper_title),
+                "version_change_note": f"当前版本 v{metadata.paper_arxiv_version}。",
                 "extraction": extraction,
                 "system_content_hash": content_hash,
                 "system_import_method": import_method,
@@ -376,13 +403,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 cfg.root,
                 cfg.workspace,
                 record,
-                content=user_note,
                 locale=cfg.ui_locale.locale,
-            )
-        elif user_note:
-            raise RuntimeError(
-                "Independent User Notes require a PaperFlow Workspace; "
-                "migrate this legacy Vault before importing Form Flow notes."
             )
         render_paper(cfg.root, record, note_path, import_method, cfg.ui_locale.locale)
         db.set_import_job(job_id, paper_uid, "rendered", "render")

@@ -207,10 +207,7 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
         )
         raise
     write_note(note_path, values, body)
-    if (
-        settings is not None
-        and record.get("ai_analysis_status") not in {None, "", "pending", "skipped"}
-    ):
+    if settings is not None and record.get("ai_analysis_status") == "complete":
         ensure_ai_analysis_note(
             root,
             settings,

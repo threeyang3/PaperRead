@@ -7,9 +7,11 @@
 - Fixed the normal import crash when no unmatched topic exists, ensured
   explicit topic hints are always evaluated, and preserved business manual-
   review state across rendering.
-- Made Review creation idempotent and moved Form Flow notes into independent,
-  create-if-absent User Note artifacts; reanalysis, refresh, render, and
-  duplicate import are covered against User Note/Review/Annotation loss.
+- Made Review creation idempotent and moved Form Flow notes into independent
+  User Note artifacts before deduplication or AI execution. Request IDs make
+  retries idempotent while new requests append without replacing existing
+  prose; reanalysis, refresh, render, and duplicate import are covered against
+  User Note/Review/Annotation loss.
 - Added a deterministic offline Golden Workflow CI gate, retryable AI-failure
   checkpoints, local PDF/text reuse, a shared `PaperApplicationService`, and a
   default Taxonomy installed into fresh Workspaces.

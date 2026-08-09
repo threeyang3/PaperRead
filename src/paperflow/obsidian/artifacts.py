@@ -168,6 +168,53 @@ def ensure_user_note(
     }
 
 
+def ingest_user_note(
+    root: Path,
+    settings: Any,
+    record: dict[str, Any],
+    *,
+    content: str,
+    source_id: str | None = None,
+    locale: str = "zh-CN",
+) -> dict[str, Any]:
+    """Append explicit user input without replacing an existing User Note.
+
+    A stable hash of the Form Flow request identity makes retries idempotent
+    without treating repeated user prose as a duplicate. Different requests
+    may intentionally append the same text.
+    """
+    ensured = ensure_user_note(root, settings, record, locale=locale)
+    normalized_content = content.strip()
+    if not normalized_content:
+        return ensured
+
+    path = root / ensured["path"]
+    frontmatter, body = read_note(path)
+    normalized_source = str(source_id or "").strip()
+    marker = ""
+    if normalized_source:
+        digest = hashlib.sha256(normalized_source.encode("utf-8")).hexdigest()
+        marker = f"<!-- paperflow-user-note-source:sha256:{digest} -->"
+        if marker in body:
+            return {
+                "path": ensured["path"],
+                "created": ensured["created"],
+                "status": "already-ingested",
+            }
+
+    heading = "## Form Flow 记录" if locale != "en" else "## Form Flow entry"
+    entry = f"{heading}\n\n{normalized_content}"
+    if marker:
+        entry += f"\n\n{marker}"
+    frontmatter["updated_at"] = iso_beijing()
+    write_note(path, frontmatter, body.rstrip() + "\n\n" + entry + "\n")
+    return {
+        "path": ensured["path"],
+        "created": ensured["created"],
+        "status": "ingested",
+    }
+
+
 def ensure_ai_analysis_note(
     root: Path,
     settings: Any,

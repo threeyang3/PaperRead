@@ -30,6 +30,11 @@ If AI fails after the PDF and text stages, inspect reports a retryable failure.
 Fix the provider and run `paperflow paper analyze <paper_uid> --vault $vault`;
 the existing PDF and extracted text are reused.
 
+Form Flow saves an explicitly submitted note to the paper's independent User
+Note before duplicate-system-work detection or AI execution. Retrying the same
+`request_id` does not append it again; a new request for the same paper may
+append another note without replacing existing prose.
+
 Choose the primary reading front end after initialization:
 
 - Zotero 9+: install `integrations/zotero-paperflow`, start the loopback Core,

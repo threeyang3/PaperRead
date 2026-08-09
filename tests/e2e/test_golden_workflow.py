@@ -32,13 +32,57 @@ def _uid(source: str) -> str:
     return f"arxiv:{match.group(1)}"
 
 
+def _write_form_flow_request(
+    vault: Path,
+    *,
+    request_id: str,
+    source: str,
+    note: str,
+    run_ai: bool = True,
+) -> Path:
+    request = load_config(vault).path("request_folder") / f"{request_id}.md"
+    write_note(
+        request,
+        {
+            "type": "paper-import-request",
+            "schema_version": 1,
+            "request_id": request_id,
+            "paper_input": source,
+            "topic_hint": "",
+            "priority": 3,
+            "add_to_reading_queue": True,
+            "favorite": False,
+            "user_tags": [],
+            "run_ai": run_ai,
+            "ui_locale": "en",
+            "status": "pending",
+            "created_at": "2026-08-10T10:00:00+08:00",
+            "processed_at": None,
+            "result_paper_uid": None,
+            "result_note": None,
+            "error": None,
+        },
+        f"# Paper import request\n\n## 用户备注\n\n{note}\n",
+    )
+    return request
+
+
+class FailingProvider:
+    config = type("Config", (), {"model": "deterministic-v1"})()
+
+    def analyze(self, *_args, **_kwargs):
+        raise RuntimeError("deterministic mock AI failure")
+
+
 @pytest.fixture
 def golden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     import paperflow.cli as cli
 
     runner = CliRunner()
     vault = tmp_path / "vault"
-    monkeypatch.setattr(cli, "try_install_official_plugin", lambda _root: {"status": "offline-test"})
+    monkeypatch.setattr(
+        cli, "try_install_official_plugin", lambda _root: {"status": "offline-test"}
+    )
     initialized = runner.invoke(
         app,
         ["init", "--vault", str(vault), "--non-interactive"],
@@ -319,12 +363,6 @@ def test_ai_failure_is_inspectable_and_retry_reuses_local_artifacts(
     source = "https://arxiv.org/abs/2601.00004"
     uid = "arxiv:2601.00004"
 
-    class FailingProvider:
-        config = type("Config", (), {"model": "deterministic-v1"})()
-
-        def analyze(self, *_args, **_kwargs):
-            raise RuntimeError("deterministic mock AI failure")
-
     monkeypatch.setattr(golden["importer"], "make_provider", lambda *_args: FailingProvider())
     failed = golden["runner"].invoke(
         app,
@@ -360,3 +398,193 @@ def test_ai_failure_is_inspectable_and_retry_reuses_local_artifacts(
     )
     assert final["ai"]["status"] == "complete"
     assert final["job"]["status"] == "completed"
+
+
+def test_duplicate_form_flow_request_preserves_new_user_note(golden: dict) -> None:
+    vault = golden["vault"]
+    source = "https://arxiv.org/abs/2601.00005"
+    uid = "arxiv:2601.00005"
+    initial = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "add", source, "--no-ai", "--vault", str(vault)],
+        )
+    )
+    inspected = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    user_note = vault / inspected["user_note"]["path"]
+    user_note.write_text(
+        user_note.read_text(encoding="utf-8") + "\nORIGINAL USER NOTE\n",
+        encoding="utf-8",
+    )
+
+    second = _write_form_flow_request(
+        vault,
+        request_id="second-request",
+        source=source,
+        note="SECOND USER NOTE",
+        run_ai=False,
+    )
+    assert process_inbox(load_config(vault), second.name) == {
+        "processed": 1,
+        "failed": 0,
+        "skipped": 0,
+    }
+    text = user_note.read_text(encoding="utf-8")
+    assert "ORIGINAL USER NOTE" in text
+    assert "SECOND USER NOTE" in text
+    processed = load_config(vault).path("processed_request_folder") / second.name
+    processed_frontmatter, _ = read_note(processed)
+    assert processed_frontmatter["status"] == "completed"
+    assert processed_frontmatter["result_paper_uid"] == uid
+    after_second = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert after_second["job"]["stage"] == "deduplicate"
+    assert initial["paper_uid"] == uid
+
+    third = _write_form_flow_request(
+        vault,
+        request_id="third-request",
+        source=source,
+        note="THIRD USER NOTE",
+        run_ai=False,
+    )
+    assert process_inbox(load_config(vault), third.name)["processed"] == 1
+    final_text = user_note.read_text(encoding="utf-8")
+    assert "SECOND USER NOTE" in final_text
+    assert "THIRD USER NOTE" in final_text
+
+
+def test_form_flow_note_survives_ai_failure_and_analyze_retry(
+    golden: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = golden["vault"]
+    source = "https://arxiv.org/abs/2601.00006"
+    uid = "arxiv:2601.00006"
+    request = _write_form_flow_request(
+        vault,
+        request_id="ai-failure-note",
+        source=source,
+        note="IMPORTANT NOTE",
+    )
+    monkeypatch.setattr(golden["importer"], "make_provider", lambda *_args: FailingProvider())
+    assert process_inbox(load_config(vault), request.name) == {
+        "processed": 0,
+        "failed": 1,
+        "skipped": 0,
+    }
+    failed = load_config(vault).path("failed_folder") / request.name
+    assert failed.is_file()
+    inspected = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert inspected["job"]["status"] == "failed_retryable"
+    assert inspected["ai"]["status"] == "failed"
+    assert inspected["pdf"]["exists"] is True
+    assert inspected["text"]["exists"] is True
+    assert inspected["user_note"]["exists"] is True
+    user_note = vault / inspected["user_note"]["path"]
+    assert "IMPORTANT NOTE" in user_note.read_text(encoding="utf-8")
+    counts_before_retry = dict(golden["counters"])
+
+    monkeypatch.setattr(golden["importer"], "make_provider", golden["make_provider"])
+    retried = golden["runner"].invoke(
+        app,
+        ["paper", "analyze", uid, "--vault", str(vault)],
+    )
+    assert retried.exit_code == 0, retried.stdout or repr(retried.exception)
+    assert golden["counters"] == counts_before_retry
+    assert "IMPORTANT NOTE" in user_note.read_text(encoding="utf-8")
+    final = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert final["ai"]["status"] == "complete"
+
+
+def test_form_flow_request_retry_does_not_duplicate_user_note(
+    golden: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = golden["vault"]
+    source = "https://arxiv.org/abs/2601.00007"
+    uid = "arxiv:2601.00007"
+    request = _write_form_flow_request(
+        vault,
+        request_id="retry-idempotency",
+        source=source,
+        note="DO NOT DUPLICATE",
+    )
+    monkeypatch.setattr(golden["importer"], "make_provider", lambda *_args: FailingProvider())
+    assert process_inbox(load_config(vault), request.name)["failed"] == 1
+    config = load_config(vault)
+    failed = config.path("failed_folder") / request.name
+    retry = config.path("request_folder") / request.name
+    failed.replace(retry)
+    assert process_inbox(load_config(vault), retry.name)["failed"] == 1
+
+    inspected = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    user_note = vault / inspected["user_note"]["path"]
+    assert user_note.read_text(encoding="utf-8").count("DO NOT DUPLICATE") == 1
+
+
+def test_render_failed_analysis_does_not_create_ai_markdown(
+    golden: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = golden["vault"]
+    source = "https://arxiv.org/abs/2601.00008"
+    uid = "arxiv:2601.00008"
+    request = _write_form_flow_request(
+        vault,
+        request_id="failed-render",
+        source=source,
+        note="PRESERVE BEFORE FAILED RENDER",
+    )
+    monkeypatch.setattr(golden["importer"], "make_provider", lambda *_args: FailingProvider())
+    assert process_inbox(load_config(vault), request.name)["failed"] == 1
+    before = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert before["ai"]["status"] == "failed"
+    assert before["ai"]["markdown_exists"] is False
+    user_note = vault / before["user_note"]["path"]
+    user_note_hash = hashlib.sha256(user_note.read_bytes()).hexdigest()
+
+    rendered = golden["runner"].invoke(
+        app,
+        ["paper", "render", uid, "--vault", str(vault)],
+    )
+    assert rendered.exit_code == 0, rendered.stdout or repr(rendered.exception)
+    after = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert after["paper_hub"]["exists"] is True
+    assert after["ai"]["status"] == "failed"
+    assert after["ai"]["markdown_exists"] is False
+    assert hashlib.sha256(user_note.read_bytes()).hexdigest() == user_note_hash
