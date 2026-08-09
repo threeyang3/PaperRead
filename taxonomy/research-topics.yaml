@@ -1,0 +1,22 @@
+topics:
+  - name: Embodied Intelligence
+    aliases:
+      - embodied AI
+      - embodied artificial intelligence
+    keywords:
+      - embodied intelligence
+      - robot learning
+  - name: Vision Language Action
+    aliases:
+      - VLA
+      - vision-language-action
+    keywords:
+      - vision language action
+      - multimodal robot policy
+  - name: Tactile Sensing
+    aliases:
+      - touch sensing
+      - visuotactile sensing
+    keywords:
+      - tactile sensing
+      - tactile control

@@ -22,6 +22,11 @@ Feed、社区和发布物在写出前通过 `PublishScanner` 检查用户文件�
 秘密文件名的判定优先于父目录：即使 token 或 `auth.json` 位于 `runtime`、`state`
 等系统目录，也必须保持 `SECRET`，不能降级为普通临时文件或系统状态。
 
+`USER_OWNED` 的含义包括“缺失时可按用户动作创建，存在时不得覆盖”。因此论文
+首次导入可以创建标准 User Note，`review create` 可以创建 Review；重复执行、
+分析、刷新和渲染必须原样保留已有 User Note、Review、Annotation、`user_*` 和
+用户标签。无法安全解析或合并时进入 Manual Review，不以空模板替换。
+
 ## 端职责
 
 - Zotero bibliographic data、PDF 和 Zotero Annotation 仍由 Zotero 公开对象 API 主导。

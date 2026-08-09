@@ -11,6 +11,17 @@ paperflow migrate status
 paperflow integration status form-flow
 ```
 
+针对单篇论文，先用显式 Vault 查看完整证据：
+
+```text
+paperflow paper inspect <paper_uid> --vault "D:\Notes\Research"
+```
+
+如果状态为 `failed_retryable`，确认输出中的 PDF、SHA-256 和提取文本存在后，
+运行 `paperflow paper analyze <paper_uid> --vault ...`。重试会复用本地 PDF/文本，
+不会再次下载；成功后再用 `inspect` 确认 AI JSON、AI Markdown、Provider、Model、
+时间和最新作业均已完成。
+
 If configuration is invalid, the error identifies the field, current value,
 and file to edit. If data is newer than the installed reader, upgrade the
 application rather than forcing a write. If migration fails, inspect

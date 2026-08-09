@@ -15,7 +15,8 @@ from paperflow.paths.service import preview_record_paths
 from paperflow.database import Database
 from paperflow.models import PaperMetadata
 from paperflow.logging_config import configure_logging
-from paperflow.obsidian.frontmatter import read_note, write_note
+from paperflow.obsidian.frontmatter import read_note
+from paperflow.obsidian.artifacts import ensure_user_note
 from paperflow.obsidian.note_renderer import render_paper
 from paperflow.sources.arxiv import ArxivSource
 from paperflow.sources.url_parser import parse_input
@@ -89,6 +90,8 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
     logger = configure_logging(cfg.root)
     job_id = str(uuid.uuid4())
     paper_uid = ""
+    failure_checkpoint: tuple[Path, dict[str, Any]] | None = None
+    preserve_existing_record = False
     try:
         db.set_import_job(job_id, paper_uid, "metadata_ready", "metadata")
         metadata = metadata_override or _metadata(cfg, value)
@@ -97,6 +100,7 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         logger.info("Metadata ready", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "metadata"})
         decision = decide(db, metadata, force)
         note_path, pdf_path, json_path, text_path = _year_paths(cfg, metadata)
+        preserve_existing_record = json_path.exists()
         # An update must keep the currently selected note/PDF paths.  This is
         # important for user-authored notes and for workspaces migrated from
         # the former ID-only layout; only brand-new records use the readable
@@ -167,6 +171,35 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             else "full_analysis"
         )
         model = ""
+        analyzed_at: str | None = None
+        failure_checkpoint = (
+            json_path,
+            metadata.model_dump(mode="json")
+            | analysis
+            | {
+                "paper_pdf_path": (
+                    pdf_path.relative_to(cfg.root).as_posix()
+                    if pdf_path.exists()
+                    else ""
+                ),
+                "note_path": note_path.relative_to(cfg.root).as_posix(),
+                "json_path": json_path.relative_to(cfg.root).as_posix(),
+                "extraction": extraction,
+                "system_content_hash": content_hash,
+                "system_import_method": import_method,
+                "system_imported_at": iso_utc(),
+                "system_last_synced_at": iso_utc(),
+                "system_pipeline_version": "0.1.0",
+                "system_requires_manual_review": not bool(metadata.paper_pdf_url),
+                "system_status": "failed",
+                "system_error": "",
+                "ai_analysis_provider": used_provider if run_ai else "",
+                "ai_analysis_model": "",
+                "ai_analysis_profile": used_profile if run_ai else "",
+                "ai_analysis_prompt_version": PROMPT_VERSION if run_ai else "",
+                "ai_analyzed_at": None,
+            },
+        )
         if run_ai:
             db.set_import_job(job_id, paper_uid, "analysis_running", "analysis")
             analysis_cfg = cfg.section("analysis")
@@ -222,6 +255,11 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                             )
                             if stored is not None:
                                 analysis = stored["analysis"]
+                                analyzed_at = str(
+                                    stored.get("analyzed_at")
+                                    or analysis.get("ai_analyzed_at")
+                                    or ""
+                                ) or None
                                 model = selected_model
                                 used_provider = candidate_provider
                                 db.record_analysis(
@@ -281,6 +319,8 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
             if not completed:
                 assert last_error is not None
                 raise last_error
+            if analyzed_at is None:
+                analyzed_at = iso_utc()
         record = metadata.model_dump(mode="json") | analysis
         primary, canonical_topics, unmatched_topics = canonicalize_topics(
             cfg.root,
@@ -290,12 +330,13 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         )
         record["ai_topic_primary"] = primary
         record["ai_topics"] = canonical_topics
+        record["paper_short_title"] = short_title(metadata.paper_title)
         record["version_change_note"] = (f"由 v{decision.existing_version} 更新到 v{metadata.paper_arxiv_version}；旧分析已保存快照。" if decision.action == "update" else f"当前版本 v{metadata.paper_arxiv_version}。")
         record.update({
             "paper_pdf_path": pdf_path.relative_to(cfg.root).as_posix() if pdf_path.exists() else "",
             "paper_has_code": bool(metadata.paper_code_url), "paper_has_project_page": bool(metadata.paper_project_url), "paper_has_dataset": bool(metadata.paper_dataset_url),
             "ai_analysis_provider": used_provider if run_ai else "", "ai_analysis_model": model, "ai_analysis_profile": used_profile if run_ai else "", "ai_analysis_prompt_version": PROMPT_VERSION if run_ai else "",
-        "ai_analyzed_at": iso_utc() if run_ai else None, "user_priority": priority, "user_favorite": favorite,
+        "ai_analyzed_at": analyzed_at if run_ai else None, "user_priority": priority, "user_favorite": favorite,
             "user_reading_status": "queued" if queued else "inbox", "user_learning_status": "none", "user_rating": 0,
             "user_reproduction_status": "none", "user_added_tags": user_tags or [], "user_last_read_at": None, "user_next_review_at": None,
         "system_import_method": import_method, "system_imported_at": iso_utc(), "system_last_synced_at": iso_utc(),
@@ -309,15 +350,18 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 record["extraction"]["visual_assets"] = []
                 record["extraction"]["visual_extraction_status"] = "failed"
                 record["extraction"]["visual_extraction_error"] = str(exc)
-        if topic and not record["ai_topic_primary"]:
+        if topic:
             topic_primary, topic_values, topic_unmatched = canonicalize_topics(cfg.root, topic, [topic])
-            record["ai_topic_primary"] = topic_primary
-            record["ai_topics"] = topic_values
+            if not record["ai_topic_primary"] and topic_primary:
+                record["ai_topic_primary"] = topic_primary
+            record["ai_topics"] = list(
+                dict.fromkeys([*record["ai_topics"], *topic_values])
+            )
             unmatched_topics.extend(value for value in topic_unmatched if value not in unmatched_topics)
             record["system_requires_manual_review"] = record["system_requires_manual_review"] or bool(topic_unmatched)
         if unmatched_topics:
             review_path = cfg.path("manual_review_folder") / f"{safe_slug(metadata.paper_uid)}-topics.md"
-        atomic_write(review_path, "---\ntype: paper-topic-review\npaper_uid: " + metadata.paper_uid + "\nstatus: pending\ncreated_at: " + iso_utc() + "\n---\n\n# Topic 人工审核\n\n以下 AI 候选主题未自动创建：\n\n" + "\n".join(f"- {value}" for value in unmatched_topics) + "\n")
+            atomic_write(review_path, "---\ntype: paper-topic-review\npaper_uid: " + metadata.paper_uid + "\nstatus: pending\ncreated_at: " + iso_utc() + "\n---\n\n# Topic 人工审核\n\n以下 AI 候选主题未自动创建：\n\n" + "\n".join(f"- {value}" for value in unmatched_topics) + "\n")
         if note_path.exists():
             existing_frontmatter, _ = read_note(note_path)
             for key, value in existing_frontmatter.items():
@@ -325,20 +369,29 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                     record[key] = value
             if existing_frontmatter.get("system_imported_at"):
                 record["system_imported_at"] = existing_frontmatter["system_imported_at"]
-        render_paper(cfg.root, record, note_path, import_method, cfg.ui_locale.locale)
-        db.set_import_job(job_id, paper_uid, "rendered", "render")
-        if user_note:
-            frontmatter, body = read_note(note_path)
-            body = body.replace("## 我的笔记\n", f"## 我的笔记\n\n{user_note}\n", 1)
-            write_note(note_path, frontmatter, body)
         record["note_path"] = note_path.relative_to(cfg.root).as_posix()
         record["json_path"] = json_path.relative_to(cfg.root).as_posix()
+        if cfg.workspace is not None:
+            ensure_user_note(
+                cfg.root,
+                cfg.workspace,
+                record,
+                content=user_note,
+                locale=cfg.ui_locale.locale,
+            )
+        elif user_note:
+            raise RuntimeError(
+                "Independent User Notes require a PaperFlow Workspace; "
+                "migrate this legacy Vault before importing Form Flow notes."
+            )
+        render_paper(cfg.root, record, note_path, import_method, cfg.ui_locale.locale)
+        db.set_import_job(job_id, paper_uid, "rendered", "render")
         atomic_json(json_path, record)
         if cfg.workspace:
             record["layer_paths"] = persist_layer_records(
                 cfg.root,
                 record,
-                preserve_existing_raw=reuse_local_assets,
+                preserve_existing_raw=preserve_existing_record,
             )
             atomic_json(json_path, record)
             if pdf_path.exists():
@@ -367,6 +420,12 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
         logger.info("Paper import completed", extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "completed"})
         return {"status": "updated" if decision.action == "update" else "imported", "paper_uid": metadata.paper_uid, "note_path": record["note_path"], "record": record}
     except Exception as exc:
+        if failure_checkpoint is not None and not preserve_existing_record:
+            checkpoint_path, checkpoint = failure_checkpoint
+            checkpoint["ai_analysis_status"] = "failed"
+            checkpoint["system_status"] = "failed"
+            checkpoint["system_error"] = str(exc)
+            atomic_json(checkpoint_path, checkpoint)
         db.set_import_job(job_id, paper_uid, "failed_retryable", "failed", str(exc))
         logger.error(str(exc), extra={"run_id": job_id, "paper_uid": paper_uid, "stage": "failed", "error_type": type(exc).__name__})
         raise

@@ -61,6 +61,11 @@ paperflow annotation create arxiv:2504.16054 `
 个人评分不会与 AI 分数或社区评分合并。
 
 ```powershell
-paperflow review create arxiv:2504.16054 --rating 5 --dry-run
+paperflow review create arxiv:2504.16054 --rating 5 --vault "D:\Notes\Research"
 paperflow review validate
 ```
+
+`review create` 默认真正创建 Review；重复执行会返回 `existing`，保留原始
+`review_id` 和文件字节，不覆盖已经写下的复盘。只有预览时才传 `--dry-run`，
+此时返回 `would-create`。已有 Review 无法解析时命令进入 Manual Review 并拒绝
+覆盖。

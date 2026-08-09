@@ -36,7 +36,9 @@ Python 3.11 or newer is required.
 ```powershell
 pipx install .
 paperflow init --vault "D:\Notes\Research"
-paperflow doctor
+paperflow doctor --vault "D:\Notes\Research"
+paperflow paper add "https://arxiv.org/abs/2504.16054" --vault "D:\Notes\Research"
+paperflow paper inspect "arxiv:2504.16054" --vault "D:\Notes\Research"
 ```
 
 For automation, PaperFlow uses the Vault's `PaperFlow Automation` Obsidian
@@ -146,6 +148,13 @@ for manual review.
 Templates receive a versioned Paper View Model and run inside a Jinja sandbox.
 See [docs/paper-workspace-artifacts.md](docs/paper-workspace-artifacts.md).
 
+Every new paper import idempotently creates its independent User Note. Form
+Flow text is written directly to that artifact rather than injected through a
+localized Markdown heading. `paperflow review create` likewise returns the
+existing Review without changing its bytes or `review_id`. Reanalysis,
+refresh, and rendering rebuild system projections but do not recreate User
+Notes, Reviews, Annotations, or `user_*` fields.
+
 Three Obsidian-native automation tracks can independently synchronize enabled
 Feed subscriptions, run opt-in safety-gated publishing on a data-source host,
 and discover/SHA256-stage stable PaperFlow releases. Applying an update remains
@@ -180,8 +189,10 @@ paperflow workspace ...
 paperflow update ...
 ```
 
-The legacy `paperflow add` command remains available as an alias for
-`paperflow paper add`.
+The supported paper surface is `paperflow paper add|analyze|refresh|render|inspect`;
+each command accepts `--vault`, including when the current directory is outside
+the Vault. Legacy top-level `add`, `analyze`, `refresh`, and `render` names remain
+hidden compatibility aliases and call the same application service.
 
 ## Safe migration
 

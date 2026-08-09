@@ -680,6 +680,11 @@ def install_workspace_resources(
             root / ".paperflow/prompts",
             True,
         ),
+        (
+            _distribution_resource("taxonomy"),
+            root / "90 System/Taxonomy",
+            False,
+        ),
     ]
     for source_root, destination_root, managed in mappings:
         for source in sorted(source_root.rglob("*")):

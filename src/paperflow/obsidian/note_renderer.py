@@ -168,12 +168,25 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
         values["system_imported_at"] = old_frontmatter["system_imported_at"]
     values["system_last_synced_at"] = iso_beijing()
     values.setdefault("system_pipeline_version", "0.1.0")
-    # Reaching this point means the note passed the merge and concurrent-write
-    # guards.  Clear stale failure state left by an earlier manual-review
-    # pause; otherwise a successfully migrated note would remain marked as
-    # blocked in the Hub frontmatter forever.
-    values["system_requires_manual_review"] = False
-    values["system_error"] = ""
+    # Rendering is a projection step.  It must not clear business review
+    # state established by import/analysis (for example unmatched topics or a
+    # missing PDF).  A caller that resolves the underlying condition updates
+    # the record first; this renderer then projects that explicit state.
+    values.setdefault("system_requires_manual_review", False)
+    values.setdefault("system_error", "")
+    render_error = str(values.get("system_error") or "").casefold()
+    if values["system_requires_manual_review"] and any(
+        marker in render_error
+        for marker in (
+            "merge review",
+            "unsafe merge",
+            "sync conflict",
+            "render failure",
+            "user-note migration conflict",
+        )
+    ):
+        values["system_requires_manual_review"] = False
+        values["system_error"] = ""
     values = preserve_user_fields(values, old_frontmatter)
     save_user_record(root, record, values)
     try:
@@ -194,7 +207,10 @@ def render_paper(root: Path, record: dict[str, Any], note_path: Path, import_met
         )
         raise
     write_note(note_path, values, body)
-    if settings is not None:
+    if (
+        settings is not None
+        and record.get("ai_analysis_status") not in {None, "", "pending", "skipped"}
+    ):
         ensure_ai_analysis_note(
             root,
             settings,
