@@ -72,6 +72,21 @@ stores only its hash. Later Core restarts issue a fresh session through that
 pairing, so long-lived bearer tokens are neither embedded in the plugin nor
 committed to a Workspace.
 
+## Application service and retry boundary
+
+The formal `paperflow paper add|analyze|refresh|render|inspect` commands enter
+through `PaperApplicationService`. It resolves the explicit Vault, takes the
+Workspace lock, and delegates to the existing import/render pipeline; hidden
+top-level compatibility aliases call the same service and do not maintain a
+second workflow.
+
+PDF download and text extraction complete before AI analysis. If AI fails,
+PaperFlow records a retryable aggregate checkpoint containing the canonical
+PDF/text paths, hashes, status, and error. `paper analyze` resumes from those
+local assets instead of downloading or extracting again. `paper inspect`
+reports this state together with Raw, AI, Hub, User Note, Review, Annotation,
+manual-review, and latest-job evidence.
+
 ## Localized presentation layer
 
 Generated-paper YAML keys are a stable interoperability contract and remain in

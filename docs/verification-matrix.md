@@ -1,22 +1,56 @@
-# PaperFlow 1.5.0 verification matrix
+# PaperFlow verification matrix
 
-Source, release-artifact, real-Vault, and isolated-Zotero verification completed
-through 2026-07-28.
-The fixed wheel was installed into `ArxivLearn`, Workspace v3 verification
-reported zero missing files, hash mismatches, note-link mismatches, Derived
-path mismatches, or modified user-note sections, and the live Obsidian runtime
-loaded PaperFlow, PDF++, and Form Flow without plugin or console errors.
+## 2026-08-10 core Golden Workflow
 
-The current source baseline passes 202 pytest tests plus all Zotero JavaScript
-integration suites. In addition to the
-existing annotation/community/image checks, the final run covers stable
-display/short titles and aliases, Paper View Model context version 1,
-independent `20 AI Analyses`/`60 User Notes` artifacts, idempotent USER_NOTES
-migration, Template Set list/use/validate/export paths, and sandboxed Jinja
-rendering. The real Vault dry-run reported no pending user-note migrations;
-π₀.₅ was rendered twice after migration without losing its User Note or visual
-assets, and health/audit reported no mojibake, broken assets, or missing visual
-embeds.
+This verification targets the local working tree on branch
+`fix/core-golden-workflow`. It does not claim a published release and does not
+modify a real user Vault. Exact final suite counts are recorded after the full
+gate run; the dedicated Golden Workflow currently passes 9/9 scenarios.
+
+| Core acceptance item | Verdict | Automated evidence |
+| --- | --- | --- |
+| Fresh Workspace includes canonical taxonomy | PASS | Golden tests initialize an empty temporary Vault and import without copying project files manually. |
+| `paper add` creates Raw, PDF, Paper Hub, and User Note | PASS | `test_import_without_unmatched_topics_completes`. |
+| Explicit `--vault` works outside Vault cwd | PASS | All Golden CLI calls run from a separate temporary cwd. |
+| No-AI mode omits AI JSON and AI Markdown | PASS | `test_import_without_unmatched_topics_completes`. |
+| Mock-AI mode creates immutable AI JSON and projection | PASS | `test_golden_workflow_preserves_user_owned_artifacts`. |
+| Known topic creates no Manual Review | PASS | No-unmatched Golden scenario asserts no Review artifact and false manual-review state. |
+| Unknown explicit topic creates a pending Manual Review | PASS | `test_import_with_unmatched_topics_creates_manual_review`. |
+| Form Flow text is written directly to independent User Note | PASS | Full workflow asserts User Note content and Paper Hub link. |
+| Existing paper accepts a new Form Flow note before system deduplication | PASS | `test_duplicate_form_flow_request_preserves_new_user_note`. |
+| Same Form Flow request retry is idempotent | PASS | `test_form_flow_request_retry_does_not_duplicate_user_note`. |
+| Different requests append independently | PASS | Duplicate-paper scenario processes second and third request IDs. |
+| Repeating `review create` is byte-identical and keeps review ID | PASS | Full workflow hashes the file before and after the second command. |
+| Analyze preserves Review | PASS | Full workflow compares the Review hash after each write-capable operation. |
+| Analyze, refresh, render, and duplicate add preserve User Note | PASS | Full workflow compares the User Note hash after every operation. |
+| Annotation survives analyze, refresh, render, and duplicate add | PASS | Full workflow compares the Annotation hash after every operation. |
+| Duplicate add reuses the paper and user artifacts | PASS | Full workflow re-adds the same source and verifies stable paths/hashes. |
+| Render preserves business Manual Review state | PASS | Unknown-topic scenario renders again and retains the state. |
+| AI failure leaves PDF/text and retryable checkpoint | PASS | `test_ai_failure_is_inspectable_and_retry_reuses_local_artifacts`. |
+| Form Flow note exists before AI-failure retry | PASS | `test_form_flow_note_survives_ai_failure_and_analyze_retry`. |
+| Form Flow import intent survives AI-failure retry | PASS | `test_form_flow_retry_preserves_import_intent` asserts priority 5, favorite, queued state, both tags, known topic hint, user note, a post-failure sidecar edit, local PDF/text reuse, and completed AI/job states. |
+| Failed AI render creates no AI Markdown | PASS | `test_render_failed_analysis_does_not_create_ai_markdown`. |
+| Analyze retry reuses local PDF/text | PASS | Failure/retry test asserts one download and one extraction total. |
+| `paper inspect` reports all core artifacts and latest job | PASS | No-AI and failure/retry scenarios inspect structured output. |
+| Getting Started commands use explicit Vault and are executable outside it | PASS | CLI structure is exercised by Golden tests; documentation mirrors those commands. |
+
+Final gate results on Windows, uv 0.12.0 and Python 3.12.13:
+
+- `uv run --extra quality pytest --cov=paperflow`: **355 passed, 1 skipped**,
+  **73.99%** total coverage (70% gate and critical coverage gate passed);
+- Golden Workflow: **9 passed**;
+- Ruff check/format and mypy (`134` source files): **PASS**;
+- scheduler, Automation lifecycle, Zotero Core client, Zotero public API, and
+  Zotero UI Node integration suites: **PASS**;
+- version consistency (`1.5.1`), local release build, and packaging tests:
+  **PASS**;
+- no tag, release, Feed publication, or real-Vault mutation was performed.
+
+## 2026-07-28 historical environment acceptance
+
+The following table is retained as dated evidence for the earlier real-Vault,
+release-artifact, and isolated-Zotero acceptance. It is not a claim about the
+current working tree's test count.
 
 | Capability | Verdict | Evidence |
 | --- | --- | --- |

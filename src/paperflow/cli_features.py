@@ -28,6 +28,7 @@ from paperflow.obsidian.pdf_plus import (
     install as install_pdf_plus,
     status as pdf_plus_status,
 )
+from paperflow.obsidian.frontmatter import read_note
 from paperflow.utils import atomic_write, iso_beijing
 from paperflow.workspace import load_workspace_settings, resolve_vault_root
 from paperflow.workspace_v3 import (
@@ -184,24 +185,70 @@ def annotation_reanchor(
 def review_create(
     paper_uid: str,
     rating: int | None = typer.Option(None, "--rating", min=1, max=5),
-    dry_run: bool = typer.Option(True, "--dry-run/--apply"),
+    dry_run: bool = typer.Option(False, "--dry-run/--apply"),
     vault: Path | None = typer.Option(None, "--vault"),
 ):
     root, settings = _root(vault)
-    now = iso_beijing()
-    review = PaperReview(
-        review_id="review-" + uuid.uuid4().hex,
-        paper_uid=paper_uid, rating=rating, created_at=now, updated_at=now,
-    )
     year = "Unclassified"
     record = root / ".paperflow/data/papers" / f"{paper_uid.replace(':', '_')}.json"
     if record.exists():
         year = str(json.loads(record.read_text(encoding="utf-8")).get("paper_year") or year)
     path = root / settings.paths.paper_review.root / year / f"{paper_uid.replace(':', '_')}.review.md"
+
+    candidates = [path]
+    review_root = root / settings.paths.paper_review.root
+    if review_root.exists():
+        candidates.extend(
+            candidate
+            for candidate in sorted(review_root.rglob("*.review.md"))
+            if candidate != path
+        )
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            existing = PaperReview.model_validate(read_note(candidate)[0])
+        except Exception as exc:
+            if candidate != path:
+                continue
+            _echo({
+                "status": "manual-review-required",
+                "paper_uid": paper_uid,
+                "path": candidate.relative_to(root).as_posix(),
+                "error": f"Existing Review is invalid and was not modified: {exc}",
+            })
+            raise typer.Exit(1) from exc
+        if existing.paper_uid != paper_uid:
+            if candidate == path:
+                _echo({
+                    "status": "manual-review-required",
+                    "paper_uid": paper_uid,
+                    "path": candidate.relative_to(root).as_posix(),
+                    "error": "Canonical Review path belongs to another paper and was not modified",
+                })
+                raise typer.Exit(1)
+            continue
+        _echo({
+            "status": "existing",
+            "dry_run": dry_run,
+            "review_id": existing.review_id,
+            "path": candidate.relative_to(root).as_posix(),
+        })
+        return
+
+    now = iso_beijing()
+    review = PaperReview(
+        review_id="review-" + uuid.uuid4().hex,
+        paper_uid=paper_uid, rating=rating, created_at=now, updated_at=now,
+    )
     if not dry_run:
         atomic_write(path, render_review(review))
-    _echo({"dry_run": dry_run, "review_id": review.review_id,
-           "path": path.relative_to(root).as_posix()})
+    _echo({
+        "status": "would-create" if dry_run else "created",
+        "dry_run": dry_run,
+        "review_id": review.review_id,
+        "path": path.relative_to(root).as_posix(),
+    })
 
 
 @review_app.command("validate")

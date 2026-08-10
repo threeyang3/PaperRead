@@ -90,6 +90,15 @@ class Database:
         )
         self.conn.commit()
 
+    def latest_import_job(self, paper_uid: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT job_id,paper_uid,status,stage,error,updated_at "
+            "FROM import_jobs WHERE paper_uid=? "
+            "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+            (paper_uid,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def apply_migration(self, version: int) -> None:
         self.conn.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)", (version, iso_beijing()))
         self.conn.commit()

@@ -16,6 +16,7 @@ def analyze_uid(
         cancellation_token.raise_if_cancelled()
     path = cfg.root / ".paperflow/data/papers" / f"{uid.replace(':', '_')}.json"
     record = json.loads(path.read_text(encoding="utf-8"))
+    retry_context = record.get("system_retry_context") or {}
     metadata = PaperMetadata.model_validate(
         {
             name: record[name]
@@ -34,4 +35,6 @@ def analyze_uid(
         provider=provider,
         metadata_override=metadata,
         reuse_local_assets=True,
+        topic=str(retry_context.get("topic_hint") or ""),
+        import_method=str(retry_context.get("import_method") or "manual"),
     )

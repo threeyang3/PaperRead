@@ -6,10 +6,34 @@ maintainers, see [PaperFlow 用户与维护者指南](维护者与用户指南.m
 
 ```powershell
 uv tool install paperflow
-paperflow init --vault "D:/Obsidian/MyResearch"
-paperflow doctor
-paperflow paper add "https://arxiv.org/abs/2607.12345"
+$vault = "D:/Obsidian/MyResearch"
+paperflow init --vault $vault --non-interactive
+paperflow doctor --vault $vault
+paperflow paper add "https://arxiv.org/abs/2504.16054" --vault $vault
+paperflow paper inspect "arxiv:2504.16054" --vault $vault
 ```
+
+The same commands work when the shell's current directory is not inside the
+Vault because `--vault` is explicit. `paper inspect` returns JSON for Raw, PDF
+and SHA-256, extracted text, AI record/Markdown, Paper Hub, User Note, Review,
+Annotation count, manual-review reasons, and the latest import job.
+
+After a normal import, Obsidian contains the Paper Hub, versioned PDF, AI
+Analysis (unless `--no-ai` was selected), and an independent User Note. To
+import without calling an AI provider:
+
+```powershell
+paperflow paper add "https://arxiv.org/abs/2504.16054" --no-ai --vault $vault
+```
+
+If AI fails after the PDF and text stages, inspect reports a retryable failure.
+Fix the provider and run `paperflow paper analyze <paper_uid> --vault $vault`;
+the existing PDF and extracted text are reused.
+
+Form Flow saves an explicitly submitted note to the paper's independent User
+Note before duplicate-system-work detection or AI execution. Retrying the same
+`request_id` does not append it again; a new request for the same paper may
+append another note without replacing existing prose.
 
 Choose the primary reading front end after initialization:
 

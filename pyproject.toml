@@ -48,6 +48,7 @@ exclude = ["**/__pycache__/**", "**/*.pyc"]
 "templates" = "paperflow/resources/templates"
 "integrations" = "paperflow/resources/integrations"
 "prompts" = "paperflow/resources/prompts"
+"taxonomy" = "paperflow/resources/taxonomy"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -56,6 +57,7 @@ include = [
   "/templates",
   "/integrations",
   "/prompts",
+  "/taxonomy",
   "/migrations",
   "/examples",
   "/scripts",

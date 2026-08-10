@@ -12,6 +12,8 @@ import urllib.request
 from pathlib import Path
 import typer
 from ruamel.yaml import YAML
+
+from paperflow.application import PaperApplicationService
 from paperflow.config import ensure_layout, load_config
 from paperflow.database import Database
 from paperflow.doctor import run_doctor
@@ -182,8 +184,8 @@ def application_callback(
         typer.echo(APPLICATION_VERSION)
         raise typer.Exit()
 
-def cfg():
-    value = load_config(); ensure_layout(value); return value
+def cfg(vault: Path | None = None):
+    value = load_config(vault); ensure_layout(value); return value
 
 
 def _root(vault: Path | None) -> Path:
@@ -2030,29 +2032,93 @@ def paper_view_model(paper_uid: str, vault: Path | None = typer.Option(None, "--
     typer.echo(json.dumps(build_paper_view_model(root, settings, record), ensure_ascii=False, indent=2, default=str))
 
 
+def _paper_add_impl(
+    value: str,
+    priority: int,
+    topic: str,
+    ai: bool,
+    force_refresh: bool,
+    provider: str | None,
+    vault: Path | None,
+) -> dict[str, Any]:
+    return PaperApplicationService(vault).add_paper(
+        value,
+        priority=priority,
+        topic=topic,
+        run_ai=ai,
+        force_refresh=force_refresh,
+        provider=provider,
+    )
+
+
+def _paper_analyze_impl(
+    paper_uid: str,
+    provider: str | None,
+    vault: Path | None,
+) -> dict[str, Any]:
+    return PaperApplicationService(vault).analyze_paper(
+        paper_uid,
+        provider=provider,
+    )
+
+
+def _paper_refresh_impl(paper_uid: str, vault: Path | None) -> dict[str, Any]:
+    return PaperApplicationService(vault).refresh_paper(paper_uid)
+
+
+def _paper_render_impl(paper_uid: str, vault: Path | None) -> Path:
+    return PaperApplicationService(vault).render_paper(paper_uid)
+
+
+def _paper_inspect_impl(paper_uid: str, vault: Path | None) -> dict[str, Any]:
+    return PaperApplicationService(vault).inspect_paper(paper_uid)
+
+
 @paper_app.command("add")
 def paper_add(
     value: str,
     priority: int = typer.Option(3, min=1, max=5),
     topic: str = typer.Option(""),
     ai: bool = typer.Option(True, "--ai/--no-ai"),
+    force_refresh: bool = typer.Option(False, "--force-refresh"),
+    provider: str | None = typer.Option(None, "--provider"),
+    vault: Path | None = typer.Option(None, "--vault"),
 ):
-    add_paper(value, priority, topic, ai, False, None)
+    _echo_json(_paper_add_impl(value, priority, topic, ai, force_refresh, provider, vault))
 
 
 @paper_app.command("analyze")
-def paper_analyze(paper_uid: str, provider: str | None = typer.Option(None)):
-    analyze(paper_uid, provider)
+def paper_analyze(
+    paper_uid: str,
+    provider: str | None = typer.Option(None, "--provider"),
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    _echo_json(_paper_analyze_impl(paper_uid, provider, vault))
 
 
 @paper_app.command("render")
-def paper_render(paper_uid: str):
-    render(paper_uid)
+def paper_render(
+    paper_uid: str,
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    typer.echo(str(_paper_render_impl(paper_uid, vault)))
 
 
 @paper_app.command("refresh")
-def paper_refresh(paper_uid: str):
-    refresh(paper_uid)
+def paper_refresh(
+    paper_uid: str,
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    _echo_json(_paper_refresh_impl(paper_uid, vault))
+
+
+@paper_app.command("inspect")
+def paper_inspect(
+    paper_uid: str,
+    vault: Path | None = typer.Option(None, "--vault"),
+):
+    """Report the current local state of every core paper artifact."""
+    _echo_json(_paper_inspect_impl(paper_uid, vault))
 
 
 @paper_app.command("validate")
@@ -2408,12 +2474,10 @@ def doctor(
     for item in checks: typer.echo(f"{'OK' if item['ok'] else 'FAIL':4} {item['name']}: {item['detail']}")
     if not all(i["ok"] for i in checks): raise typer.Exit(1)
 
-@app.command("add")
-def add_paper(value: str, priority: int = typer.Option(3, min=1, max=5), topic: str = typer.Option(""), ai: bool = typer.Option(True, "--ai/--no-ai"), force_refresh: bool = typer.Option(False, "--force-refresh"), provider: str | None = typer.Option(None)):
+@app.command("add", hidden=True)
+def add_paper(value: str, priority: int = typer.Option(3, min=1, max=5), topic: str = typer.Option(""), ai: bool = typer.Option(True, "--ai/--no-ai"), force_refresh: bool = typer.Option(False, "--force-refresh"), provider: str | None = typer.Option(None), vault: Path | None = typer.Option(None, "--vault")):
     """导入 arXiv ID/URL、DOI、PDF URL 或论文网页。"""
-    c = cfg()
-    with FileLock(c.root / ".paperflow/runtime/pipeline.lock"):
-        typer.echo(json.dumps(import_paper(c, value, priority=priority, topic=topic, run_ai=ai, force=force_refresh, provider=provider), ensure_ascii=False, default=str))
+    _echo_json(_paper_add_impl(value, priority, topic, ai, force_refresh, provider, vault))
 
 @app.command()
 def daily(discovery: bool = typer.Option(True, "--discover/--offline", help="使用 --offline 仅处理 Inbox 并生成简报，不访问 arXiv 或 AI。")):
@@ -2440,20 +2504,20 @@ def inbox(request: str | None = typer.Option(None, help="仅处理固定 Inbox �
     c = cfg()
     with FileLock(c.root / ".paperflow/runtime/pipeline.lock"): typer.echo(json.dumps(process_inbox(c, request), ensure_ascii=False))
 
-@app.command()
-def analyze(paper_uid: str, provider: str | None = typer.Option(None)):
+@app.command(hidden=True)
+def analyze(paper_uid: str, provider: str | None = typer.Option(None), vault: Path | None = typer.Option(None, "--vault")):
     """重新分析已导入论文并保留全部用户内容。"""
-    typer.echo(json.dumps(analyze_uid(cfg(), paper_uid, provider), ensure_ascii=False, default=str))
+    _echo_json(_paper_analyze_impl(paper_uid, provider, vault))
 
-@app.command()
-def refresh(paper_uid: str):
+@app.command(hidden=True)
+def refresh(paper_uid: str, vault: Path | None = typer.Option(None, "--vault")):
     """获取论文当前版本并强制刷新分析与渲染。"""
-    c = cfg(); path = c.root / ".paperflow/data/papers" / f"{paper_uid.replace(':','_')}.json"; record = json.loads(path.read_text(encoding="utf-8")); typer.echo(json.dumps(import_paper(c, record.get("paper_abs_url") or record["paper_pdf_url"], force=True), ensure_ascii=False, default=str))
+    _echo_json(_paper_refresh_impl(paper_uid, vault))
 
-@app.command()
-def render(paper_uid: str):
+@app.command(hidden=True)
+def render(paper_uid: str, vault: Path | None = typer.Option(None, "--vault")):
     """从已验证 JSON 重建 Markdown，保留用户字段与用户笔记。"""
-    typer.echo(str(render_uid(cfg(), paper_uid)))
+    typer.echo(str(_paper_render_impl(paper_uid, vault)))
 
 @app.command()
 def validate():

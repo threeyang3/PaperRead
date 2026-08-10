@@ -13,6 +13,11 @@ PaperFlow 现在把一篇论文拆成可独立维护的工作区对象：
 - `60 User Notes/<年份>/<论文 ID>.notes.md`：用户自己的观察、疑问、思路和行动。
 - `60 Annotations`、`60 Reviews`、`70 Community`：标注、复盘和社区贡献。
 
+每次成功导入都会幂等地确保 `60 User Notes` 中存在独立 User Note，即使关闭
+AI 或 AI 尚未成功也一样。Form Flow 的“我的笔记”直接写入这里，不再先写进
+Paper Hub 再用字符串替换迁移。重复导入、分析、刷新和渲染都只能链接或合并
+这些 USER_OWNED artifact，不得重建或覆盖它们。
+
 新导入论文使用短标题与 arXiv ID 组合的可读文件名，标题变化时沿用记录中的既有路径；历史 ID-only 文件不删除，只作为兼容重定向。显示标题使用 `paper_display_title`（可由用户 `user_display_title` 覆盖），`paper_short_title` 也用于路径模板；原始标题和 arXiv ID 会保留在 aliases。
 
 ## 用户笔记迁移

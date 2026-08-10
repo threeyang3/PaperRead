@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Unified the supported paper CLI under `paperflow paper` with explicit
+  `--vault` support and added a structured `paper inspect` status report.
+- Fixed the normal import crash when no unmatched topic exists, ensured
+  explicit topic hints are always evaluated, and preserved business manual-
+  review state across rendering.
+- Made Review creation idempotent and moved Form Flow notes into independent
+  User Note artifacts before deduplication or AI execution. Request IDs make
+  retries idempotent while new requests append without replacing existing
+  prose; reanalysis, refresh, render, and duplicate import are covered against
+  User Note/Review/Annotation loss.
+- Added a deterministic offline Golden Workflow CI gate, retryable AI-failure
+  checkpoints, local PDF/text reuse, a shared `PaperApplicationService`, and a
+  default Taxonomy installed into fresh Workspaces.
+- Preserved explicit Form Flow priority, favorite, reading-queue state, tags,
+  topic hint, and later user-sidecar edits across AI failure and `paper analyze`
+  retry without re-downloading or re-extracting the paper.
+
 ## 1.5.1 - 2026-08-02
 
 - Closed SQLite connections explicitly in Doctor, acceptance and migration
