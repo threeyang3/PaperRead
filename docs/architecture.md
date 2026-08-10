@@ -74,11 +74,21 @@ committed to a Workspace.
 
 ## Application service and retry boundary
 
-The formal `paperflow paper add|analyze|refresh|render|inspect` commands enter
-through `PaperApplicationService`. It resolves the explicit Vault, takes the
-Workspace lock, and delegates to the existing import/render pipeline; hidden
-top-level compatibility aliases call the same service and do not maintain a
-second workflow.
+The formal `paperflow paper add|analyze|refresh|render|inspect` commands and
+Form Flow requests enter through `PaperApplicationService`. `AddPaperRequest`
+separates adapter input from persisted schemas, while `OperationResult` gives
+CLI and request adapters the same status, stage, paper identity, artifacts,
+warnings, and retryability vocabulary. The service resolves the explicit
+Vault, owns the Workspace lock, and delegates to the existing import/render
+pipeline; hidden top-level compatibility aliases call the same service and do
+not maintain a second workflow.
+
+When an existing paper receives explicit Form Flow user intent, immutable
+system work remains deduplicated. The service merges the intent with current
+user state and immediately refreshes the User sidecar, Paper Hub frontmatter,
+compatibility JSON, and SQLite projection. It does not download the PDF,
+extract text, or invoke AI again, and it does not rewrite User Note, Review, or
+Annotation artifacts.
 
 PDF download and text extraction complete before AI analysis. If AI fails,
 PaperFlow records a retryable aggregate checkpoint containing the canonical

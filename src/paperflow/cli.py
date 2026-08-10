@@ -2502,7 +2502,9 @@ def discover():
 def inbox(request: str | None = typer.Option(None, help="仅处理固定 Inbox 中的 request ID 或文件名。")):
     """处理 Form Flow 创建的安全请求队列。"""
     c = cfg()
-    with FileLock(c.root / ".paperflow/runtime/pipeline.lock"): typer.echo(json.dumps(process_inbox(c, request), ensure_ascii=False))
+    # Form Flow now enters through PaperApplicationService, which owns the
+    # pipeline lock. Avoid recursively acquiring the same Vault lock here.
+    typer.echo(json.dumps(process_inbox(c, request), ensure_ascii=False))
 
 @app.command(hidden=True)
 def analyze(paper_uid: str, provider: str | None = typer.Option(None), vault: Path | None = typer.Option(None, "--vault")):
