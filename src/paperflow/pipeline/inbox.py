@@ -9,7 +9,7 @@ from paperflow.utils import iso_utc
 from paperflow.logging_config import configure_logging
 from paperflow.i18n import normalize_locale
 from paperflow.utils import atomic_json
-from .import_paper import import_paper
+from .import_paper import ImportUserIntent, import_paper
 from paperflow.sync_safety import assert_no_sync_conflicts
 
 
@@ -63,6 +63,13 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
                     user_note=note,
                     user_note_source_id=item.request_id,
                     import_method="form-flow",
+                    user_intent=ImportUserIntent(
+                        priority=item.priority,
+                        favorite=item.favorite,
+                        queued=item.add_to_reading_queue,
+                        user_tags=tuple(item.user_tags),
+                        topic_hint=item.topic_hint,
+                    ),
                 )
                 frontmatter["status"] = "completed"
                 frontmatter["processed_at"] = iso_utc()

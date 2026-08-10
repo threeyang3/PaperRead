@@ -71,3 +71,26 @@ def save_user_record(
     )
     dump_yaml(path, sidecar.model_dump(mode="json"))
     return path
+
+
+def merge_and_save_user_record(
+    root: Path,
+    record: dict[str, Any],
+    updates: dict[str, Any],
+) -> Path:
+    """Persist explicit user input without resetting existing user fields."""
+    merged = merge_user_data(root, record)
+    incoming_tags = list(updates.get("user_added_tags") or [])
+    existing_tags = list(merged.get("user_added_tags") or [])
+    merged.update(
+        {
+            key: value
+            for key, value in updates.items()
+            if key.startswith("user_") and key != "user_added_tags"
+        }
+    )
+    if "user_added_tags" in updates:
+        merged["user_added_tags"] = list(
+            dict.fromkeys([*existing_tags, *incoming_tags])
+        )
+    return save_user_record(root, record, merged)

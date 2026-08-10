@@ -1,8 +1,8 @@
 from __future__ import annotations
 import json
-import re
 import shutil
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from paperflow.ai.factory import make_adapter
@@ -10,6 +10,7 @@ from paperflow.ai.providers import make_provider
 from paperflow.config import Config, ensure_layout
 from paperflow.data.store import load_reusable_analysis, persist_layer_records
 from paperflow.data.records import AnalysisIdentity
+from paperflow.data.user_store import merge_and_save_user_record, merge_user_data
 from paperflow.paths.templates import safe_component
 from paperflow.paths.service import preview_record_paths
 from paperflow.database import Database
@@ -30,6 +31,32 @@ from .download import download_pdf
 from .extract import extract_pdf
 from .resources import find_resource_links
 from .visuals import refresh_record_visuals
+
+
+@dataclass(frozen=True)
+class ImportUserIntent:
+    """User-owned values explicitly submitted by an import surface."""
+
+    priority: int
+    favorite: bool
+    queued: bool
+    user_tags: tuple[str, ...]
+    topic_hint: str = ""
+    source: str = "form-flow"
+
+    def user_values(self) -> dict[str, Any]:
+        return {
+            "user_priority": self.priority,
+            "user_favorite": self.favorite,
+            "user_reading_status": "queued" if self.queued else "inbox",
+            "user_added_tags": list(self.user_tags),
+        }
+
+    def retry_context(self) -> dict[str, str]:
+        return {
+            "import_method": self.source,
+            "topic_hint": self.topic_hint,
+        }
 
 
 def pending_analysis() -> dict[str, Any]:
@@ -84,7 +111,7 @@ def _year_paths(cfg: Config, metadata: PaperMetadata) -> tuple[Path, Path, Path,
     )
 
 
-def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "", run_ai: bool = True, force: bool = False, favorite: bool = False, queued: bool = False, user_tags: list[str] | None = None, user_note: str = "", user_note_source_id: str | None = None, import_method: str = "manual", provider: str | None = None, metadata_override: PaperMetadata | None = None, reuse_local_assets: bool = False) -> dict[str, Any]:
+def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "", run_ai: bool = True, force: bool = False, favorite: bool = False, queued: bool = False, user_tags: list[str] | None = None, user_note: str = "", user_note_source_id: str | None = None, import_method: str = "manual", provider: str | None = None, metadata_override: PaperMetadata | None = None, reuse_local_assets: bool = False, user_intent: ImportUserIntent | None = None) -> dict[str, Any]:
     ensure_layout(cfg)
     db = Database(cfg.root / ".paperflow/state/paperflow.db")
     logger = configure_logging(cfg.root)
@@ -117,6 +144,19 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 note_path = cfg.root / existing_note
             if existing_pdf:
                 pdf_path = cfg.root / existing_pdf
+        intent_record = metadata.model_dump(mode="json") | existing_record
+        intent_record["paper_uid"] = metadata.paper_uid
+        intent_record["paper_short_title"] = str(
+            intent_record.get("paper_short_title")
+            or short_title(metadata.paper_title)
+        )
+        intent_record["note_path"] = note_path.relative_to(cfg.root).as_posix()
+        if user_intent is not None:
+            merge_and_save_user_record(
+                cfg.root,
+                intent_record,
+                user_intent.user_values(),
+            )
         # Explicit user-authored input must be persisted before system-work
         # deduplication or AI execution. A duplicate paper import may skip
         # system processing but must never discard a new Form Flow note.
@@ -126,17 +166,10 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                     "Independent User Notes require a PaperFlow Workspace; "
                     "migrate this legacy Vault before importing Form Flow notes."
                 )
-            user_note_record = metadata.model_dump(mode="json") | existing_record
-            user_note_record["paper_uid"] = metadata.paper_uid
-            user_note_record["paper_short_title"] = str(
-                user_note_record.get("paper_short_title")
-                or short_title(metadata.paper_title)
-            )
-            user_note_record["note_path"] = note_path.relative_to(cfg.root).as_posix()
             ingest_user_note(
                 cfg.root,
                 cfg.workspace,
-                user_note_record,
+                intent_record,
                 content=user_note,
                 source_id=user_note_source_id,
                 locale=cfg.ui_locale.locale,
@@ -220,6 +253,11 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                 "system_requires_manual_review": not bool(metadata.paper_pdf_url),
                 "system_status": "failed",
                 "system_error": "",
+                "system_retry_context": (
+                    user_intent.retry_context()
+                    if user_intent is not None
+                    else existing_record.get("system_retry_context")
+                ),
                 "ai_analysis_provider": used_provider if run_ai else "",
                 "ai_analysis_model": "",
                 "ai_analysis_profile": used_profile if run_ai else "",
@@ -396,6 +434,11 @@ def import_paper(cfg: Config, value: str, *, priority: int = 3, topic: str = "",
                     record[key] = value
             if existing_frontmatter.get("system_imported_at"):
                 record["system_imported_at"] = existing_frontmatter["system_imported_at"]
+        # The aggregate compatibility record is persisted after rendering, so
+        # merge the durable user sidecar into the caller-owned record here.
+        # render_paper also merges it for the Markdown projection, but its
+        # local mapping must not be relied on to update this JSON projection.
+        record.update(merge_user_data(cfg.root, record))
         record["note_path"] = note_path.relative_to(cfg.root).as_posix()
         record["json_path"] = json_path.relative_to(cfg.root).as_posix()
         if cfg.workspace is not None:

@@ -3,11 +3,9 @@
 ## 2026-08-10 core Golden Workflow
 
 This verification targets the local working tree on branch
-`fix/core-golden-workflow`, based on commit
-`effa8f4e7547c29cf0c624a241f0721b7d2e957d`. It does not claim a published
-release and does not modify a real user Vault. Exact final suite counts are
-recorded after the full gate run; the dedicated Golden Workflow currently
-passes 8/8 scenarios.
+`fix/core-golden-workflow`. It does not claim a published release and does not
+modify a real user Vault. Exact final suite counts are recorded after the full
+gate run; the dedicated Golden Workflow currently passes 9/9 scenarios.
 
 | Core acceptance item | Verdict | Automated evidence |
 | --- | --- | --- |
@@ -30,6 +28,7 @@ passes 8/8 scenarios.
 | Render preserves business Manual Review state | PASS | Unknown-topic scenario renders again and retains the state. |
 | AI failure leaves PDF/text and retryable checkpoint | PASS | `test_ai_failure_is_inspectable_and_retry_reuses_local_artifacts`. |
 | Form Flow note exists before AI-failure retry | PASS | `test_form_flow_note_survives_ai_failure_and_analyze_retry`. |
+| Form Flow import intent survives AI-failure retry | PASS | `test_form_flow_retry_preserves_import_intent` asserts priority 5, favorite, queued state, both tags, known topic hint, user note, a post-failure sidecar edit, local PDF/text reuse, and completed AI/job states. |
 | Failed AI render creates no AI Markdown | PASS | `test_render_failed_analysis_does_not_create_ai_markdown`. |
 | Analyze retry reuses local PDF/text | PASS | Failure/retry test asserts one download and one extraction total. |
 | `paper inspect` reports all core artifacts and latest job | PASS | No-AI and failure/retry scenarios inspect structured output. |
@@ -37,8 +36,9 @@ passes 8/8 scenarios.
 
 Final gate results on Windows, uv 0.12.0 and Python 3.12.13:
 
-- `uv run pytest`: **354 passed, 1 skipped**;
-- Golden Workflow: **8 passed**;
+- `uv run --extra quality pytest --cov=paperflow`: **355 passed, 1 skipped**,
+  **73.99%** total coverage (70% gate and critical coverage gate passed);
+- Golden Workflow: **9 passed**;
 - Ruff check/format and mypy (`134` source files): **PASS**;
 - scheduler, Automation lifecycle, Zotero Core client, Zotero public API, and
   Zotero UI Node integration suites: **PASS**;

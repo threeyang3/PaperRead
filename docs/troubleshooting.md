@@ -24,7 +24,9 @@ paperflow paper inspect <paper_uid> --vault "D:\Notes\Research"
 
 如果失败来自 Form Flow，请保留 Failed Request 作为流程记录。请求中的用户备注
 已经在 AI 调用前进入 `60 User Notes`；把同一个 `request_id` 重新放回 Inbox
-处理不会重复追加。新的 Request ID 仍可向同一篇论文追加新的用户备注。
+处理不会重复追加。显式提交的优先级、收藏、阅读队列、用户标签和 topic hint 也会
+在失败前持久化；`paper analyze` 会恢复这些意图，并保留失败后用户在 sidecar 中的
+继续编辑。新的 Request ID 仍可向同一篇论文追加新的用户备注。
 
 If configuration is invalid, the error identifies the field, current value,
 and file to edit. If data is newer than the installed reader, upgrade the

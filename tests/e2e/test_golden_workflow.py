@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from paperflow.cli import app
 from paperflow.config import load_config
+from paperflow.data.user_store import load_user_record, merge_and_save_user_record
 from paperflow.models import PaperMetadata
 from paperflow.obsidian.frontmatter import read_note, write_note
 from paperflow.pipeline.inbox import process_inbox
@@ -39,6 +40,11 @@ def _write_form_flow_request(
     source: str,
     note: str,
     run_ai: bool = True,
+    topic_hint: str = "",
+    priority: int = 3,
+    queued: bool = True,
+    favorite: bool = False,
+    user_tags: list[str] | None = None,
 ) -> Path:
     request = load_config(vault).path("request_folder") / f"{request_id}.md"
     write_note(
@@ -48,11 +54,11 @@ def _write_form_flow_request(
             "schema_version": 1,
             "request_id": request_id,
             "paper_input": source,
-            "topic_hint": "",
-            "priority": 3,
-            "add_to_reading_queue": True,
-            "favorite": False,
-            "user_tags": [],
+            "topic_hint": topic_hint,
+            "priority": priority,
+            "add_to_reading_queue": queued,
+            "favorite": favorite,
+            "user_tags": user_tags or [],
             "run_ai": run_ai,
             "ui_locale": "en",
             "status": "pending",
@@ -588,3 +594,78 @@ def test_render_failed_analysis_does_not_create_ai_markdown(
     assert after["ai"]["status"] == "failed"
     assert after["ai"]["markdown_exists"] is False
     assert hashlib.sha256(user_note.read_bytes()).hexdigest() == user_note_hash
+
+
+def test_form_flow_retry_preserves_import_intent(
+    golden: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = golden["vault"]
+    source = "https://arxiv.org/abs/2601.00009"
+    uid = "arxiv:2601.00009"
+    request = _write_form_flow_request(
+        vault,
+        request_id="retry-preserves-intent",
+        source=source,
+        note="USER NOTE SURVIVES INTENT RETRY",
+        topic_hint="Tactile Sensing",
+        priority=5,
+        queued=True,
+        favorite=True,
+        user_tags=["golden-tag", "retry-intent"],
+    )
+    monkeypatch.setattr(
+        golden["importer"], "make_provider", lambda *_args: FailingProvider()
+    )
+    assert process_inbox(load_config(vault), request.name)["failed"] == 1
+
+    record_path = vault / ".paperflow/data/papers/arxiv_2601.00009.json"
+    failed_record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert failed_record["system_retry_context"] == {
+        "import_method": "form-flow",
+        "topic_hint": "Tactile Sensing",
+    }
+    sidecar = load_user_record(vault, failed_record)
+    assert sidecar is not None
+    assert sidecar.user["user_priority"] == 5
+    assert sidecar.user["user_favorite"] is True
+    assert sidecar.user["user_reading_status"] == "queued"
+    assert sidecar.user["user_added_tags"] == ["golden-tag", "retry-intent"]
+
+    merge_and_save_user_record(vault, failed_record, {"user_rating": 4})
+    pdf_path = vault / failed_record["paper_pdf_path"]
+    text_path = vault / ".paperflow/cache/arxiv_2601.00009.txt"
+    pdf_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    text_hash = hashlib.sha256(text_path.read_bytes()).hexdigest()
+    counts_before_retry = dict(golden["counters"])
+
+    monkeypatch.setattr(golden["importer"], "make_provider", golden["make_provider"])
+    retried = golden["runner"].invoke(
+        app,
+        ["paper", "analyze", uid, "--vault", str(vault)],
+    )
+    assert retried.exit_code == 0, retried.stdout or repr(retried.exception)
+    assert golden["counters"] == counts_before_retry
+    assert hashlib.sha256(pdf_path.read_bytes()).hexdigest() == pdf_hash
+    assert hashlib.sha256(text_path.read_bytes()).hexdigest() == text_hash
+
+    final_record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert final_record["user_priority"] == 5
+    assert final_record["user_favorite"] is True
+    assert final_record["user_reading_status"] == "queued"
+    assert final_record["user_added_tags"] == ["golden-tag", "retry-intent"]
+    assert final_record["user_rating"] == 4
+    assert "Tactile Sensing" in final_record["ai_topics"]
+    assert final_record["system_import_method"] == "form-flow"
+    assert "system_retry_context" not in final_record
+
+    inspected = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert inspected["ai"]["status"] == "complete"
+    assert inspected["job"]["status"] == "completed"
+    user_note = vault / inspected["user_note"]["path"]
+    assert "USER NOTE SURVIVES INTENT RETRY" in user_note.read_text(encoding="utf-8")

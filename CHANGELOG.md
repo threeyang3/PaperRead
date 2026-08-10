@@ -15,6 +15,9 @@
 - Added a deterministic offline Golden Workflow CI gate, retryable AI-failure
   checkpoints, local PDF/text reuse, a shared `PaperApplicationService`, and a
   default Taxonomy installed into fresh Workspaces.
+- Preserved explicit Form Flow priority, favorite, reading-queue state, tags,
+  topic hint, and later user-sidecar edits across AI failure and `paper analyze`
+  retry without re-downloading or re-extracting the paper.
 
 ## 1.5.1 - 2026-08-02
 
