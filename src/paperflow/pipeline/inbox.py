@@ -1,6 +1,7 @@
 from __future__ import annotations
 import shutil
 from pathlib import Path
+from paperflow.application import AddPaperRequest, PaperApplicationService
 from paperflow.config import Config
 from paperflow.database import Database
 from paperflow.obsidian.form_flow import parse_request, request_path_is_safe
@@ -9,7 +10,6 @@ from paperflow.utils import iso_utc
 from paperflow.logging_config import configure_logging
 from paperflow.i18n import normalize_locale
 from paperflow.utils import atomic_json
-from .import_paper import ImportUserIntent, import_paper
 from paperflow.sync_safety import assert_no_sync_conflicts
 
 
@@ -28,6 +28,7 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
     assert_no_sync_conflicts(cfg.root)
     stats = {"processed": 0, "failed": 0, "skipped": 0}
     logger = configure_logging(cfg.root, "inbox")
+    service = PaperApplicationService(config=cfg)
     db = Database(cfg.root / ".paperflow/state/paperflow.db")
     try:
         for path in _resolve(cfg, request):
@@ -51,37 +52,32 @@ def process_inbox(cfg: Config, request: str | None = None) -> dict[str, int]:
                 frontmatter["status"] = "processing"
                 write_note(path, frontmatter, body)
                 db.record_request(item.request_id, str(path), "processing")
-                result = import_paper(
-                    cfg,
-                    item.paper_input,
-                    priority=item.priority,
-                    topic=item.topic_hint,
-                    run_ai=item.run_ai,
-                    favorite=item.favorite,
-                    queued=item.add_to_reading_queue,
-                    user_tags=item.user_tags,
-                    user_note=note,
-                    user_note_source_id=item.request_id,
-                    import_method="form-flow",
-                    user_intent=ImportUserIntent(
+                result = service.add(
+                    AddPaperRequest(
+                        source=item.paper_input,
+                        run_ai=item.run_ai,
+                        topic_hint=item.topic_hint,
                         priority=item.priority,
                         favorite=item.favorite,
                         queued=item.add_to_reading_queue,
                         user_tags=tuple(item.user_tags),
-                        topic_hint=item.topic_hint,
-                    ),
+                        user_note=note,
+                        source_request_id=item.request_id,
+                        import_method="form-flow",
+                    )
                 )
                 frontmatter["status"] = "completed"
                 frontmatter["processed_at"] = iso_utc()
-                frontmatter["result_paper_uid"] = result["paper_uid"]
-                frontmatter["result_note"] = f"[[{result['note_path'].removesuffix('.md')}]]"
+                frontmatter["result_paper_uid"] = result.paper_uid
+                note_path = str(result.artifacts["note_path"])
+                frontmatter["result_note"] = f"[[{note_path.removesuffix('.md')}]]"
                 frontmatter["error"] = ""
                 destination = cfg.path("processed_request_folder") / path.name
                 write_note(path, frontmatter, body)
                 shutil.move(path, destination)
-                db.record_request(item.request_id, str(destination), "completed", result["paper_uid"])
+                db.record_request(item.request_id, str(destination), "completed", result.paper_uid)
                 stats["processed"] += 1
-                logger.info("Manual request completed", extra={"request_id": item.request_id, "paper_uid": result["paper_uid"], "stage": "inbox"})
+                logger.info("Manual request completed", extra={"request_id": item.request_id, "paper_uid": result.paper_uid, "stage": result.stage or "inbox", "operation_status": result.status})
             except Exception as exc:
                 frontmatter, body = read_note(path)
                 frontmatter["status"] = "failed"

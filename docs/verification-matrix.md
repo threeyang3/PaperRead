@@ -1,5 +1,33 @@
 # PaperFlow verification matrix
 
+## 2026-08-11 application service convergence
+
+PR #19 merged into `main` as `0b6573f490e8f3f2c23620b9007e443721ccac42`.
+The post-merge Golden, full Python, static-quality, and isolated CLI smoke gates
+passed before development continued on `refactor/core-entrypoint-convergence`.
+
+| Convergence acceptance item | Verdict | Automated evidence |
+| --- | --- | --- |
+| CLI add/analyze/refresh/render use the application service | PASS | Existing CLI wrappers and Golden Workflow exercise the shared service. |
+| Form Flow add uses the application service | PASS | `process_inbox` constructs `AddPaperRequest`; direct pipeline ownership was removed. |
+| Application input and result contracts are stable | PASS | `test_service_add_uses_explicit_application_request` and service contract tests cover `AddPaperRequest` and `OperationResult`. |
+| Duplicate explicit intent updates the User sidecar | PASS | `test_duplicate_form_flow_updates_user_projection_without_system_reprocessing`. |
+| Duplicate explicit intent refreshes Paper Hub and compatibility JSON | PASS | The same Golden scenario checks all three user-state projections. |
+| Duplicate user update skips PDF, extraction, and AI work | PASS | Download, extraction, and provider counters remain unchanged. |
+| Duplicate user update preserves User Note, Review, and Annotation | PASS | The Golden scenario compares all three artifact hashes and inspects Review/Annotation state. |
+| AI failure/retry and import-intent restoration do not regress | PASS | All prior Golden scenarios remain green. |
+
+Final local gate results on Windows and Python 3.12.13:
+
+- full Python suite: **360 passed, 1 skipped**;
+- Golden Workflow: **10 passed**;
+- total coverage: **74.18%**; 70% and critical coverage gates: **PASS**;
+- Ruff, targeted new-file formatting, repository format check, and mypy:
+  **PASS**;
+- five Node integration suites: **PASS**;
+- version consistency (`1.5.1`), release build, and 17 packaging tests:
+  **PASS**.
+
 ## 2026-08-10 core Golden Workflow
 
 This verification targets the local working tree on branch
