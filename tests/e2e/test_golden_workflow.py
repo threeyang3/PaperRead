@@ -605,9 +605,9 @@ def test_form_flow_retry_preserves_import_intent(
     uid = "arxiv:2601.00009"
     request = _write_form_flow_request(
         vault,
-        request_id="retry-preserves-intent",
+        request_id="preserve-import-intent",
         source=source,
-        note="USER NOTE SURVIVES INTENT RETRY",
+        note="PRESERVE COMPLETE IMPORT INTENT",
         topic_hint="Tactile Sensing",
         priority=5,
         queued=True,
@@ -632,7 +632,7 @@ def test_form_flow_retry_preserves_import_intent(
     assert sidecar.user["user_reading_status"] == "queued"
     assert sidecar.user["user_added_tags"] == ["golden-tag", "retry-intent"]
 
-    merge_and_save_user_record(vault, failed_record, {"user_rating": 4})
+    merge_and_save_user_record(vault, failed_record, {"user_rating": 5})
     pdf_path = vault / failed_record["paper_pdf_path"]
     text_path = vault / ".paperflow/cache/arxiv_2601.00009.txt"
     pdf_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
@@ -654,7 +654,7 @@ def test_form_flow_retry_preserves_import_intent(
     assert final_record["user_favorite"] is True
     assert final_record["user_reading_status"] == "queued"
     assert final_record["user_added_tags"] == ["golden-tag", "retry-intent"]
-    assert final_record["user_rating"] == 4
+    assert final_record["user_rating"] == 5
     assert "Tactile Sensing" in final_record["ai_topics"]
     assert final_record["system_import_method"] == "form-flow"
     assert "system_retry_context" not in final_record
@@ -668,4 +668,4 @@ def test_form_flow_retry_preserves_import_intent(
     assert inspected["ai"]["status"] == "complete"
     assert inspected["job"]["status"] == "completed"
     user_note = vault / inspected["user_note"]["path"]
-    assert "USER NOTE SURVIVES INTENT RETRY" in user_note.read_text(encoding="utf-8")
+    assert "PRESERVE COMPLETE IMPORT INTENT" in user_note.read_text(encoding="utf-8")
