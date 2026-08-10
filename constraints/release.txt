@@ -9,7 +9,7 @@ packaging==25.0
 pydantic==2.12.4
 pymupdf==1.28.0
 ruamel.yaml==0.18.16
-typer==0.20.0
+typer==0.27.0
 tzdata==2025.3
 zstandard==0.24.0
 
