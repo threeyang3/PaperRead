@@ -18,6 +18,10 @@
 - Preserved explicit Form Flow priority, favorite, reading-queue state, tags,
   topic hint, and later user-sidecar edits across AI failure and `paper analyze`
   retry without re-downloading or re-extracting the paper.
+- Routed Form Flow imports through the same lightweight application service as
+  the CLI, added shared request/result contracts, and refreshed duplicate user
+  state immediately in the sidecar, Paper Hub, and compatibility JSON without
+  repeating PDF, extraction, or AI work.
 
 ## 1.5.1 - 2026-08-02
 

@@ -669,3 +669,106 @@ def test_form_flow_retry_preserves_import_intent(
     assert inspected["job"]["status"] == "completed"
     user_note = vault / inspected["user_note"]["path"]
     assert "PRESERVE COMPLETE IMPORT INTENT" in user_note.read_text(encoding="utf-8")
+
+
+def test_duplicate_form_flow_updates_user_projection_without_system_reprocessing(
+    golden: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = golden["vault"]
+    source = "https://arxiv.org/abs/2601.00010"
+    uid = "arxiv:2601.00010"
+    ai_calls = {"count": 0}
+
+    def counting_provider(*args, **kwargs):
+        ai_calls["count"] += 1
+        return golden["make_provider"](*args, **kwargs)
+
+    monkeypatch.setattr(golden["importer"], "make_provider", counting_provider)
+    imported = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "add", source, "--vault", str(vault)],
+        )
+    )
+    assert imported["status"] == "imported"
+    inspected = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    user_note = vault / inspected["user_note"]["path"]
+    hub = vault / inspected["paper_hub"]["path"]
+    review_result = _json(
+        golden["runner"].invoke(
+            app,
+            ["review", "create", uid, "--vault", str(vault)],
+        )
+    )
+    review = vault / review_result["path"]
+    annotation_result = _json(
+        golden["runner"].invoke(
+            app,
+            [
+                "annotation",
+                "create",
+                uid,
+                f"[[{inspected['pdf']['path']}#page=1]]",
+                "--body",
+                "Duplicate projection guard",
+                "--apply",
+                "--vault",
+                str(vault),
+            ],
+        )
+    )
+    annotation = vault / annotation_result["markdown"]
+    protected_hashes = {
+        "user_note": hashlib.sha256(user_note.read_bytes()).hexdigest(),
+        "review": hashlib.sha256(review.read_bytes()).hexdigest(),
+        "annotation": hashlib.sha256(annotation.read_bytes()).hexdigest(),
+    }
+    counters_before = dict(golden["counters"])
+    ai_before = ai_calls["count"]
+
+    request = _write_form_flow_request(
+        vault,
+        request_id="duplicate-projection-refresh",
+        source=source,
+        note="",
+        priority=5,
+        queued=True,
+        favorite=True,
+        user_tags=["golden-tag", "projection-fresh"],
+    )
+    assert process_inbox(load_config(vault), request.name) == {
+        "processed": 1,
+        "failed": 0,
+        "skipped": 0,
+    }
+    assert golden["counters"] == counters_before
+    assert ai_calls["count"] == ai_before
+
+    record_path = vault / ".paperflow/data/papers/arxiv_2601.00010.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    sidecar = load_user_record(vault, record)
+    assert sidecar is not None
+    for values in (record, sidecar.user, read_note(hub)[0]):
+        assert values["user_priority"] == 5
+        assert values["user_favorite"] is True
+        assert values["user_reading_status"] == "queued"
+        assert values["user_added_tags"] == ["golden-tag", "projection-fresh"]
+
+    assert hashlib.sha256(user_note.read_bytes()).hexdigest() == protected_hashes["user_note"]
+    assert hashlib.sha256(review.read_bytes()).hexdigest() == protected_hashes["review"]
+    assert hashlib.sha256(annotation.read_bytes()).hexdigest() == protected_hashes["annotation"]
+    final = _json(
+        golden["runner"].invoke(
+            app,
+            ["paper", "inspect", uid, "--vault", str(vault)],
+        )
+    )
+    assert final["job"]["stage"] == "deduplicate"
+    assert final["review"]["exists"] is True
+    assert final["annotations"]["count"] == 1
