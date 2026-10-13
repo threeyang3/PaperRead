@@ -238,7 +238,10 @@ class _CoreHTTPServer(ThreadingHTTPServer):
 
     def server_bind(self) -> None:
         if os.name == "nt":
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is None:
+                raise RuntimeError("Windows exclusive socket binding is unavailable")
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
         super().server_bind()
 
 

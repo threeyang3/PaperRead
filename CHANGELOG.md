@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Resolve the Windows-only exclusive socket option inside its platform branch
+  so Linux type checking passes while missing Windows support fails closed.
+
 - Match Windows Core process roots exactly, including Unicode and spaces,
   before treating a PID as this Vault's service. Preserve first-run automation
   defaults even if its Obsidian wizard closes during initialization.

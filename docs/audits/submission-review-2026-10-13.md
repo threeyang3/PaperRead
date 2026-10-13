@@ -22,6 +22,9 @@ preview artifacts are local, and this is not a formal release acceptance report.
   pass on the selected ArxivLearn Vault. Python regressions: 411 passed, 1 skipped;
   all nine JavaScript suites pass. Ruff and mypy checks pass. CI now runs all nine
   JavaScript suites. Source/document links and personal-file hashes are checked.
+- First remote CI found a Linux typing error for the Windows-only exclusive
+  socket constant. Platform-guarded lookup fixes it, with Linux mypy and local
+  regressions rerun before the follow-up submission.
 
 ## Remaining acceptance scope
 
