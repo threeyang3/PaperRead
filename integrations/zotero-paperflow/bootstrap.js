@@ -27,6 +27,7 @@ let controlCenter = null;
 let services = null;
 let pluginRootURI = "";
 let zoteroApiLoaded = false;
+const toolsMenus = new Map();
 
 try {
   services = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs").Services;
@@ -115,14 +116,25 @@ function notify(message) {
 function prefGet(name, fallback = "") {
   try {
     const prefs = Zotero && Zotero.Prefs;
-    if (prefs && typeof prefs.get === "function") return prefs.get(name, fallback) || fallback;
+    if (prefs && typeof prefs.get === "function") {
+      // Fully qualified plugin preferences must use Zotero's global branch.
+      // Earlier builds accidentally wrote into extensions.zotero.extensions.*.
+      const legacy = prefs.get(name, false);
+      const current = prefs.get(name, true);
+      return legacy !== undefined && legacy !== "" ? legacy : (current ?? fallback);
+    }
   } catch (_error) {}
   return fallback;
 }
 
 function prefSet(name, value) {
   const prefs = Zotero && Zotero.Prefs;
-  if (prefs && typeof prefs.set === "function") prefs.set(name, value);
+  if (prefs && typeof prefs.set === "function") {
+    prefs.set(name, value, true);
+    if (typeof prefs.clear === "function" && prefs.get(name, false) !== undefined) {
+      prefs.clear(name, false);
+    }
+  }
 }
 
 function loadCoreClient() {
@@ -162,31 +174,38 @@ function configuredCore() {
 }
 
 async function coreStatus() {
-  coreClient = configuredCore();
-  if (!coreClient) {
-    notify("PaperFlow Core：尚未配对。请使用“连接 Core”完成一次本机配对。");
-    return;
-  }
   try {
-    const value = await coreClient.health();
-    if (!value || !value.ok) {
-      notify("PaperFlow Core：不可用");
-      return;
-    }
-    let detail = "暂无任务";
-    try {
-      const jobs = await coreClient.jobs(5);
-      const records = Array.isArray(jobs?.jobs) ? jobs.jobs : [];
-      if (records.length) {
-        detail = records.map((job) => `${job.kind || "job"}=${job.status || "?"}`).join("，");
-      }
-    } catch (_error) {
-      detail = "任务状态暂不可读";
-    }
-    notify(`PaperFlow Core：已连接；${detail}`);
+    const value = await authenticatedCoreStatus();
+    notify(`PaperFlow Core：${value.message}`);
   } catch (error) {
     notify(`PaperFlow Core：${error.message || error}`);
   }
+}
+
+async function authenticatedCoreStatus() {
+  coreClient = configuredCore();
+  if (!coreClient) throw new Error("尚未配对，请在设置 → PaperFlow 中连接 Core");
+  const health = await coreClient.health();
+  if (!health?.ok) throw new Error("Core 不可用");
+  const jobs = await coreClient.jobs(20);
+  const records = Array.isArray(jobs?.jobs) ? jobs.jobs : [];
+  const Client = loadCoreClient();
+  const detail = Client.summarizeJobs(records).message;
+  return { connected: true, message: `已连接；${detail}` };
+}
+
+async function connectCore(baseUrl, token) {
+  const Client = loadCoreClient();
+  if (typeof Client !== "function") throw new Error("Core client 模块加载失败；请重载 PaperFlow 插件");
+  const candidate = new Client(baseUrl, token);
+  await candidate.jobs(1);
+  const pairing = await candidate.createPairing("PaperFlow for Zotero");
+  prefSet("extensions.paperflow-zotero.coreBaseUrl", candidate.baseUrl);
+  prefSet("extensions.paperflow-zotero.coreToken", candidate.token);
+  prefSet("extensions.paperflow-zotero.pairingId", pairing.pairing_id);
+  prefSet("extensions.paperflow-zotero.pairingSecret", pairing.pairing_secret);
+  coreClient = configuredCore();
+  return { connected: true, message: "配对已保存；以后 Core 重启会自动续期会话。" };
 }
 
 function promptValue(title, message, initial = "") {
@@ -222,23 +241,7 @@ async function configureCore() {
   const token = promptValue("PaperFlow Core", "请输入 Core 会话令牌（不会写入 Vault）：", "");
   if (token === null) return;
   try {
-    const Client = loadCoreClient();
-    if (typeof Client !== "function") {
-      throw new Error("Core client 模块加载失败；请重载 PaperFlow 插件");
-    }
-    coreClient = new Client(baseUrl, token, {
-      onSession: (value) => {
-        prefSet("extensions.paperflow-zotero.coreToken", value);
-      },
-    });
-    // /health is intentionally public and cannot validate a token. Read one
-    // protected endpoint before claiming the connection succeeded.
-    await coreClient.jobs(1);
-    const pairing = await coreClient.createPairing("PaperFlow for Zotero");
-    prefSet("extensions.paperflow-zotero.coreBaseUrl", coreClient.baseUrl);
-    prefSet("extensions.paperflow-zotero.coreToken", coreClient.token);
-    prefSet("extensions.paperflow-zotero.pairingId", pairing.pairing_id);
-    prefSet("extensions.paperflow-zotero.pairingSecret", pairing.pairing_secret);
+    await connectCore(baseUrl, token);
     notify("PaperFlow Core：配对已保存；以后 Core 重启会自动续期会话。");
   } catch (error) {
     coreClient = null;
@@ -961,6 +964,49 @@ function removeMenuItem() {
 function startup(data = {}) {
   if (typeof Zotero === "undefined") return;
   rememberPluginRoot(data);
+  Zotero.PaperFlowPreferences = {
+    get: prefGet,
+    set: prefSet,
+    connect: connectCore,
+    status: authenticatedCoreStatus,
+    async jobs() {
+      coreClient = configuredCore();
+      if (!coreClient) throw new Error("尚未配对");
+      return coreClient.jobs(50);
+    },
+    async jobAction(jobId, action) {
+      coreClient = configuredCore();
+      if (!coreClient) throw new Error("尚未配对");
+      if (action === "retry") return coreClient.retryJob(jobId);
+      if (action === "cancel") return coreClient.cancelJob(jobId);
+      throw new Error("未知作业操作");
+    },
+    validateUrl(value) {
+      const Client = loadCoreClient();
+      if (!Client) throw new Error("Core client 模块加载失败");
+      return new Client(value).baseUrl;
+    },
+    changed() {
+      coreClient = configuredCore();
+      if (zoteroUi) {
+        zoteroUi.analysisProfile = prefGet("extensions.paperflow-zotero.analysisProfile", "full_analysis");
+        zoteroUi.debounceMs = Number(prefGet("extensions.paperflow-zotero.eventDebounceMs", 10000));
+      }
+    },
+    importPaper: importPaperFromCore,
+    openControlCenter,
+  };
+  if (Zotero.PreferencePanes?.register) {
+    Promise.resolve(Zotero.PreferencePanes.register({
+      pluginID: "paperflow-zotero@threeyang",
+      id: "paperflow-zotero-preferences",
+      label: "PaperFlow",
+      image: "icons/paperflow.svg",
+      src: "preferences.xhtml",
+      scripts: ["src/preferences.js"],
+    })).catch((error) => Zotero.logError?.(error));
+  }
+  for (const win of Zotero.getMainWindows?.() || [Zotero.getMainWindow?.()]) addToolsMenu(win);
   addMenuItem();
   coreClient = configuredCore();
   const Reader = loadZoteroReader();
@@ -1025,6 +1071,45 @@ function shutdown() {
     for (const id of observers.splice(0)) Zotero.Notifier.unregisterObserver(id);
   }
   removeMenuItem();
+  for (const node of toolsMenus.values()) node.remove();
+  toolsMenus.clear();
+  if (typeof Zotero !== "undefined") delete Zotero.PaperFlowPreferences;
+}
+
+function addToolsMenu(win) {
+  const doc = win?.document;
+  const popup = doc?.getElementById("menu_ToolsPopup");
+  if (!popup || toolsMenus.has(win)) return;
+  const create = (tag) => doc.createXULElement ? doc.createXULElement(tag) : doc.createElement(tag);
+  const menu = create("menu");
+  menu.id = "paperflow-zotero-tools";
+  menu.setAttribute("label", "PaperFlow");
+  const children = create("menupopup");
+  for (const [label, action] of [
+    ["设置…", () => Zotero.Utilities.Internal.openPreferences("paperflow-zotero-preferences")],
+    ["连接 Core…", configureCore],
+    ["查看状态", coreStatus],
+    ["从 Core 导入论文及 PDF…", importPaperFromCore],
+    ["打开控制中心", openControlCenter],
+  ]) {
+    const item = create("menuitem");
+    item.setAttribute("label", label);
+    item.addEventListener("command", action);
+    children.appendChild(item);
+  }
+  menu.appendChild(children);
+  popup.appendChild(menu);
+  toolsMenus.set(win, menu);
+}
+
+function onMainWindowLoad({ window }) {
+  addToolsMenu(window);
+  addMenuItem();
+}
+
+function onMainWindowUnload({ window }) {
+  toolsMenus.get(window)?.remove();
+  toolsMenus.delete(window);
 }
 
 function install() {}

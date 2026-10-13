@@ -21,11 +21,20 @@ figure links to the source PDF page. Existing Workspaces use
 `paperflow migrate workspace-v2 --apply`; routine refresh is available as
 `paperflow paper visuals --all`.
 
-Recurring work uses the local `PaperFlow Automation` Obsidian plugin while
-Obsidian is open. It registers file events after the Obsidian layout is ready,
+The development preview adds a first-run wizard for an existing, uninitialized
+Vault. It detects an installed Python/Core environment, previews managed files,
+backs up configuration, refuses collisions, and offers Core pairing and Form
+Flow preparation. Python, Core dependencies, and Form Flow require separate
+installation; the two frontend plugins alone do not provide a runtime.
+See [Windows installation](installation/windows.md).
+
+Core can own recurring work independently of Obsidian. The local
+`PaperFlow Automation` plugin retains compatibility scheduling while Obsidian
+is open and yields to a verified Core owner. It registers file events after the Obsidian layout is ready,
 debounces Form Flow request writes, performs a startup pass, keeps a five-minute
 fallback interval, and checks the daily `Asia/Shanghai` schedule once per
-minute. Windows Task Scheduler is neither installed nor required.
+minute. Core can optionally use a Windows current-user login task;
+the legacy pipeline scheduler does not install tasks. See [automation](automation.md).
 
 PaperFlow Automation 1.5.1 also provides a ribbon-accessible Control Center
 for paper import, AI profile configuration, GitHub Feed subscriptions,

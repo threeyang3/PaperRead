@@ -4,6 +4,12 @@ Use the ordered [documentation map](README.md) for the full set of current
 guides. For a complete Chinese walkthrough for both end users and project
 maintainers, see [PaperFlow 用户与维护者指南](维护者与用户指南.md).
 
+The development preview also supports initialization from Obsidian's PaperFlow
+first-run wizard. Install Python/Core separately, open the intended Vault, enable
+the plugin, review its initialization preview, and follow the connection step.
+New Vaults leave automation disabled. The frontend plugins do not bundle the
+runtime. See [Windows installation](installation/windows.md) for setup and scope.
+
 ```powershell
 uv tool install paperflow
 $vault = "D:/Obsidian/MyResearch"

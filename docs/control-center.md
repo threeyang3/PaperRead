@@ -1,5 +1,27 @@
 # PaperFlow Control Center
 
+Zotero also provides a library-independent entry under **Tools → PaperFlow**.
+Its native **Settings → PaperFlow** pane manages the loopback Core URL,
+first-time pairing, authenticated connection checks, analysis profile and
+event debounce interval. An empty Zotero library can connect and import a
+paper from Core without a placeholder item. Provider/model settings remain
+owned by Core; connection credentials stay in local Zotero preferences.
+
+The native settings pane also lists recent durable jobs with Beijing times,
+paper identity and failure details. Retry creates a new job under the current
+machine configuration, retains the original failure, and links `retry_of`;
+repeated clicks reuse an active retry. Only failed/interrupted/cancelled/skipped
+jobs can be retried. Cancel waits for a running operation's safe boundary; a
+completed side effect can honestly report `completed-after-cancel-request`.
+
+The Zotero diagnostics tab shows the latest 20 jobs, distinguishing active,
+today's failed, historical failed and failures with unknown timestamps.
+Dates use Asia/Shanghai. Historical failures do not imply a broken connection;
+the connection badge requires access to the authenticated jobs API. To retry
+analysis, select the corresponding paper and use **Analyze current item** on
+the analysis tab. To restore a missing attachment, use **Attach AI Markdown**.
+The diagnostics tab also links directly to native PaperFlow settings.
+
 PaperFlow Automation 1.5.1 adds an Obsidian-native Control Center. It opens
 automatically after the Obsidian workspace is ready; this behavior can be
 disabled in the plugin settings. You can also open it from the left ribbon,

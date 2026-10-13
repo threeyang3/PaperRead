@@ -49,6 +49,28 @@ async function main() {
   assert.equal(reader._html(namespaceDoc, "div").namespace, "http://www.w3.org/1999/xhtml");
   assert.deepEqual(namespaces.map((entry) => entry.tag), ["aside", "div"]);
   control.close();
+  const protectedFailure = new controlSandbox.PaperFlowControlCenter(zotero, {
+    clientProvider: () => ({
+      health: async () => ({ ok: true }),
+      jobs: async () => { throw new Error("Core HTTP 401"); },
+    }),
+  });
+  protectedFailure.root = { dataset: {} };
+  protectedFailure.coreBadge = { textContent: "" };
+  protectedFailure.jobStatus = { textContent: "" };
+  await protectedFailure.refresh();
+  assert.equal(protectedFailure.root.dataset.core, "offline");
+  assert.equal(protectedFailure.coreBadge.textContent, "Core 连接异常");
+  assert.equal(protectedFailure.jobStatus.textContent, "Core HTTP 401");
+  let finishHealth;
+  const closing = new controlSandbox.PaperFlowControlCenter(zotero, {
+    clientProvider: () => ({ health: () => new Promise(resolve => { finishHealth = resolve; }) }),
+  });
+  closing.root = { dataset: {} };
+  const pendingRefresh = closing.refresh();
+  closing.close();
+  finishHealth({ ok: true });
+  await pendingRefresh;
   const source = fs.readFileSync(path.resolve(__dirname, "../../integrations/zotero-paperflow/src/control-center.js"), "utf8");
   for (const label of ["收件箱", "分析", "阅读", "订阅", "社区", "更多", "从 Core 导入论文", "订阅 Inbox", "社区与标注", "诊断与设置", "当前阅读工作区", "Research Operations", "Core 已连接", "aria-selected"]) assert.ok(source.includes(label));
   console.log("PaperFlow Zotero Reader/control-center tests passed");

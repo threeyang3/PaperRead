@@ -18,12 +18,32 @@ from paperflow.zotero.mapping_index import diagnose_mapping_index
 from paperflow.zotero.store import runtime_root, state_root
 
 
+def _obsidian_executable() -> str | None:
+    found = shutil.which("obsidian")
+    if found:
+        console = Path(found).with_suffix(".com")
+        return str(console) if console.is_file() else found
+    for variable, suffix in (
+        ("PROGRAMFILES", "Obsidian"),
+        ("LOCALAPPDATA", "Programs/obsidian"),
+        ("PROGRAMFILES(X86)", "Obsidian"),
+    ):
+        directory = os.environ.get(variable)
+        if not directory:
+            continue
+        for name in ("Obsidian.com", "Obsidian.exe"):
+            candidate = Path(directory) / suffix / name
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
 def _command(
     name: str,
     args: list[str] | None = None,
     timeout: int = 15,
 ) -> tuple[bool, str]:
-    executable = shutil.which(name)
+    executable = _obsidian_executable() if name == "obsidian" else shutil.which(name)
     if not executable:
         return False, "not found"
     try:
@@ -177,7 +197,7 @@ def run_doctor(cfg: Config, network: bool = False) -> list[dict]:
                     f"{report.executable}; {report.detail}",
                 )
             )
-    obsidian = shutil.which("obsidian") or ("D:/Obsidian/Obsidian.exe" if Path("D:/Obsidian/Obsidian.exe").exists() else None)
+    obsidian = _obsidian_executable()
     checks.append(("Obsidian", bool(obsidian), str(obsidian or "not found")))
     cli_ok, cli_detail = _command("obsidian", ["version"], timeout=45)
     checks.append(("Obsidian CLI", cli_ok, cli_detail))

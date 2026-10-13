@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -465,12 +466,21 @@ def verify_workspace_v3(root: Path) -> dict[str, Any]:
                 legacy_relative = (
                     path.parent.with_suffix(".pdf").relative_to(root).as_posix()
                 )
+                targets = {
+                    match.split("|", 1)[0].split("#", 1)[0].strip()
+                    for match in re.findall(r"\[\[([^\]\n]+)\]\]", body)
+                }
+                current_targets = {relative, Path(relative).with_suffix("").as_posix()}
+                legacy_targets = {
+                    legacy_relative,
+                    Path(legacy_relative).with_suffix("").as_posix(),
+                }
                 if (
                     frontmatter.get("paper_pdf_path") != relative
-                    or f"[[{relative}" not in body
+                    or not targets.intersection(current_targets)
                     or (
                         legacy_relative != relative
-                        and legacy_relative in body
+                        and targets.intersection(legacy_targets)
                     )
                 ):
                     note_link_mismatches.append(note_relative)

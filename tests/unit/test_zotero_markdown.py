@@ -56,3 +56,19 @@ def test_projection_supports_both_targets_with_render_state(tmp_path: Path) -> N
     assert Path(result["render_state"]).is_file()
     assert Path(result["paths"][0]).is_file()
     assert Path(result["paths"][1]).is_file()
+
+
+def test_full_analysis_sections_keep_evidence_and_unknowns_without_fabrication():
+    record = {"paper_uid": "arxiv:2504.16054", "paper_title": "Paper",
+              "sections": {"problem": "Research question", "contributions": ["Contribution"],
+                           "method": "Equation $a=b$\n\nImplementation details",
+                           "experiments": "Figure 7, ten trials", "results": "Exact scores unavailable",
+                           "limitations": "Only three homes tested"},
+              "ai_reproducibility_reason": "Training data unavailable"}
+    text = build_ai_markdown(record)
+    assert "Equation $a=b$\n\nImplementation details" in text
+    assert "Figure 7, ten trials" in text
+    assert "Exact scores unavailable" in text
+    assert "Training data unavailable" in text
+    assert "## 费曼问题" not in text
+    assert build_ai_markdown(record) == text

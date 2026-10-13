@@ -12,6 +12,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import urllib.error
@@ -90,6 +91,9 @@ def _prefs(profile: Path) -> dict[str, str]:
 
 def _executable_candidates() -> list[Path]:
     candidates: list[Path] = []
+    executable = shutil.which("zotero")
+    if executable:
+        candidates.append(Path(executable))
     for value in (
         os.environ.get("PROGRAMFILES"),
         os.environ.get("PROGRAMFILES(X86)"),

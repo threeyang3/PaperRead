@@ -23,9 +23,21 @@ IMAGE_OR_PDF = re.compile(
 
 def scan_community_contribution(value: dict[str, Any]) -> list[str]:
     findings: list[str] = []
-    text = "\n".join(
-        str(value.get(key, "")) for key in ("body", "creator", "supersedes")
-    )
+    # Public extensions, tags and anchor context must pass the same gates as
+    # body text; scanning selected top-level fields leaves nested leaks open.
+    def strings(item):
+        if isinstance(item, dict):
+            for key, content in item.items():
+                if str(key).startswith("user_"):
+                    findings.append("private user_* property")
+                yield str(key)
+                yield from strings(content)
+        elif isinstance(item, list):
+            for content in item:
+                yield from strings(content)
+        elif isinstance(item, str):
+            yield item
+    text = "\n".join(strings(value))
     if PATH_PATTERN.search(text):
         findings.append("absolute/local path")
     if MAIL_PATTERN.search(text):

@@ -41,11 +41,19 @@ paperflow paper add "https://arxiv.org/abs/2504.16054" --vault "D:\Notes\Researc
 paperflow paper inspect "arxiv:2504.16054" --vault "D:\Notes\Research"
 ```
 
-For automation, PaperFlow uses the Vault's `PaperFlow Automation` Obsidian
-plugin while Obsidian is open. Manual paper entry remains the official Form
-Flow plugin (`form-flow`) 0.0.8 or newer. Windows Task Scheduler is not used;
-the visible `schedule` commands only remove or inspect legacy tasks. Hidden
-compatibility names cannot install tasks; `run-now` directly invokes PaperFlow.
+The current development preview adds a first-run wizard to the `PaperFlow
+Automation` Obsidian plugin. Install Python/Core separately, enable the plugin
+in the intended Vault, then preview initialization and connect Core and Zotero.
+The wizard preserves existing files and leaves automation disabled for new
+Vaults. See [Windows setup](docs/installation/windows.md) for the prerequisites
+and preview limitations. Manual paper entry remains official Form Flow
+(`form-flow`) 0.0.8 or newer.
+
+Core can own background scheduling independently of Obsidian. On Windows,
+`paperflow zotero service autostart` manages a current-user login task; legacy
+`schedule` commands still only inspect or remove old pipeline tasks. The
+Obsidian scheduler is retained for compatibility and yields to a verified Core
+owner. See [automation](docs/automation.md).
 
 Chinese Obsidian locales receive Chinese UI labels, dashboards, prompts, and
 generated explanation sections where practical. Original paper titles,

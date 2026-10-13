@@ -479,6 +479,23 @@ def attach_zotero_commands(zotero_app: typer.Typer) -> None:
         result = save_answer(_command_root(vault, core_root), paper_uid, question_id, answer)
         typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
+    @feynman_app.command("ask")
+    def zotero_feynman_ask(
+        paper_uid: str = typer.Option(..., "--paper"),
+        question: str = typer.Option(..., "--question"),
+        apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+        vault: Path | None = typer.Option(None, "--vault"),
+        core_root: Path | None = typer.Option(None, "--data-root"),
+    ) -> None:
+        """添加个人费曼问题；保留既有问题 ID 和答案，不依赖 AI 是否生成问题。"""
+        root = _command_root(vault, core_root)
+        from paperflow.zotero.markdown import _paper_record
+        _paper_record(root, paper_uid)
+        if not question.strip():
+            raise typer.BadParameter("question must not be empty")
+        result = ensure_questions(root, paper_uid, [question], apply_changes=apply_changes)
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
     @feynman_app.command("show")
     def zotero_feynman_show(
         paper_uid: str = typer.Option(..., "--paper"),

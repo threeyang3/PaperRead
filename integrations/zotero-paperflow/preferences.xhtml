@@ -1,0 +1,44 @@
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml"
+      onload="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.init(document)">
+  <groupbox>
+    <label><html:h2>PaperFlow · 本机 Core 连接</html:h2></label>
+    <description>无需选中论文即可连接。首次配对后，Core 重启会自动续期。</description>
+    <html:label for="paperflow-prefs-url">Core 地址</html:label>
+    <html:input id="paperflow-prefs-url" type="url" style="width:100%"/>
+    <html:label for="paperflow-prefs-token">首次连接的会话令牌</html:label>
+    <html:input id="paperflow-prefs-token" type="password" autocomplete="off" placeholder="粘贴本机 Core 会话令牌" style="width:100%"/>
+    <description>已保存的令牌不回显；配对完成后输入框会清空。</description>
+    <hbox>
+      <button id="paperflow-prefs-connect" label="连接并配对" oncommand="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.connect()"/>
+      <button id="paperflow-prefs-check" label="检查连接" oncommand="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.check()"/>
+    </hbox>
+    <html:p id="paperflow-prefs-status" role="status" aria-live="polite" style="white-space:pre-line">尚未检查连接。</html:p>
+  </groupbox>
+  <groupbox>
+    <label><html:h2>分析与同步</html:h2></label>
+    <html:label for="paperflow-prefs-profile">分析配置</html:label>
+    <html:select id="paperflow-prefs-profile">
+      <html:option value="full_analysis">完整论文分析</html:option>
+      <html:option value="triage">快速初筛</html:option>
+    </html:select>
+    <html:label for="paperflow-prefs-debounce">条目变化后的等待时间（秒）</html:label>
+    <html:input id="paperflow-prefs-debounce" type="number" min="1" max="300" step="1"/>
+    <description>模型与订阅源由 Core 配置管理。这里选择分析流程及 Zotero 事件同步的等待时间。</description>
+    <button id="paperflow-prefs-save" label="保存设置" oncommand="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.save()"/>
+  </groupbox>
+  <groupbox>
+    <label><html:h2>作业与恢复</html:h2></label>
+    <description>重试使用当前电脑的配置并保留原失败记录。取消运行中的任务会等待安全边界。</description>
+    <button label="刷新作业" oncommand="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.loadJobs()"/>
+    <html:div id="paperflow-prefs-jobs" style="max-height:260px;overflow:auto"/>
+  </groupbox>
+  <groupbox>
+    <label><html:h2>开始使用</html:h2></label>
+    <description>连接成功后，可从 Core 导入已有论文及 PDF，或打开控制中心。</description>
+    <hbox>
+      <button label="从 Core 导入论文及 PDF…" oncommand="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.importPaper()"/>
+      <button label="打开控制中心" oncommand="Zotero_Preferences.getScope('paperflow-zotero-preferences').PaperFlowPreferences.openControlCenter()"/>
+    </hbox>
+  </groupbox>
+</vbox>

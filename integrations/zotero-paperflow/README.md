@@ -21,7 +21,11 @@ paperflow zotero service token --vault <vault>
 paperflow zotero service status --vault <vault>
 ```
 
-首次连接：复制 service token 输出的令牌，在 Zotero 条目菜单选择“PaperFlow：连接 Core”，输入 http://127.0.0.1:23140 和令牌。插件会先访问受保护接口验证令牌，再建立设备配对；仅 `/health` 成功不再被视为连接成功。session token 文件位于被忽略的 `.paperflow/runtime`，停止 Core 后自动删除；不要把 token 或配对密钥提交到 Git 或同步到其他设备。完成一次配对后，正常的 Core 重启无需再次手工连接。之后可在 Zotero 中选择“PaperFlow：分析选中论文”手动排队分析。自动事件仅携带条目键、附件键、Collection/PDF 存在性和 arXiv/DOI 身份提示，Core 仍会在真正分析前重新校验。若 canonical paper 已有 `complete` 分析、PDF SHA-256 未变化，且 profile 的 `reanalyze_when` 不是 `always`，Core 会复用既有分析并只排队渲染。
+首次连接：在 Zotero「设置 → PaperFlow」填写 Core 地址（默认 http://127.0.0.1:23140），粘贴 service token 输出的令牌，点击「连接并配对」，再点击「检查连接」。空资料库也可使用；「工具 → PaperFlow」提供设置、连接、状态、导入和控制中心入口，原有条目右键命令继续可用。设置页还可选择完整分析/快速初筛，并设置 1–300 秒的事件同步等待时间，保存后立即生效。模型由 Core 的 AI profile 管理。
+
+令牌输入框不会回显已保存凭据，连接尝试后会清空。插件先访问受保护接口验证令牌，再建立设备配对；仅 `/health` 成功不被视为连接成功。偏好使用 `extensions.paperflow-zotero.*` 全局命名空间，兼容读取旧版误写的 Zotero 分支，并在保存时清理对应旧值。修改 Core 地址后旧端点的会话和配对信息会清空，需要重新配对。
+
+session token 文件位于被忽略的 `.paperflow/runtime`，停止 Core 后自动删除；不要把 token 或配对密钥提交到 Git 或同步到其他设备。完成一次配对后，正常的 Core 重启无需再次手工连接。之后可在 Zotero 中选择“PaperFlow：导入并分析选中论文”手动排队分析。自动事件仅携带条目键、附件键、Collection/PDF 存在性和 arXiv/DOI 身份提示，Core 仍会在真正分析前重新校验。若 canonical paper 已有 `complete` 分析、PDF SHA-256 未变化，且 profile 的 `reanalyze_when` 不是 `always`，Core 会复用既有分析并只排队渲染。
 
 “从 Core 导入论文及 PDF”只负责创建/复用条目、加入 `PaperFlow` Collection、校验并导入 PDF、同步 SHA-256 mapping，然后发布分析事件；AI Markdown 不是导入成功的前置条件。分析或复用渲染作业完成后，插件自动从 Core 的认证 `/zotero/markdown/<paper_uid>` 接口读取 UTF-8 结果，再通过 Zotero 公开的 `Zotero.Attachments.importFromFile()` 创建 Markdown 子附件，并重新同步 mapping。条目菜单中的“附加 AI Markdown”保留为人工恢复动作。Core 不写 Zotero 数据库、不接触 storage 路径。已有同哈希附件会复用；已有不同内容的 Markdown 附件不会被覆盖，而是生成新版本，用户可自行保留或删除。临时文件只位于系统临时目录，导入后立即清理。
 

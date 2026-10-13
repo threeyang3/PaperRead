@@ -20,6 +20,7 @@ from paperflow.doctor import run_doctor
 from paperflow.locking import FileLock
 from paperflow.obsidian.bases import rebuild_bases
 from paperflow.obsidian.frontmatter import read_note
+from paperflow.obsidian.automation_status import automation_status
 from paperflow.pipeline.analyze import analyze_uid
 from paperflow.pipeline.daily import run_daily
 from paperflow.pipeline.discover import discover as discover_papers
@@ -313,6 +314,24 @@ def _pid_alive(pid: object) -> bool:
         return False
     if value <= 0:
         return False
+    if os.name == "nt":
+        # os.kill(pid, 0) is not a harmless existence probe on Windows.
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x1000, False, value)
+        if not handle:
+            return ctypes.get_last_error() == 5  # Access denied: fail closed.
+        try:
+            exit_code = wintypes.DWORD()
+            return not kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code)) or exit_code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
     try:
         os.kill(value, 0)
     except (OSError, ProcessLookupError):
@@ -336,6 +355,7 @@ def _is_core_service_pid(pid: object, root: Path) -> bool:
                 "powershell",
                 "-NoProfile",
                 "-Command",
+                "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
                 f"(Get-CimInstance Win32_Process -Filter \"ProcessId={value}\").CommandLine",
             ],
             capture_output=True,
@@ -345,10 +365,37 @@ def _is_core_service_pid(pid: object, root: Path) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     command_line = completed.stdout.decode("utf-8", errors="replace")
-    return (
-        "paperflow.cli zotero service serve" in command_line
-        and str(root) in command_line
-    )
+    if completed.returncode != 0 or not command_line.strip():
+        return False
+    import ctypes
+    from ctypes import wintypes
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LocalFree.argtypes = [wintypes.HLOCAL]
+    kernel.LocalFree.restype = wintypes.HLOCAL
+    count = ctypes.c_int()
+    argv = shell.CommandLineToArgvW(command_line.strip(), ctypes.byref(count))
+    if not argv:
+        return False
+    try:
+        arguments = [argv[index] for index in range(count.value)]
+    finally:
+        kernel.LocalFree(ctypes.cast(argv, wintypes.HLOCAL))
+    try:
+        module = arguments.index("-m")
+    except ValueError:
+        return False
+    if arguments[module + 1:module + 5] != ["paperflow.cli", "zotero", "service", "serve"]:
+        return False
+    roots = []
+    for index, argument in enumerate(arguments):
+        if argument in {"--vault", "--data-root"} and index + 1 < len(arguments):
+            roots.append(arguments[index + 1])
+        elif argument.startswith(("--vault=", "--data-root=")):
+            roots.append(argument.split("=", 1)[1])
+    return len(roots) == 1 and os.path.normcase(str(Path(roots[0]).resolve())) == os.path.normcase(str(root.resolve()))
 
 
 @zotero_service_app.command("serve")
@@ -386,7 +433,13 @@ def zotero_service_start(
     session_path = state_root(root) / "zotero-core-session.json"
     existing = read_session(root)
     if existing and _pid_alive(existing.get("pid")):
-        _echo_json({"status": "already-running", "session_state": session_path.relative_to(root).as_posix()})
+        from paperflow.obsidian.onboarding import check_core
+        try:
+            verified = check_core(root)
+        except ValueError as exc:
+            raise typer.BadParameter("A recorded Core process exists but authentication failed; inspect duplicate instances before restarting") from exc
+        _echo_json({"status": "already-running", "base_url": verified["base_url"],
+                    "authenticated": True, "session_state": session_path.relative_to(root).as_posix()})
         return
     if existing:
         session_path.unlink(missing_ok=True)
@@ -406,8 +459,9 @@ def zotero_service_start(
     creationflags = 0
     if os.name == "nt":
         creationflags = (
-            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            # DETACHED_PROCESS disables CREATE_NO_WINDOW and lets the venv
+            # redirector's child allocate a visible console on Windows.
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
             | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         )
     runtime = runtime_root(root)
@@ -419,7 +473,10 @@ def zotero_service_start(
         stdout=(runtime / "zotero-core-service.out.log").open("ab"),
         stderr=(runtime / "zotero-core-service.err.log").open("ab"),
         creationflags=creationflags,
-        close_fds=os.name != "nt",
+        # Modern Windows Python supports close_fds with redirected stdio.
+        # Inheriting Obsidian's pipes keeps the CLI's Node "close" event pending
+        # for the entire Core lifetime even though the launch command has exited.
+        close_fds=True,
     )
     session = None
     for _ in range(50):
@@ -455,6 +512,22 @@ def zotero_service_status(
     running = _pid_alive(session.get("pid"))
     state = "running" if verified else ("manual-review" if running else "stale")
     _echo_json({"status": state, "pid": session.get("pid"), "base_url": session.get("base_url"), "network_scope": "loopback-only"})
+
+
+@zotero_service_app.command("autostart")
+def zotero_service_autostart(
+    vault: Path | None = typer.Option(None, "--vault"),
+    core_root: Path | None = typer.Option(None, "--data-root"),
+    apply: bool = typer.Option(False, "--apply"),
+    remove: bool = typer.Option(False, "--remove"),
+):
+    """查看、注册或移除当前用户的 Windows 无窗口登录启动任务。"""
+    from paperflow.scheduler.autostart import manage_autostart
+    try:
+        _echo_json(manage_autostart(_service_root(vault, core_root), apply=apply,
+                                    remove=remove, standalone=core_root is not None))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @zotero_service_app.command("token")
@@ -1084,6 +1157,26 @@ def verify_workspace_v2_command(
             indent=2,
         )
     )
+
+
+@workspace_app.command("onboard")
+def workspace_onboard(
+    vault: Path = typer.Option(..., "--vault"),
+    apply_changes: bool = typer.Option(False, "--apply/--dry-run"),
+    confirm_digest: str = typer.Option("", "--confirm-digest"),
+    prepare_forms: bool = typer.Option(False, "--prepare-form"),
+    verify_core: bool = typer.Option(False, "--check-core"),
+):
+    """Preview or explicitly initialize the current Obsidian vault, locally."""
+    from paperflow.obsidian.onboarding import initialize, setup_plan, prepare_form, check_core
+    try:
+        if sum((apply_changes, prepare_forms, verify_core)) > 1:
+            raise ValueError("Choose initialization or form preparation separately")
+        result = check_core(vault) if verify_core else (prepare_form(vault) if prepare_forms else (initialize(vault, confirm_digest) if apply_changes else setup_plan(vault)))
+    except (OSError, ValueError, RuntimeError) as exc:
+        _echo_json({"status": "error", "error": str(exc)})
+        raise typer.Exit(1) from exc
+    _echo_json(result)
 
 
 @workspace_app.command("info")
@@ -2531,26 +2624,18 @@ def validate():
     typer.echo(tr(cfg().ui_locale.locale, "validation.passed"))
 
 @app.command()
-def status():
+def status(vault: Path | None = typer.Option(None, "--vault")):
     """显示数据库、Inbox 与最近简报状态。"""
-    c = cfg(); db = Database(c.root / ".paperflow/state/paperflow.db")
+    c = load_config(vault); db = Database(c.root / ".paperflow/state/paperflow.db")
     try: data = db.stats()
     finally: db.close()
     data["pending_requests"] = len(list(c.path("request_folder").glob("*.md")))
     data["daily_briefs"] = len(list(c.path("daily_brief_folder").glob("*.md")))
     data["ui_locale"] = c.ui_locale.locale
     data["ui_locale_source"] = c.ui_locale.source
-    automation_path = c.root / ".obsidian/plugins/paperflow-automation/data.json"
-    if automation_path.exists():
-        automation = json.loads(automation_path.read_text(encoding="utf-8"))
-        data["obsidian_automation"] = {
-            "enabled": automation.get("enabled", False),
-            "daily_local_time": automation.get("dailyLocalTime"),
-            "inbox_interval_minutes": automation.get("inboxIntervalMinutes"),
-            "last_daily_at": automation.get("runtime", {}).get("lastDailyAt"),
-            "last_inbox_at": automation.get("runtime", {}).get("lastInboxAt"),
-            "last_inbox_exit_code": automation.get("runtime", {}).get("lastInboxExitCode"),
-        }
+    automation = automation_status(c.root)
+    if automation is not None:
+        data["obsidian_automation"] = automation
     typer.echo(json.dumps(data, ensure_ascii=False))
 
 @app.command()

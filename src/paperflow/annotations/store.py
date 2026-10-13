@@ -9,6 +9,7 @@ from paperflow.annotations.markdown_renderer import render_annotation
 from paperflow.annotations.models import Annotation
 from paperflow.obsidian.frontmatter import dump_frontmatter, read_note
 from paperflow.utils import atomic_json, atomic_write
+from paperflow.paths.templates import safe_component
 
 
 class AnnotationConflict(RuntimeError):
@@ -56,6 +57,40 @@ class AnnotationStore:
             path for path in sorted(self.markdown_root.glob(f"*/{paper_id}/index.md"))
             if path.resolve() != canonical
         ]
+
+    def _zotero_entries(self, paper_uid: str) -> list[str]:
+        """Render private Reader mirrors without turning them into User annotations."""
+        root = self.vault / ".paperflow/data/annotations/zotero" / safe_component(paper_uid)
+        entries = []
+        for path in sorted(root.glob("*.json")):
+            if not path.resolve().is_relative_to(self.vault):
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(value, dict) or value.get("paper_uid") != paper_uid or value.get("deleted"):
+                continue
+            annotation_id = str(value.get("annotation_id") or "")
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", annotation_id):
+                continue
+            # Reader comments are untrusted Markdown: prevent embedded vault links/HTML.
+            def literal(text: object) -> str:
+                return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(
+                    ">", "&gt;"
+                ).replace("[", "&#91;").replace("]", "&#93;").replace("`", "&#96;")
+
+            page = literal(value.get("page"))
+            entries.append(f"### Zotero · p.{page} · {annotation_id}")
+            parent = str(value.get("parent_item_key") or "")
+            if re.fullmatch(r"[A-Z0-9]{8}", parent):
+                entries.append(f"[打开 Zotero 条目](zotero://select/library/items/{parent})")
+            for label, field in (("摘录", "text"), ("评论", "comment")):
+                if value.get(field):
+                    entries.append(f"**{label}**\n" + "\n".join(
+                        "> " + line for line in literal(value[field]).splitlines()
+                    ))
+        return entries
 
     @staticmethod
     def _user_body(body: str) -> str:
@@ -108,6 +143,10 @@ class AnnotationStore:
                 f"- [[{relative}|{annotation.kind} · p.{anchor.page}]]"
             )
         generated = "\n".join(entries) or "- 暂无标注 / No annotations yet."
+        zotero_entries = self._zotero_entries(paper_uid)
+        if zotero_entries:
+            generated += "\n\n## Zotero Reader 标注（只读镜像）\n\n" + "\n\n".join(zotero_entries)
+            generated += "\n\n> 请在 Zotero Reader 修改这些标注；个人补充请写在生成区块之外。"
         sections = [item for item in [*preserved, *imported] if item]
         sections.append(f"{INDEX_START}\n# 标注 / Annotations\n\n{generated}\n{INDEX_END}")
         metadata = {

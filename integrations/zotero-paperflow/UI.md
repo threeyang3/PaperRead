@@ -2,6 +2,8 @@
 
 插件在 Zotero 提供以下公开 API 适配：
 
+- 「设置 → PaperFlow」通过 PreferencePanes API 注册，包含 Core 地址、隐藏令牌输入、配对/检查、分析流程及事件等待时间；空资料库无需创建占位条目。
+- 「工具 → PaperFlow」提供设置、连接、状态、Core 论文/PDF 导入及控制中心入口；按窗口添加并在插件关闭时移除。
 - Item Tree 状态列：AI、阅读、复盘、复现、同步。
 - Item Pane 的 PaperFlow 区域，显示同一组高频状态。
 - `Notifier` 的 item add/modify/delete 防抖队列，默认等待 10 秒合并事件；可通过 Zotero 偏好 `extensions.paperflow-zotero.eventDebounceMs` 调整，且事件只把 PDF 附件视为可分析输入。
@@ -31,7 +33,8 @@
 状态列只读取本地缓存或认证 Core 返回的状态；Core 不可用时显示占位符，不会在每一行实时
 启动 Python、AI 或公网请求。事件只提交公开条目键、附件键和身份提示，分析由 Core worker
 在 pipeline lock 下执行。不同 Zotero 版本缺少 Item Tree/Item Pane API 时，插件
-仅跳过对应 UI 并保留其他功能，不修改 Zotero DOM，也不访问数据库。
+仅跳过对应 UI 并保留其他功能。工具与右键菜单使用主窗口的 XUL 菜单节点，
+其他状态展示使用公开 UI API；不访问数据库。
 
 PDF 暂存只接受 loopback bearer 请求；Core 不接收 Zotero 文件系统路径、不打开
 `zotero.sqlite`，分块偏移、大小、PDF 魔数和 SHA-256 任一不匹配都会拒绝并删除临时片段。

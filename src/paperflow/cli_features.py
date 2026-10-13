@@ -367,15 +367,24 @@ def community_publish_diff(vault: Path | None = typer.Option(None, "--vault")):
 
 
 @community_publish_app.command("submit-pr")
-def community_submit_pr(vault: Path | None = typer.Option(None, "--vault")):
-    root, _ = _root(vault)
-    _echo({
-        "dry_run": True,
-        "files": [path.relative_to(root).as_posix() for path in _outbox_items(root)],
-        "steps": ["fork", "branch", "commit", "pull-request"],
-        "network_changes": 0,
-        "reason": "real public contribution PR requires a separate explicit approval",
-    })
+def community_submit_pr(
+    vault: Path | None = typer.Option(None, "--vault"),
+    apply: bool = typer.Option(False, "--apply"),
+    confirm_digest: str = typer.Option("", "--confirm-digest"),
+):
+    root, settings = _root(vault)
+    from paperflow.community.submission import submission_plan, submit_confirmed
+    try:
+        if not apply:
+            _echo(submission_plan(root, settings.publishing.repository_url))
+            return
+        if not settings.community.publish_enabled or not settings.publishing.enabled or not settings.publishing.include_community_contributions:
+            raise ValueError("community publication is disabled")
+        if not confirm_digest:
+            raise ValueError("review submit-pr preview and provide --confirm-digest")
+        _echo(submit_confirmed(root, settings.publishing.repository_url, confirm_digest))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @community_app.command("status")

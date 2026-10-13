@@ -2,10 +2,15 @@
 
 此本地 Obsidian 插件负责 PaperFlow 调度和可视化控制中心：
 
+- 未初始化的资料库自动显示首次向导；已有库可在命令面板或插件设置中重新打开。
+  向导检测已安装的 Core Python 环境，预览并确认初始化，提供 Core 启动、Zotero
+  令牌复制与 Form Flow 表单准备入口。初始化前备份配置，拒绝覆盖同名目标文件；
+  新库自动调度默认关闭。插件不打包 Python/Core，也不自动安装外部运行环境。
+
 - Form Flow 在 `50 Inbox/Paper Requests` 创建或更新请求后，由 Obsidian
   Vault 文件事件防抖触发 Inbox；启动时和每 5 分钟轮询作为兜底。
 - 每天 `Asia/Shanghai` 08:00 运行每日流程。
-- 08:00 时 Obsidian 未运行，则在下次打开后补跑。
+- Core 接管调度时，后台进程负责补跑；兼容的插件调度在下次打开 Obsidian 后补跑。
 - 可按独立间隔自动同步所有明确启用的 Feed 订阅；逐源信任、禁用和移除
   均可在控制中心管理。
 - 数据源主机可在一次明确授权后自动构建、验证、隐私扫描，并仅在有变化时
@@ -20,7 +25,8 @@
   否则显示页码/文本表单。保存始终调用 PaperFlow CLI 并刷新标注索引。
 - 阅读工作区先调用中央 `annotation ensure-index`，再打开 CLI 返回的配置路径；
   不硬编码年份或默认标注根目录。旧索引不删除，用户正文只导入一次。
-- 直接启动 Vault 内固定 `.paperflow/.venv/Scripts/python.exe`，`shell: false`，不调用 PowerShell、CMD 或 Windows Task Scheduler。
+- 使用配置的 Python 环境启动固定白名单 CLI，`shell: false`，不拼接 Shell 命令。
+  Core 的 Windows 当前用户登录任务由后端管理，插件兼容调度让位于已验证的 Core。
 - 不把笔记、表单或剪贴板内容拼接进命令行。
 - Python 流水线仍使用 `.paperflow/runtime/pipeline.lock` 防止并发。
 - 左侧功能区或命令面板可打开“PaperFlow 控制中心”。首屏是可扩展的独立
@@ -35,7 +41,7 @@
   发布仓库本地 hooks 也被禁用，`.git` 永不进入 Feed 校验和或隐私扫描内容。
 - Push 前后端都会再次执行 Feed 验证与隐私扫描；未选择数据许可证时无法构建。
 
-插件只在 Obsidian 桌面版打开时运行。手动命令：
+插件界面和兼容调度只在 Obsidian 桌面版打开时运行；Core 调度可独立运行。手动命令：
 
 发布入口 `main.js` 已内联阅读工作区实现，不依赖运行时相对 `require()`。
 即使 Electron renderer 的当前目录不在插件目录，插件也可直接加载。

@@ -17,6 +17,17 @@ PaperFlow: Open paper reading workspace
 不会因当前 active leaf 改变而丢失；标注与 Community 使用不同的右侧 leaf。
 全部文件打开后，插件等待 PDF leaf 完成 reveal，并把焦点切回 PDF。
 
+重复执行会复用同一论文已经打开的 PDF、标注、Review 和社区面板。
+标注与社区面板会显式 reveal，避免文件虽已打开但仍被控制中心页遮挡。
+PDF++ 加载等待最多阻塞命令 5 秒；其他面板先打开，若 PDF 仍加载中，
+返回结果包含 `pdfLoading: true`，不会让整个阅读入口无限等待。
+
+标注索引同时展示 Zotero Reader 的私有只读镜像，包括摘录、评论、页码和
+打开 Zotero 条目的链接。Core 收到新增、修改或删除事件后自动重建索引；
+旧镜像可通过 `annotation ensure-index <paper_uid> --apply` 重建显示。
+这些标注仍由 Zotero 管理，不会转成 Obsidian 的个人标注或公共贡献。
+请在生成区块之外写个人补充，或使用独立的 User Notes / Review 文件。
+
 打开布局前，插件通过中央 allowlist 调用
 `paperflow annotation ensure-index <paper_uid> --apply`，并使用 JSON 返回的
 实际路径。默认索引是 `60 Annotations/<paper_id>/index.md`；若 Workspace

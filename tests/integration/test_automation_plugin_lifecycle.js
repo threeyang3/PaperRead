@@ -253,6 +253,63 @@ async function main() {
     process.chdir(originalCwd);
   }
   assert.deepEqual(relativeModuleRequests, []);
+  const setupPlugin = new AutomationPlugin();
+  setupPlugin.settings = AutomationPlugin.__test.mergedSettings({ enabled: true });
+  setupPlugin.vaultRoot = () => fixtureVaultRoot;
+  let setupSaved = 0;
+  setupPlugin.saveSettings = async () => { setupSaved++; };
+  setupPlugin.loadWorkspaceTimezone = async () => {};
+  const setupRequests = [];
+  setupPlugin.runControlAction = async (action, payload, options) => {
+    setupRequests.push({ action, payload, options });
+    return { code: 0, stdout: JSON.stringify(action === "onboard-plan"
+      ? { status: "new", digest: "approved-digest", changes: ["welcome.md"], folders: [], conflicts: [] }
+      : { status: "initialized", initialized: true, errors: [] }) };
+  };
+  const setup = new AutomationPlugin.__test.PaperFlowSetupModal(setupPlugin.app, setupPlugin);
+  setup.probe = async () => ({ version: "1.5.1", onboarding: true });
+  setup.open();
+  await setup.preview();
+  assert.equal(setup.stage, "preview");
+  assert.equal(setupSaved, 0);
+  await setup.initialize();
+  assert.equal(setup.stage, "connections");
+  assert.equal(setupPlugin.settings.enabled, false);
+  assert.equal(setupRequests[1].payload.digest, "approved-digest");
+  assert.equal(setupRequests[1].payload.vault, fixtureVaultRoot);
+  assert.equal(setupSaved, 1);
+  const closingSetup = new AutomationPlugin.__test.PaperFlowSetupModal(setupPlugin.app, setupPlugin);
+  closingSetup.plan = { digest: "approved-digest" };
+  const originalSetupAction = setupPlugin.runControlAction;
+  const originalHasWorkspace = setupPlugin.hasWorkspace;
+  setupPlugin.hasWorkspace = () => false;
+  setupPlugin.settings.enabled = true;
+  setupPlugin.runControlAction = async () => {
+    assert.equal(setupPlugin.settings.enabled, false);
+    closingSetup.close();
+    return { code: 0, stdout: '{"initialized":true,"errors":[]}' };
+  };
+  await closingSetup.initialize();
+  assert.equal(closingSetup.closed, true);
+  assert.equal(setupPlugin.settings.enabled, false);
+  setupPlugin.runControlAction = originalSetupAction;
+  setupPlugin.hasWorkspace = originalHasWorkspace;
+  const oldAction = setupPlugin.runControlAction;
+  setupPlugin.runControlAction = async () => ({ code: 0, stdout: JSON.stringify({
+    status: "verified", authenticated: true, base_url: "http://127.0.0.1:24567"
+  }) });
+  assert.equal((await setup.verifyCore()).base_url, "http://127.0.0.1:24567");
+  assert.equal(setup.coreUrl, "http://127.0.0.1:24567");
+  setupPlugin.runControlAction = async () => ({ code: 0, stdout: '{"status":"ready","authenticated":false}' });
+  await assert.rejects(setup.verifyCore(), /unverified|未验证/);
+  setupPlugin.runControlAction = oldAction;
+  const failedSetup = new AutomationPlugin.__test.PaperFlowSetupModal(setupPlugin.app, setupPlugin);
+  failedSetup.probe = async () => { throw new Error("Core missing"); };
+  await failedSetup.perform(() => failedSetup.preview());
+  assert.equal(failedSetup.stage, "environment");
+  assert.equal(failedSetup.message, "Core missing");
+  await assert.rejects(AutomationPlugin.__test.probeSetupRuntime(path.join(fixtureVaultRoot, "missing-python")));
+  assert.throws(() => AutomationPlugin.__test.controlCommands("onboard-apply", { vault: fixtureVaultRoot }), /Preview digest/);
   const redact = AutomationPlugin.__test.redactAutomationLog;
   const redactionCases = [
     ["token=secret", "secret"],
@@ -400,6 +457,23 @@ async function main() {
   assert.equal(communityLeaf.file, community);
   assert.equal(layoutWorkspace.revealedLeaf, pdfLeaf);
   assert.equal(layoutWorkspace.activeLeaf, pdfLeaf);
+  const originalOpen = pdfLeaf.openFile;
+  pdfLeaf.openFile = () => new Promise(() => {});
+  const loadingResult = await AutomationPlugin.__test.openReadingWorkspace(layoutApp, {
+    annotationPath: annotation.path, pdfLoadTimeoutMs: 5
+  });
+  assert.equal(loadingResult.pdfLoading, true);
+  assert.equal(annotationLeaf.file, annotation);
+  assert.equal(reviewLeaf.file, review);
+  assert.equal(communityLeaf.file, community);
+  pdfLeaf.openFile = originalOpen;
+  for (const leaf of layoutLeaves) leaf.view = { file: leaf.file };
+  layoutWorkspace.getLeavesOfType = () => layoutLeaves;
+  const savedGetLeaf = layoutWorkspace.getLeaf;
+  layoutWorkspace.getLeaf = () => { throw new Error("Duplicate reading pane"); };
+  await workspacePlugin.openPaperReadingWorkspace();
+  layoutWorkspace.getLeaf = savedGetLeaf;
+  delete layoutWorkspace.getLeavesOfType;
   assert.deepEqual(layoutWorkspace.activeOptions, { focus: true });
   assert.deepEqual(layoutResult, {
     paper: paper.path,
@@ -721,6 +795,28 @@ async function main() {
   assert.equal(plugin.started, true);
   assert.equal(AutomationPlugin.__test.intervalDue("", 60), true);
 
+  // Live Core ownership suppresses automatic jobs while manual execution stays available.
+  const sessionDir = path.join(fixtureVaultRoot, ".paperflow", "state");
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = path.join(sessionDir, "zotero-core-session.json");
+  let probes = 0;
+  const healthServer = require("http").createServer((request, response) => {
+    probes += 1;
+    assert.equal(request.url, "/health");
+    response.end(JSON.stringify({ ok: true, service: "paperflow-core", status: "ready", scheduler: { owner: "core" } }));
+  });
+  await new Promise(resolve => healthServer.listen(0, "127.0.0.1", resolve));
+  fs.writeFileSync(sessionFile, JSON.stringify({ base_url: `http://127.0.0.1:${healthServer.address().port}` }));
+  assert.equal(await plugin.coreOwnsAutomation(), true);
+  await plugin.runJob("daily", "schedule");
+  assert.equal(plugin.runningJob, null);
+  fs.writeFileSync(sessionFile, JSON.stringify({ base_url: "http://example.com" }));
+  const probeCount = probes;
+  assert.equal(await plugin.coreOwnsAutomation(), false);
+  assert.equal(probes, probeCount);
+  await new Promise(resolve => healthServer.close(resolve));
+  fs.unlinkSync(sessionFile);
+
   const childRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "paperflow-automation-child-")
   );
@@ -815,6 +911,16 @@ async function main() {
   const unloaded = await unloadPromise;
   assert.equal(unloaded.abortReason, "unload");
   assert.equal(plugin.activeChild, null);
+
+  const firstRunPlugin = new AutomationPlugin();
+  firstRunPlugin.hasWorkspace = () => false;
+  let firstRunOpened = 0;
+  firstRunPlugin.openSetupWizard = () => { firstRunOpened++; };
+  firstRunPlugin.startAutomation = async () => { throw new Error("Uninitialized vault must not schedule jobs"); };
+  await firstRunPlugin.onload();
+  await layoutReady();
+  assert.equal(firstRunOpened, 1);
+  firstRunPlugin.onunload();
 
   console.log("PaperFlow Automation lifecycle tests passed");
 }

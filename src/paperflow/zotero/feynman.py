@@ -49,9 +49,15 @@ def load_answers(root: Path, paper_uid: str) -> dict[str, Any]:
 
 
 def ensure_questions(root: Path, paper_uid: str, questions: list[object], *, apply_changes: bool = False) -> dict[str, Any]:
-    normalized = normalize_questions(paper_uid, questions)
     path = feynman_path(root, paper_uid)
     existing = load_answers(root, paper_uid)
+    normalized = [dict(item) for item in existing.get("questions", []) if isinstance(item, dict) and item.get("id") and item.get("question")]
+    seen = {str(item["question"]) for item in normalized}
+    for value in questions:
+        text = " ".join(str(value or "").split()).strip()
+        if text and text not in seen:
+            normalized.append({"id": question_id(paper_uid, text, len(normalized)), "question": text})
+            seen.add(text)
     merged = dict(existing)
     merged.setdefault("schema_version", 1)
     merged["paper_uid"] = paper_uid
@@ -59,7 +65,7 @@ def ensure_questions(root: Path, paper_uid: str, questions: list[object], *, app
     merged.setdefault("answers", {})
     merged.setdefault("feedback", [])
     result = {"paper_uid": paper_uid, "path": path.as_posix(), "question_count": len(normalized), "dry_run": not apply_changes, "permission": "USER_MANAGED"}
-    if apply_changes:
+    if apply_changes and merged != existing:
         PermissionGuard(root).authorize(path, "USER_MANAGED")
         dump_yaml(path, merged)
         result["status"] = "written"

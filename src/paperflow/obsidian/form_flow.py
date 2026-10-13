@@ -164,9 +164,13 @@ def install_or_upgrade(vault: Path, *, mode: str = "install") -> dict[str, Any]:
     state_path = vault / ".paperflow/state/integrations/form-flow.json"
     previous: dict[str, str] = {}
     if state_path.exists():
-        previous = json.loads(state_path.read_text(encoding="utf-8")).get(
-            "installed_hashes", {}
-        )
+        old_state = json.loads(state_path.read_text(encoding="utf-8"))
+        previous = dict(old_state.get("installed_hashes", {}))
+        # Older states recorded the user's hash on merge-review. That hash is
+        # not proof that the file is ours and must never authorize replacement.
+        for action in old_state.get("actions", []):
+            if action.get("action") == "merge-review":
+                previous.pop(action.get("path"), None)
     backup = (
         vault
         / ".paperflow/backups"
@@ -206,7 +210,6 @@ def install_or_upgrade(vault: Path, *, mode: str = "install") -> dict[str, Any]:
                 "candidate": conflict.relative_to(vault).as_posix(),
             }
         )
-        installed_hashes[destination_name] = current_hash
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state = {
         "integration": "form-flow",

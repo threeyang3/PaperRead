@@ -49,6 +49,22 @@ safe and does not overwrite User Data.
 
 ## Zotero 与 Core
 
+- **关闭 Obsidian 后不再调度**：先设置
+  `paperflow config set obsidian.scheduler_owner core --vault <vault>`，再确认
+  Core `/health` 的 `scheduler.owner` 为 `core`、`scheduler.error` 为空。
+  调度读取现有启用开关、每日时间和订阅间隔；电脑关机/未登录时不会运行。
+- **希望登录后自动启动 Core**：使用 Vault 虚拟环境运行
+  `paperflow zotero service autostart --apply --vault <vault>`。不带 `--apply`
+  查看注册状态，`--remove` 撤销。任务以当前用户、无窗口方式启动；正常手动停止
+  不会触发异常重试。恢复 Obsidian 调度可将 `scheduler_owner` 设回 `obsidian`。
+
+- **Core 启动后常驻 Python/CMD 窗口**：Windows 的 `DETACHED_PROCESS` 会让
+  `CREATE_NO_WINDOW` 被忽略，虚拟环境转发器的子进程可能新建控制台。
+  修复后的 `zotero service start` 使用无窗口进程标志；更新程序后用
+  `zotero service stop` / `start` 重启一次即可。此项属于 Core 程序，更新 XPI 无法改变它。
+- **空资料库看不到条目右键菜单**：新版设置入口位于「设置 → PaperFlow」，
+  全局入口位于「工具 → PaperFlow」。无需先创建条目；连接后可直接从 Core 导入论文及 PDF。
+- **设置中没有 PaperFlow**：确认安装了包含设置页的插件包并重启；旧版 1.5.1 包仅有条目右键入口。
 - **连接返回 401**：确认 Core 仍绑定 `127.0.0.1`，重新执行一次“连接 Core”。
   成功配对后，后续 Core 重启应自动续期 session，不需要保存长期 bearer token。
 - **菜单没有响应或仍显示旧错误**：先正常重启 Zotero，使 bootstrap 与子模块同时

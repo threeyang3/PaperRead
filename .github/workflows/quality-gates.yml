@@ -80,6 +80,10 @@ jobs:
       - run: node tests/integration/test_zotero_core_client.js
       - run: node tests/integration/test_zotero_plugin_api.js
       - run: node tests/integration/test_zotero_ui.js
+      - run: node tests/integration/test_zotero_bootstrap_dialog.js
+      - run: node tests/integration/test_zotero_reader_control.js
+      - run: node tests/integration/test_zotero_job_status.js
+      - run: node tests/integration/test_zotero_preferences.js
 
   quality:
     runs-on: ubuntu-latest

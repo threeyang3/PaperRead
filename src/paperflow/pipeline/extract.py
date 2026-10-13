@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
-import fitz
+import pymupdf as fitz
 from paperflow.utils import atomic_write
 
 HEADING_RE = re.compile(r"^(?:\d+(?:\.\d+)*\s+)?(?:abstract|introduction|related work|method|experiments?|results?|conclusion|limitations?)\b", re.I)

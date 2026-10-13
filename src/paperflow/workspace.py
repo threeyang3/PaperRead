@@ -218,6 +218,7 @@ class ObsidianBasesSettings(StrictModel):
 
 
 class ObsidianSettings(StrictModel):
+    scheduler_owner: Literal["obsidian", "core"] = "obsidian"
     install_form_flow: bool = True
     create_bases: bool = True
     enable_daily_automation: bool = True

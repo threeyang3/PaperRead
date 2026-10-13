@@ -17,6 +17,49 @@ function normalizeLoopbackUrl(value) {
 }
 
 class PaperFlowCoreClient {
+  static summarizeJobs(records, now = new Date()) {
+    const formatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    });
+    const timestamp = (value) => {
+      const text = String(value || "").trim();
+      if (!text) return null;
+      // Legacy unzoned scheduler timestamps are Beijing local time.
+      const normalized = /(?:Z|[+-]\d\d:\d\d)$/i.test(text)
+        ? text : `${text.replace(" ", "T")}+08:00`;
+      const date = new Date(normalized);
+      return Number.isFinite(date.getTime()) ? date : null;
+    };
+    const today = formatter.format(now).slice(0, 10);
+    const jobs = (Array.isArray(records) ? records : []).map(job => ({
+      job, date: timestamp(job.updated_at || job.created_at),
+    })).sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
+    const active = new Set(["queued", "running", "cancellation-requested"]);
+    const counts = { active: 0, todayFailed: 0, historicalFailed: 0, undatedFailed: 0 };
+    for (const { job, date } of jobs) {
+      if (active.has(job.status)) counts.active++;
+      if (["failed", "interrupted"].includes(job.status)) {
+        if (!date) counts.undatedFailed++;
+        else if (formatter.format(date).slice(0, 10) < today) counts.historicalFailed++;
+        else counts.todayFailed++;
+      }
+    }
+    const kinds = { analysis: "分析", render: "渲染", "subscription-sync": "订阅同步" };
+    const statuses = { completed: "已完成", failed: "失败", interrupted: "中断",
+      queued: "排队中", running: "运行中", cancelled: "已取消", skipped: "已跳过",
+      "cancellation-requested": "正在取消", "completed-after-cancel-request": "取消请求前已完成" };
+    const lines = jobs.slice(0, 3).map(({ job, date }) =>
+      `${date ? formatter.format(date) : "时间未知"} · ${kinds[job.kind] || job.kind || "任务"} · ${statuses[job.status] || job.status || "未知"}` +
+      (job.paper_uid ? ` · ${job.paper_uid}` : ""));
+    const message = jobs.length
+      ? `最近 ${jobs.length} 个作业：进行中 ${counts.active}，今日失败 ${counts.todayFailed}，历史失败 ${counts.historicalFailed}` +
+        (counts.undatedFailed ? `，时间未知的失败 ${counts.undatedFailed}` : "") +
+        `\n${lines.join("\n")}\n历史失败保留作诊断，不代表连接失败。时间：北京时间。`
+      : "暂无任务";
+    return { ...counts, message };
+  }
+
   constructor(baseUrl = "http://127.0.0.1:23140", token = "", options = {}) {
     this.baseUrl = normalizeLoopbackUrl(baseUrl);
     this.token = "";
@@ -261,6 +304,10 @@ class PaperFlowCoreClient {
       `/jobs/${encodeURIComponent(String(jobId || ""))}/cancel`,
       {}
     );
+  }
+
+  retryJob(jobId) {
+    return this._request("POST", `/jobs/${encodeURIComponent(String(jobId || ""))}/retry`, {});
   }
 }
 
