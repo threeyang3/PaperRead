@@ -2,6 +2,15 @@ name: PaperFlow quality gates
 
 on:
   workflow_call:
+    inputs:
+      full:
+        description: Run the full release and compatibility matrix
+        type: boolean
+        default: true
+      docs-only:
+        description: Validate documentation shipped in release archives
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -11,18 +20,9 @@ env:
   PYTHONUTF8: "1"
 
 jobs:
-  golden-workflow:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - run: python -m pip install --require-hashes -r requirements/release-py312.txt
-      - run: python -m pip install --no-deps -e .
-      - run: python -m pytest tests/e2e/test_golden_workflow.py -vv
-
   dependency-compatibility:
+    needs: quality
+    if: inputs.full || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -34,6 +34,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements/release-py*.txt
       - name: Install locked dependency graph
         if: matrix.mode == 'locked'
         run: |
@@ -47,17 +49,24 @@ jobs:
       - run: python -m pytest tests/feed tests/unit/test_pdf_resolver.py tests/unit/test_zotero_core_service.py
 
   python-tests:
+    needs: quality
+    if: inputs.full || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.11", "3.12", "3.13"]
+        exclude:
+          - os: ubuntu-latest
+            python: "3.13"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements/release-py*.txt
       - name: Install locked dependencies
         shell: bash
         run: |
@@ -68,10 +77,11 @@ jobs:
       - run: python -m pytest
 
   node-integrations:
+    if: ${{ !inputs.docs-only }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON((inputs.full || github.event_name == 'workflow_dispatch') && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,12 +92,15 @@ jobs:
       - run: node tests/integration/test_zotero_ui.js
 
   quality:
+    if: ${{ !inputs.docs-only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements/release-py*.txt
       - run: python -m pip install --require-hashes -r requirements/release-py313.txt
       - run: python -m pip install --no-deps -e .
       - run: ruff check .
@@ -98,24 +111,17 @@ jobs:
       - run: python scripts/check_coverage.py coverage.json
       - run: pip-audit -r requirements/release-py313.txt
 
-  domain-contracts:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - run: python -m pip install --require-hashes -r requirements/release-py312.txt
-      - run: python -m pip install --no-deps -e .
-      - run: python -m pytest tests/feed tests/migration tests/compatibility
-
   release-build:
+    needs: quality
+    if: inputs.full || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/release-py*.txt
       - run: python -m pip install --require-hashes -r requirements/release-py312.txt
       - run: python -m pip install --no-deps -e .
       - run: python scripts/check_versions.py
@@ -130,9 +136,35 @@ jobs:
           $paperflow = "$env:RUNNER_TEMP\paperflow-wheel-smoke\Scripts\paperflow.exe"
           & $paperflow --version
           & $paperflow --help
+          & $paperflow init --non-interactive --vault "$env:RUNNER_TEMP\PaperFlow 测试库"
+          & $paperflow workspace info --vault "$env:RUNNER_TEMP\PaperFlow 测试库"
+          $previousNativePreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          $doctor = & $paperflow doctor --vault "$env:RUNNER_TEMP\PaperFlow 测试库" 2>&1
+          $doctorExit = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+          if ($doctorExit -notin @(0, 1)) { throw "doctor crashed: $doctor" }
+          if (-not ($doctor | Select-String "Workspace schema")) { throw "doctor output incomplete" }
+          $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: paperflow-release-dist
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  documentation-package:
+    if: inputs.docs-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/release-py312.txt
+      - run: python -m pip install --require-hashes -r requirements/release-py312.txt
+      - run: python -m pip install --no-deps -e .
+      - run: python scripts/check_versions.py
+      - run: python scripts/build_release.py
+      - run: python -m pytest tests/packaging -q

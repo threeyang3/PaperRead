@@ -57,3 +57,35 @@ def test_release_locks_cover_supported_python_versions_with_hashes() -> None:
         text = lock.read_text(encoding="utf-8")
         assert "--hash=sha256:" in text
         assert "paperflow @ file:" not in text
+
+
+def test_release_always_requests_full_gates_without_cancellation() -> None:
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    release = yaml.load((ROOT / ".github/workflows/release.yml").read_text())
+    assert release["jobs"]["quality-gates"]["with"] == {"full": True, "docs-only": False}
+    assert "concurrency" not in release
+    assert release["jobs"]["release"]["needs"] == "quality-gates"
+    quality = yaml.load((ROOT / ".github/workflows/quality-gates.yml").read_text())
+    assert quality["on"]["workflow_call"]["inputs"]["full"]["default"] is True
+    assert quality["on"]["workflow_call"]["inputs"]["docs-only"]["default"] is False
+    assert quality["jobs"]["release-build"]["needs"] == "quality"
+    commands = [step.get("run", "") for step in quality["jobs"]["quality"]["steps"]]
+    assert "python -m pytest --cov=paperflow --cov-report=term-missing --cov-report=json" in commands
+    smoke = "\n".join(step.get("run", "") for step in quality["jobs"]["release-build"]["steps"])
+    assert "& $paperflow init" in smoke
+    assert "& $paperflow workspace info" in smoke
+    assert "& $paperflow doctor" in smoke
+
+
+def test_diagnostic_workflows_no_longer_duplicate_push_and_pr_runs() -> None:
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    for name in ("build.yml", "feed-validation.yml", "migration-tests.yml"):
+        workflow = yaml.load((ROOT / ".github/workflows" / name).read_text())
+        assert set(workflow["on"]) == {"workflow_dispatch"}
+    ci = yaml.load((ROOT / ".github/workflows/ci.yml").read_text())
+    assert ci["on"]["push"]["branches"] == ["main"]
+    assert ci["concurrency"]["cancel-in-progress"] is True
