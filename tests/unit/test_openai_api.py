@@ -59,7 +59,10 @@ def test_json_client_uses_environment_only_and_rejects_truncation(monkeypatch):
 def test_optional_api_provider_validates_analysis_without_cli(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PAPERFLOW_OPENAI_API_KEY", "test-secret")
     config = ProviderConfig(model="model-test", base_url="https://example.org/v1")
-    provider = make_provider("openai-api", tmp_path, config)
+    # Use the repository's actual prompt/schema resources, just as the
+    # production workspace does. Only the HTTP transport is mocked.
+    repo_root = Path(__file__).resolve().parents[2]
+    provider = make_provider("openai-api", repo_root, config)
     assert provider.check_available().available
     metadata = PaperMetadata(paper_uid="arxiv:2504.16054", paper_title="Example paper")
     staged = tmp_path / "paper.txt"
