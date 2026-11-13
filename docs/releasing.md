@@ -2,12 +2,43 @@
 
 ## 1.5 post-audit Release Candidate gate
 
-CI and tag-triggered Release call `.github/workflows/quality-gates.yml`; Release
-does not maintain a smaller parallel test list. The shared gate covers Python
-3.11-3.13 on Windows, Ubuntu and macOS, locked/latest-compatible dependencies,
-all Python tests, five Node integration entries, Ruff, format, Mypy, coverage,
-pip-audit, Feed/migration contracts, build, packaging, wheel install and the
-real Windows Offline Installer smoke.
+CI and tag-triggered Release call `.github/workflows/quality-gates.yml`. Routine CI
+uses a reduced platform matrix; **Release explicitly requests the full gate**.
+The release gate still covers Python 3.11–3.13 on Windows, Ubuntu and macOS,
+locked/latest-compatible dependencies, all Python tests, five Node integration
+entries, Ruff, format, Mypy, coverage, pip-audit, Feed/migration contracts,
+build, packaging, wheel install, initialized-workspace/Doctor smoke and the
+real Windows Offline Installer smoke. Ubuntu/Python 3.13 is covered by the
+quality/coverage job instead of a second identical full pytest job.
+
+## CI frequency and scope
+
+- Automatic validation runs once for a main push or PR; feature-branch pushes
+  do not start a second copy. New commits cancel superseded validation only.
+  Release has no cancellation group and still waits for all quality gates.
+- Routine application, test, schema, template and prompt changes run Linux
+  Python 3.13 full pytest/coverage, static checks, version checks, dependency
+  audit and the five Linux Node integration entries. The full pytest includes
+  the golden workflow, Feed, migrations, compatibility and packaging tests.
+- OS/path/storage integration, dependencies, installers/build tooling,
+  workflows and unknown files additionally run the full compatibility matrix
+  and Windows release build. Expensive Python jobs wait for the base quality
+  gate. Scope rules and real multi-commit/rename/PR-range tests live in
+  `.github/ci_scope.py` and `.github/test_ci_scope.py`.
+- Documentation-only changes run a Linux package build/audit because docs,
+  README and licence files are shipped in the sdist/install archives. They do
+  not run unrelated cross-platform tests. Templates/prompts are product
+  inputs, not documentation-only changes.
+- `Build`, `Feed validation` and `Migration tests` are manual diagnostic
+  workflows; their checks remain in automatic CI, without duplicate runs.
+- **Before release**, require the final commit's full checks: use CI → Run
+  workflow for manual verification when necessary. A version tag always runs
+  the full reusable gates before publication, even for documentation-only
+  changes. Never reuse a result from a different commit or skip a required
+  gate to save minutes. Do not create a tag without release authorization.
+- Validate locally and batch related changes before pushing. Dependencies are
+  cached, but installs, audits and required checks still run. Do not repeatedly
+  retry quota failures or deterministic test failures.
 
 The tag workflow checks that the tag version matches Python, Obsidian and
 Zotero manifests, and that the tag commit belongs to `main`. It then enters the

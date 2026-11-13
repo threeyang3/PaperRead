@@ -10,6 +10,9 @@ permissions:
 jobs:
   quality-gates:
     uses: ./.github/workflows/quality-gates.yml
+    with:
+      full: true
+      docs-only: false
 
   release:
     needs: quality-gates
