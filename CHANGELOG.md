@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+- Resolve the Windows-only exclusive socket option inside its platform branch
+  so Linux type checking passes while missing Windows support fails closed.
+
+- Match Windows Core process roots exactly, including Unicode and spaces,
+  before treating a PID as this Vault's service. Preserve first-run automation
+  defaults even if its Obsidian wizard closes during initialization.
+- Add all nine JavaScript integration suites to cross-platform CI and reconcile
+  setup/scheduling guides with Core ownership and explicit runtime prerequisites.
+
+- Stage and validate first-run resources before publishing the Workspace
+  marker; roll back incomplete generated files while preserving intervening
+  user edits. Verify authenticated Core connections at the actual session URL.
+- Use a read-only Windows process query and exclusive Core port binding;
+  reject unauthenticated "already running" states instead of starting duplicates.
+- Keep Form Flow merge conflicts separate from managed file hashes, including
+  older conflict states, so repeated preparation cannot overwrite custom forms.
+
+- Add an Obsidian first-run wizard with a bounded local Core runtime probe,
+  read-only initialization preview, confirmed local setup, configuration backup,
+  conflict rejection, Core startup, pairing-token copy and Form Flow preparation.
+  Existing workspaces are not reinitialized; new workspaces start with automation off.
+- Close inherited output handles when starting Core on Windows, so the
+  Obsidian launch command returns while Core continues running in the background.
+
+- Project private Zotero Reader mirrors into the Obsidian annotation index;
+  update on modification/deletion while preserving personal annotations and
+  text outside the generated section. Escape Reader content before display.
+- Keep CLI JSON stdout clean by using the supported PyMuPDF import; reveal
+  reading panes explicitly, reuse existing panes, and bound PDF++ loading waits.
+
+- Add personal-repository Community publication previews and explicitly
+  confirmed owner-authenticated draft PR submission through GitHub REST;
+  preserve immutable revisions, freeze approved bytes, resume identical
+  branches, and reject stale digests, missing permissions or creator mismatch.
+- Scan nested Community extensions, tags and anchor context for private
+  properties, local paths, secrets and active content before publication.
+
+- Add authenticated manual job retry and native Zotero settings job actions;
+  retain failure history, normalize legacy arXiv identities and resolve retry
+  inputs from current configuration rather than old machine paths or models.
+- Render complete AI section content in Zotero Markdown, including research
+  problem, contributions, method, experiment design, results, limitations and
+  reproduction conditions; retain deterministic, non-overwriting projection.
+- Preserve Feynman question identities and answers across reordering or empty
+  analysis refreshes; allow adding an independent personal question with
+  `zotero feynman ask` even when AI has supplied none.
+
+- Add opt-in Core scheduling for daily discovery, Inbox requests and source
+  sync, with Beijing catch-up, durable restart deduplication and Obsidian
+  ownership coordination. Add current-user Windows windowless login startup
+  with native task supervision and abnormal-exit retry.
+- Probe Core ownership through bounded Node loopback HTTP instead of renderer
+  fetch, avoiding Obsidian CORS rejection; verify the real desktop handshake.
+
+- Launch Windows Core with CREATE_NO_WINDOW without the conflicting
+  DETACHED_PROCESS flag, preventing the Python venv redirector from opening
+  a persistent console. A real Windows subprocess check verifies no console.
+- Separate active, Beijing-today failed, historical failed and undated failed
+  Zotero jobs; include readable timestamps and paper identity in diagnostics.
+- Require authenticated job access for the Control Center connection badge,
+  add analysis/attachment recovery guidance and a native settings shortcut,
+  and ignore refresh results after its window is closed.
+- Fix Zotero settings handlers to use the native `getScope()` API; exercise
+  every inline button handler to detect invalid sandbox API calls.
+- Add a native Zotero settings pane and a Tools menu usable in an empty
+  library; validate pairing through protected endpoints and avoid reporting
+  a successful connection on public health alone.
+- Correct Zotero preference writes to the global plugin namespace, preserve
+  legacy settings on read, and clear endpoint-bound credentials when changing
+  the Core URL.
+- Read automation status from the current plugin runtime file, with legacy
+  fallback and diagnostics, and support an explicit `status --vault`.
+- Discover custom Zotero installations available on PATH.
+- Detect standard Windows Obsidian installations outside PATH and prefer the
+  console launcher for CLI health checks.
+- Accept exact versioned PDF wikilinks with or without the `.pdf` extension,
+  including page anchors and aliases, during Workspace v3 verification.
+  Links to another version or a similarly prefixed filename remain invalid.
+
 - Unified the supported paper CLI under `paperflow paper` with explicit
   `--vault` support and added a structured `paper inspect` status report.
 - Fixed the normal import crash when no unmatched topic exists, ensured

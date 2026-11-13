@@ -73,6 +73,9 @@ def _paper_record(root: Path, paper_uid: str) -> dict[str, Any]:
                             "ai_analysis_profile": (selected.get("identity") or {}).get("profile", ""),
                             "ai_analyzed_at": selected.get("analyzed_at", ""),
                         }
+                else:
+                    from paperflow.data.compose import compose_record
+                    value = compose_record(root, {"paper_uid": paper_uid, "metadata": value}, overlay=value)
                 return value
     raise FileNotFoundError(f"paper record not found: {paper_uid}")
 
@@ -120,14 +123,28 @@ def build_ai_markdown(record: dict[str, Any], *, zotero_item_key: str = "") -> s
         "updated_at": _field(record, "ai_analyzed_at", "system_last_synced_at"),
     }
     sections = [f"# {title}", "", "## 一句话概述", "", summary]
-    if contributions:
-        sections += ["", "## 主要贡献", "", *[f"- {value}" for value in contributions]]
-    if methods:
-        sections += ["", "## 方法线索", "", *[f"- {value}" for value in methods]]
-    if evidence:
-        sections += ["", "## 证据与结果", "", *[f"- {value}" for value in evidence]]
-    if limitations:
-        sections += ["", "## 局限与风险", "", *[f"- {value}" for value in limitations]]
+    detail = record.get("sections") if isinstance(record.get("sections"), dict) else {}
+    for key, label, fallback in [
+        ("problem", "研究问题", []),
+        ("contributions", "主要贡献", contributions),
+        ("method", "方法与实现", methods),
+        ("experiments", "实验设计", []),
+        ("results", "证据与结果", evidence),
+        ("limitations", "局限与风险", limitations),
+    ]:
+        value = detail.get(key)
+        if isinstance(value, str) and value.strip():
+            content = [value.strip()]
+        elif isinstance(value, list):
+            content = [f"- {item.strip()}" for item in value if isinstance(item, str) and item.strip()]
+        else:
+            content = [f"- {item}" for item in fallback]
+        if content:
+            sections += ["", f"## {label}", "", *content]
+    for key, label in [("ai_reproducibility_reason", "复现条件"), ("ai_recommendation", "阅读建议")]:
+        value = _field(record, key)
+        if value:
+            sections += ["", f"## {label}", "", value]
     if questions:
         sections += ["", "## 费曼问题", "", *[f"- [ ] {value}" for value in questions]]
     sections += ["", "---", "", "> 本页是 AI Raw 的系统管理投影；个人答案、复盘和复现记录请写入独立用户文档。", ""]

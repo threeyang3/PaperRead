@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import fitz
+import pymupdf as fitz
 import httpx
 
 from paperflow.utils import atomic_json

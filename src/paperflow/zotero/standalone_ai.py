@@ -134,7 +134,7 @@ def _text_for_analysis(root: Path, record: dict[str, Any]) -> str:
         if not pdf.is_file():
             continue
         try:
-            import fitz
+            import pymupdf as fitz
 
             with fitz.open(pdf) as document:
                 pages = [

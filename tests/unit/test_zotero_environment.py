@@ -11,6 +11,14 @@ from paperflow.zotero.environment import redact_environment
 from paperflow.workspace import init_workspace
 
 
+def test_custom_zotero_install_on_path_is_detected(tmp_path, monkeypatch):
+    executable = tmp_path / "custom/Zotero/zotero.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setattr(environment.shutil, "which", lambda _name: str(executable))
+    assert executable in environment._executable_candidates()
+
+
 def test_detect_reads_custom_data_directory_without_database_access(tmp_path: Path, monkeypatch) -> None:
     profile = tmp_path / "Profiles" / "default"
     profile.mkdir(parents=True)

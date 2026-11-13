@@ -11,6 +11,7 @@ class PaperFlowControlCenter {
     this.notify = options.notify || (() => {});
     this.root = null;
     this.coreBadge = null;
+    this.jobStatus = null;
     this.activeTab = "inbox";
   }
 
@@ -223,8 +224,14 @@ class PaperFlowControlCenter {
       this._card(doc, "诊断与设置", "低频操作和连接问题集中在这里。", [
         this._button(doc, "刷新状态", () => this.refresh()),
         this._button(doc, "连接 Core", () => this.actions.configureCore?.()),
+        this._button(doc, "打开 PaperFlow 设置", () => this.Zotero.Utilities.Internal.openPreferences("paperflow-zotero-preferences")),
       ]),
     );
+    this.jobStatus = this._html(doc, "p");
+    this.jobStatus.style.whiteSpace = "pre-line";
+    this.jobStatus.textContent = "正在读取作业状态…";
+    panels.get("advanced").append(this._card(doc, "作业状态与恢复", "分析失败时，选择对应论文后使用分析页的“分析当前条目”重试；已有 PDF 可复用。AI 附件缺失时使用“附加 AI Markdown”。"));
+    panels.get("advanced").append(this.jobStatus);
     content.append(...panels.values());
     root.append(tabs, content);
     (doc.body || doc.documentElement).appendChild(root);
@@ -240,6 +247,7 @@ class PaperFlowControlCenter {
     const item = this.reader?.selectedItem?.();
     if (item && this.reader) await this.reader.refresh(String(item.key || item.id));
     if (!this.root) return;
+    const root = this.root;
     if (!client) {
       this.root.dataset.core = "offline";
       if (this.coreBadge) this.coreBadge.textContent = "Core 未连接";
@@ -247,11 +255,18 @@ class PaperFlowControlCenter {
     }
     try {
       const health = await client.health();
-      this.root.dataset.core = health?.ok ? "online" : "offline";
-      if (this.coreBadge) this.coreBadge.textContent = health?.ok ? "Core 已连接" : "Core 不可用";
-    } catch (_error) {
+      if (this.root !== root) return;
+      if (!health?.ok) throw new Error("Core 不可用");
+      const jobs = await client.jobs(20);
+      if (this.root !== root) return;
+      this.root.dataset.core = "online";
+      if (this.coreBadge) this.coreBadge.textContent = "Core 已连接";
+      if (this.jobStatus) this.jobStatus.textContent = client.constructor.summarizeJobs(jobs?.jobs).message;
+    } catch (error) {
+      if (this.root !== root) return;
       this.root.dataset.core = "offline";
       if (this.coreBadge) this.coreBadge.textContent = "Core 连接异常";
+      if (this.jobStatus) this.jobStatus.textContent = error.message || String(error);
     }
   }
 
@@ -259,6 +274,7 @@ class PaperFlowControlCenter {
     if (this.root?.parentNode) this.root.parentNode.removeChild(this.root);
     this.root = null;
     this.coreBadge = null;
+    this.jobStatus = null;
   }
 }
 

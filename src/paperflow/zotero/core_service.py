@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import secrets
+import socket
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -230,6 +231,20 @@ def _read_job_state(root: Path, job_id: str) -> dict[str, Any]:
     return value
 
 
+class _CoreHTTPServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR permits multiple listeners on the same address.
+    # Exclusive binding prevents competing services from replacing one token file.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self) -> None:
+        if os.name == "nt":
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is None:
+                raise RuntimeError("Windows exclusive socket binding is unavailable")
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "PaperFlowCore/1"
 
@@ -383,6 +398,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(401, {"ok": False, "error": "authentication required"})
             return
         try:
+            if path.startswith("/jobs/") and path.endswith("/retry"):
+                job_id = unquote(path.removeprefix("/jobs/").removesuffix("/retry").rstrip("/"))
+                self._send(202, self.core.retry_job(job_id))
+                return
             if path.startswith("/jobs/") and path.endswith("/cancel"):
                 job_id = unquote(
                     path.removeprefix("/jobs/").removesuffix("/cancel").rstrip("/")
@@ -464,6 +483,9 @@ class PaperFlowCoreService:
         self.active_job_id: str | None = None
         self.lifecycle_state = "stopped"
         self.accepting_jobs = True
+        from paperflow.scheduler.core import CoreScheduler
+        self.scheduler = CoreScheduler(self)
+        self.scheduler_thread: threading.Thread | None = None
 
     @property
     def port(self) -> int:
@@ -484,6 +506,7 @@ class PaperFlowCoreService:
             "network_scope": "loopback-only",
             "status": self.lifecycle_state,
             "active_job": self.active_job_id,
+            "scheduler": self.scheduler.status,
         }
 
     def _write_session(self) -> Path:
@@ -871,6 +894,39 @@ class PaperFlowCoreService:
                         ))
                         token.raise_if_cancelled(side_effects=True)
                 result.update({"status": "completed", "sources": results, "source_count": len(vault_sources)})
+                from datetime import datetime
+                from paperflow.scheduler.core import BEIJING, read_object
+                runtime_path = self.root / ".paperflow/runtime/plugin-state.json"
+                runtime = read_object(runtime_path)
+                runtime.update(lastSourceSyncAt=datetime.now(BEIJING).isoformat(), lastSourceSyncExitCode=0)
+                atomic_json(runtime_path, runtime)
+            elif kind in {"daily", "inbox"}:
+                from paperflow.config import load_config
+                from paperflow.locking import FileLock
+                from paperflow.pipeline.daily import run_daily
+                from paperflow.pipeline.inbox import process_inbox
+                token.raise_if_cancelled()
+                with FileLock(self.root / ".paperflow/runtime/pipeline.lock"):
+                    config = load_config(self.root)
+                    workflow_result = run_daily(config) if kind == "daily" else process_inbox(config)
+                result.update(status="completed", result=workflow_result)
+                workflow_stats = workflow_result.get("stats")
+                nested_failures = (
+                    workflow_stats.get("failed") if isinstance(workflow_stats, dict) else None
+                )
+                if workflow_result.get("errors") or nested_failures or workflow_result.get("failed"):
+                    result.update(status="failed", error="workflow completed with errors; inspect result")
+                from datetime import datetime
+                from paperflow.scheduler.core import BEIJING, read_object
+                runtime_path = self.root / ".paperflow/runtime/plugin-state.json"
+                runtime = read_object(runtime_path)
+                now = datetime.now(BEIJING)
+                label = "Daily" if kind == "daily" else "Inbox"
+                runtime.update({f"last{label}At": now.isoformat(), f"last{label}ExitCode": 0 if result["status"] == "completed" else 1})
+                if kind == "daily":
+                    runtime["lastDailyDate"] = now.date().isoformat()
+                atomic_json(runtime_path, runtime)
+                token.raise_if_cancelled(side_effects=True)
             elif kind in {"analysis", "render"}:
                 from paperflow.config import ensure_layout, load_config
                 from paperflow.locking import FileLock
@@ -955,7 +1011,7 @@ class PaperFlowCoreService:
             return {**self.health(), "started": False, "status": "already-running"}
         self.lifecycle_state = "starting"
         self.accepting_jobs = True
-        self.httpd = ThreadingHTTPServer((self.host, self.requested_port), _Handler)
+        self.httpd = _CoreHTTPServer((self.host, self.requested_port), _Handler)
         self.httpd.core = self  # type: ignore[attr-defined]
         session = self._write_session()
         self._write_pairing_token()
@@ -964,16 +1020,18 @@ class PaperFlowCoreService:
             self.thread.start()
         self._start_worker()
         self.lifecycle_state = "ready"
+        self._start_scheduler()
         return {**self.health(), "started": True, "session_state": session.relative_to(self.root).as_posix()}
 
     def serve_forever(self) -> None:
         if self.httpd is None:
-            self.httpd = ThreadingHTTPServer((self.host, self.requested_port), _Handler)
+            self.httpd = _CoreHTTPServer((self.host, self.requested_port), _Handler)
             self.httpd.core = self  # type: ignore[attr-defined]
             self._write_session()
             self._write_pairing_token()
             self._start_worker()
             self.lifecycle_state = "ready"
+            self._start_scheduler()
         try:
             self.httpd.serve_forever()
         finally:
@@ -1005,6 +1063,8 @@ class PaperFlowCoreService:
         self.lifecycle_state = "stopping"
         self.accepting_jobs = False
         self.worker_stop.set()
+        if self.scheduler_thread and self.scheduler_thread is not threading.current_thread():
+            self.scheduler_thread.join(timeout=2)
         if self.active_job_id:
             self.active_job_cancel.set()
         if wait and self.worker and self.worker is not threading.current_thread():
@@ -1583,6 +1643,7 @@ class PaperFlowCoreService:
                 value.update({"deleted": True, "updated_at": body.get("updated_at") or iso_utc(), "artifact_permission": "SYSTEM_MANAGED"})
                 PermissionGuard(self.root).authorize(target, "SYSTEM_MANAGED")
                 atomic_json(target, value)
+                self._refresh_annotation_index(str(value.get("paper_uid") or ""))
                 updated += 1
             return {"ok": True, "status": "deleted", "annotation_id": annotation_id, "updated": updated, "permission": "SYSTEM_MANAGED"}
         paper_uid = str(body.get("paper_uid") or "").strip()
@@ -1616,7 +1677,17 @@ class PaperFlowCoreService:
             "deleted": False,
         }
         atomic_json(target, value)
+        self._refresh_annotation_index(paper_uid)
         return {"ok": True, "status": "mirrored", "annotation_id": annotation_id, "paper_uid": paper_uid, "path": target.relative_to(self.root).as_posix(), "permission": "SYSTEM_MANAGED"}
+
+    def _refresh_annotation_index(self, paper_uid: str) -> None:
+        if standalone(self.root) or not paper_uid or not (self.root / ".paperflow/workspace.yaml").is_file():
+            return
+        from paperflow.annotations.service import AnnotationService
+        from paperflow.workspace import load_workspace_settings
+
+        _, settings = load_workspace_settings(self.root)
+        AnnotationService(self.root, settings).store.rebuild_paper_index(paper_uid)
 
     def _resolve_analysis_request(self, body: dict[str, Any]) -> dict[str, str]:
         """Resolve a UI profile to the provider understood by the pipeline."""
@@ -1914,6 +1985,74 @@ class PaperFlowCoreService:
             "cancelled": status == "cancelled",
         }
 
+    def _start_scheduler(self) -> None:
+        def loop() -> None:
+            while not self.worker_stop.is_set():
+                self.scheduler.tick()
+                if self.worker_stop.wait(20):
+                    break
+        self.scheduler_thread = threading.Thread(target=loop, name="paperflow-scheduler", daemon=True)
+        self.scheduler_thread.start()
+
+    def retry_job(self, job_id: str) -> dict[str, Any]:
+        """Create a fresh recoverable job; retain the immutable failure history."""
+        if not self.accepting_jobs:
+            raise ValueError("Core is stopping and does not accept new jobs")
+        with self.job_state_lock:
+            previous = self.job(job_id)
+            if previous.get("status") not in {"failed", "interrupted", "cancelled", "skipped"}:
+                raise ValueError("only failed, interrupted, cancelled or skipped jobs can be retried")
+            for path in _job_root(self.root).glob("*.json"):
+                try:
+                    pending = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if pending.get("retry_of") == job_id and pending.get("status") in {"queued", "running", "cancellation-requested"}:
+                    return {"ok": True, "job_id": pending["job_id"], "status": pending["status"], "reused": True}
+            kind = previous.get("kind")
+            trigger = f"manual-retry:{job_id}"
+            if kind in {"analysis", "render"}:
+                # Re-resolve historical arXiv version suffixes. Old machine paths,
+                # hashes, models and prompts are never replayed from job history.
+                import re
+                uid = str(previous.get("paper_uid") or "")
+                if uid.startswith("arxiv:"):
+                    uid = re.sub(r"v\d+$", "", uid)
+                if not self.paper(uid).get("ok"):
+                    raise ValueError("current canonical paper is unavailable; import it before retry")
+                payload = {"paper_uid": uid, "trigger": trigger}
+                if previous.get("target") in {"zotero", "obsidian", "both"}:
+                    payload["target"] = previous["target"]
+                if previous.get("zotero_item_key"):
+                    payload["zotero_item_key"] = previous["zotero_item_key"]
+                queued = self.enqueue_job(kind, payload)
+            elif kind == "subscription-sync":
+                queued = self.subscription_sync({"source_names": previous.get("source_names") or [], "trigger": trigger})
+            elif kind in {"daily", "inbox"}:
+                if standalone(self.root):
+                    raise ValueError("daily and Inbox recovery requires a vault")
+                queued = self.enqueue_scheduled(kind, trigger=trigger)
+            else:
+                raise ValueError("unsupported historical job kind")
+            self._update_job_state(queued["job_id"], retry_of=job_id)
+            return {**queued, "retry_of": job_id}
+
+    def enqueue_scheduled(self, kind: str, *, trigger: str) -> dict[str, Any]:
+        if not self.accepting_jobs:
+            raise ValueError("Core is stopping and does not accept new jobs")
+        if kind not in {"daily", "inbox", "subscription-sync"}:
+            raise ValueError("unsupported scheduled job")
+        if kind == "subscription-sync":
+            return self.subscription_sync({"trigger": trigger})
+        job_id = f"zotero-{kind}-{secrets.token_hex(8)}"
+        job = {"schema_version": JOB_SCHEMA_VERSION, "job_id": job_id, "kind": kind,
+               "paper_uid": "", "status": "queued", "trigger": trigger,
+               "created_at": iso_utc(), "updated_at": iso_utc(), "attempt": 0, "error": None}
+        _write_job_state(self.root, job)
+        if self.pending_jobs_loaded:
+            self.jobs.put(job)
+        return {"ok": True, "job_id": job_id, "status": "queued"}
+
     def list_jobs(self, *, limit: int = 50) -> dict[str, Any]:
         """Return recent durable jobs without exposing raw paths or prompts."""
 
@@ -2018,6 +2157,8 @@ class PaperFlowCoreService:
         }
 
     def subscription_sync(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.accepting_jobs:
+            raise ValueError("Core is stopping and does not accept new jobs")
         allowed = {"source", "source_names", "trigger"}
         unknown = sorted(set(body) - allowed)
         if unknown:

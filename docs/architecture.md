@@ -52,6 +52,22 @@ records every hash and the preferred current version.
 
 ## Zotero/Core boundary
 
+Vault automation defaults to `obsidian.scheduler_owner: obsidian`. Selecting
+`core` moves daily discovery, Inbox processing, and subscription sync to a
+Core thread that checks every 20 seconds, without Obsidian IPC. Beijing dates,
+durable job history and the existing plugin runtime markers prevent repeat
+runs after restart. Failed daily attempts require explicit recovery; they do
+not repeat on every tick. Manual Obsidian commands remain available and the
+pipeline file lock prevents simultaneous writes. A live healthy Core claiming
+ownership suppresses Obsidian automatic triggers; unavailable Core permits the
+existing Obsidian fallback. Automatic Feed publication remains separate.
+
+Windows `zotero service autostart --apply --vault <vault>` registers a
+current-user login task using the active environment's `pythonw.exe`, limited
+privileges, no execution time limit, and three retries after abnormal exits.
+It runs `service serve` directly so Task Scheduler supervises the actual
+service. `--remove` removes the login task; it does not stop a running Core.
+
 Zotero is the primary bibliographic, PDF, and Reader-annotation owner.
 PaperFlow's Zotero plugin uses only public object APIs to create or inspect
 Collections, items, attachments, and annotations. It never opens or modifies
@@ -71,6 +87,15 @@ create a device pairing: Zotero stores the device secret locally and Core
 stores only its hash. Later Core restarts issue a fresh session through that
 pairing, so long-lived bearer tokens are neither embedded in the plugin nor
 committed to a Workspace.
+
+The plugin registers its native settings pane through `PreferencePanes` and
+adds a Tools menu per main window, so configuration never depends on a selected
+item. Settings handlers access the script sandbox through the native
+`Zotero_Preferences.getScope(paneID)` API; a small bootstrap bridge
+owns shared connection state and refreshes cached event settings on save.
+Fully qualified plugin preferences use Zotero's global preference branch,
+with recovery of earlier mistakenly prefixed settings. Changing the Core URL
+discards credentials bound to the previous endpoint.
 
 ## Application service and retry boundary
 

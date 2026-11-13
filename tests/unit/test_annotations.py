@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,51 @@ from paperflow.annotations.service import AnnotationService
 from paperflow.annotations.store import AnnotationStore
 from paperflow.cli import app
 from paperflow.workspace import WorkspaceSettings, default_workspace_dict, init_workspace
+from paperflow.zotero.core_service import PaperFlowCoreService
+
+
+def test_annotation_index_cli_stdout_is_machine_readable(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    result = subprocess.run(
+        [sys.executable, "-m", "paperflow.cli", "annotation", "ensure-index",
+         "arxiv:2607.00001", "--vault", str(tmp_path)],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+        env={**__import__("os").environ, "PYTHONUTF8": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["path"] == "60 Annotations/arxiv_2607.00001/index.md"
+
+
+def test_reader_mirror_updates_obsidian_index_and_preserves_private_annotations(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    settings = WorkspaceSettings.model_validate(default_workspace_dict())
+    store = AnnotationStore(tmp_path, settings.paths.annotation_note.root, settings.paths.user_annotations.root)
+    annotation = _annotation(tmp_path)
+    saved = store.save(annotation)
+    original = (tmp_path / saved["markdown"]).read_bytes()
+    target = store.index_path(annotation.paper_uid)
+    store.rebuild_paper_index(annotation.paper_uid)
+    target.write_text(target.read_text(encoding="utf-8") + "\n我的个人笔记\n", encoding="utf-8")
+    service = PaperFlowCoreService(tmp_path, port=0)
+    event = {"paper_uid": annotation.paper_uid, "annotation_id": "TEST0001",
+             "parent_item_key": "ITEM0001", "page": "7", "text": "Reader quote",
+             "comment": "PaperFlow 同步测试 [[untrusted]] <script>"}
+    service.mirror_annotation(event)
+    body = target.read_text(encoding="utf-8")
+    assert "PaperFlow 同步测试" in body and "Reader quote" in body
+    assert "zotero://select/library/items/ITEM0001" in body
+    assert "[[untrusted]]" not in body and "<script>" not in body
+    assert "我的个人笔记" in body and "ann-test" in body
+    event["comment"] = "修改后的评论"
+    service.mirror_annotation(event)
+    assert "修改后的评论" in target.read_text(encoding="utf-8")
+    assert "PaperFlow 同步测试" not in target.read_text(encoding="utf-8")
+    service.mirror_annotation({"event": "delete", "annotation_id": "TEST0001"})
+    body = target.read_text(encoding="utf-8")
+    assert "TEST0001" not in body and "我的个人笔记" in body and "ann-test" in body
+    assert (tmp_path / saved["markdown"]).read_bytes() == original
+    mirror = tmp_path / ".paperflow/data/annotations/zotero/arxiv-2607.00001/TEST0001.json"
+    assert json.loads(mirror.read_text(encoding="utf-8"))["deleted"] is True
 
 
 def _pdf(vault: Path, version: int = 1) -> Path:

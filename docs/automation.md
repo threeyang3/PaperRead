@@ -1,7 +1,17 @@
 # Obsidian-native automation
 
-PaperFlow Automation 1.5.1 runs three independent background tracks while
-Obsidian Desktop is open. Windows Task Scheduler is not used.
+The development preview supports Core-owned scheduling independently of
+Obsidian Desktop. Core checks due work every 20 seconds, uses Asia/Shanghai
+dates, records completed runs durably, and avoids overlapping jobs. New Vaults
+created by the first-run wizard keep automation disabled until configured.
+
+On Windows, `paperflow zotero service autostart --vault <vault> --apply`
+registers a current-user login task that starts Core without a console window.
+Inspect it with the same command without `--apply`. Legacy `schedule` commands
+continue to inspect or remove old pipeline tasks.
+
+The Obsidian plugin retains the background tracks below as a compatibility
+scheduler. It yields when it verifies that Core owns this Vault's scheduling.
 
 ## Subscription synchronization
 
@@ -71,5 +81,6 @@ must use GitHub HTTPS download hosts.
 
 The daily workflow has first priority, followed by source synchronization,
 automatic publishing, and update checks. Only one PaperFlow job runs at a time.
-Missed daily work catches up after Obsidian starts; interval tracks become due
-after their last recorded run. Closing Obsidian stops all three tracks.
+Missed daily work catches up when the active scheduler resumes; interval tracks
+become due after their last recorded run. Closing Obsidian stops its compatibility
+tracks, while a separately running Core continues its enabled tracks.

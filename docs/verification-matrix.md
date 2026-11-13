@@ -1,5 +1,170 @@
 # PaperFlow verification matrix
 
+## 2026-10-13 submission review
+
+- Follow-up regression: **411 passed, 1 skipped**; all nine Node integration
+  suites pass. The skip is a Windows directory-symlink prerequisite.
+- Ruff lint/format checks and mypy pass with isolated quality-tool wheels;
+  the installed Core environment was not changed to install these tools.
+- Windows Core identity now parses the actual command line and compares an exact
+  resolved Vault path, including Unicode/spaces. A similarly prefixed path is
+  rejected. Closing the initialization wizard cannot re-enable new-Vault automation.
+- All nine Node suites are included in CI. Obsidian reload has no captured errors;
+  current workspace and path validation pass, and repeated Core start verifies
+  authentication without replacing the running service.
+- Setup/scheduling guides and contributor rules were reconciled. A 68-document
+  inventory (69 documents after adding this review) found no broken relative links.
+  All 39 protected personal/configuration files retain their hashes.
+- Source updates are submitted for review; local preview bundles are rebuilt
+  with checksums. No formal version/tag/release is created. Clean-computer
+  installation and native Zotero preview4 job controls still need acceptance.
+- Local evidence: `.paperflow/backups/submission-review-20261013`.
+
+## 2026-10-13 first-run audit and paired preview
+
+- Full suite: **409 passed, 1 skipped**; all nine Node integration suites pass.
+- Tests cover staged initialization failure/retry, interrupted final publication,
+  rollback with concurrent personal edits, custom Form Flow conflict retention
+  on repeated calls with legacy states, authenticated nondefault-port checks,
+  duplicate Windows listener rejection and read-only process existence checks.
+- The real machine had competing Core instances and a false-positive public
+  health check while authenticated jobs returned 401. Duplicate services were
+  stopped; exclusive binding and a Windows read-only PID query now prevent
+  token-file replacement and process termination during status checks.
+- Current-user startup task is running again. The native wizard verifies the
+  real Core session; repeated service start reports authenticated already-running.
+- A compatible Core wheel is now built using isolated build-tool wheels. Its
+  extracted package code/resources initialize a temporary workspace successfully
+  with existing development dependencies. This is not a clean-computer install test.
+- `PaperFlow-First-Run-Preview-20261013.zip` contains that Core wheel, the current
+  Obsidian preview, Zotero settings-preview4, setup README and checksums. Nothing
+  was pushed or formally released; Python, dependencies and AI login remain external.
+- Evidence is in `.paperflow/backups/onboarding-audit-20261013`.
+
+## 2026-10-13 Obsidian first-run wizard
+
+- Local plugin preview provides startup detection, a command/settings entry,
+  a bounded Python/Core capability probe, read-only initialization preview,
+  digest-confirmed initialization, Core startup, pairing-token copy and
+  preparation of Form Flow integration after that plugin is installed.
+- Temporary workspace tests verify initialization without network/AI work,
+  configuration backup, private-note preservation, conflicting Base/template
+  rejection, stale preview rejection, repeat-call idempotency and missing
+  Form Flow handling. New workspaces keep automatic scheduling off.
+- Native Obsidian accepts the updated plugin. The wizard detects the real
+  vault Python/Core and reports ArxivLearn ready with zero initialization
+  changes and no validation errors; screenshots and JSON evidence are in
+  `.paperflow/backups/first-run-wizard-20261013`. No second user vault was opened.
+- Full Python suite: **402 passed, 1 skipped**; all nine Node integration
+  suites pass, including first-run startup suppression and wizard progression.
+- Windows Core startup closes inherited Obsidian output handles; a real
+  captured-pipe subprocess regression test passes, and the native wizard's
+  real background Core start returns in about 0.9 seconds.
+- This is an unreleased local preview. Python/Core/AI prerequisites remain
+  external; the wizard guides installation but does not silently install them.
+- The initial active environment lacked build tooling. The follow-up first-run
+  audit above produced a compatible Core wheel with isolated build-tool wheels;
+  the new plugin requires that onboarding-capable Core code.
+
+## 2026-10-12 migrated Windows workspace
+
+The local ArxivLearn Workspace now resides at `E:/Develop/ArxivLearn`.
+Obsidian 1.14.4 and its console CLI load Form Flow 0.0.8, Automation 1.5.1,
+and PDF++ 0.40.31. The Control Center is loaded and automation reports no
+configuration error.
+
+- Windows Obsidian discovery now checks standard installation directories
+  without requiring PATH and prefers the `.com` console launcher.
+- Workspace v3 verification accepts exact PDF wikilinks with an omitted
+  extension, page anchor, or alias. Wrong versions and filename prefixes are
+  rejected. The real Vault passes PDF hashes, note links, Derived paths, and
+  Base verification with zero user-note modifications.
+- Full Python suite: **395 passed, 1 skipped**. All nine Node integration
+  suites pass, including settings/empty-library onboarding, authenticated
+  status, old preference recovery and failed-pairing preservation.
+- Obsidian linkage acceptance: the real π0.5 reading command opens PDF,
+  canonical annotation index, Review and Community; the target panes are visible
+  and Core ownership is true. Replaying the existing ZENNESWW Reader event through
+  authenticated HTTP leaves its mirror unchanged and shows its page-7 test comment
+  in Obsidian. Tests cover modification/deletion, private-note preservation,
+  untrusted Markdown escaping, pure CLI JSON, pending PDF load and pane reuse.
+  Evidence is under `.paperflow/backups/obsidian-linkage-20261012`.
+- Personal Community submission targets `threeyang3/ArXiv-data`. The connected
+  user is `threeyang3` and repository metadata confirms admin/push permission.
+  Both selected outbox snapshots match the current remote bytes. No network
+  writes occurred. Tests verify digest/identity rejection, nested privacy,
+  immutable conflicts, and draft branch/PR plus manifest/checksum creation.
+  A real new-content PR has not been submitted; organization Team/fork access
+  and a production CLI token remain separate from the Codex GitHub connection.
+- Core independent scheduling and native current-user Windows login startup
+  are enabled locally. Task `PaperFlow-Core-7dfb5e485838` is running via
+  `pythonw.exe`; `/health` reports Core ownership with no scheduler error.
+  Tests cover Beijing catch-up, restart deduplication, active-job exclusion,
+  subscription interval, invalid scheduling time and partial failure markers.
+  A full logout/login and abnormal process crash have not been performed.
+- Retry preserves the prior failure record, normalizes a legacy arXiv version
+  UID and uses current configuration; duplicates reuse an active retry.
+  Native job controls and richer AI Markdown are in settings-preview4; their
+  new native UI still needs installation and user validation. Existing native
+  Preview 2 pairing/import/annotation/refresh acceptance remains valid.
+- Feynman refresh keeps existing question IDs and answers across reordering
+  and empty analyses. Adding a personal question works without AI output;
+  this does not imply the user has completed a real learning exercise.
+- The Obsidian daily workflow completed on 2026-10-12 and generated the
+  current brief. Discovery retrieved 100 candidates, with none selected in
+  the configured recent window; this run therefore does not verify a new
+  real-provider AI analysis.
+- The real Feed sync validates 37 Raw, 37 AI and two Community records,
+  reuses all 74 Raw/AI cache entries, has zero conflicts and zero User writes.
+  Both plugin source-sync and update-auto finish with exit code 0.
+- Update check reaches GitHub and reports installed/latest 1.5.1 with no
+  update available. The earlier SSL error did not reproduce.
+- Real local π0.5 (`arxiv:2504.16054`) reanalysis completes through Codex CLI
+  0.162.1 and `gpt-6-astra`, producing a new immutable AI record and rendered
+  Obsidian output. All 137 pre-snapshotted Raw/User Note/Review/Annotation files
+  remain byte-identical. This reanalysis does not verify a new Zotero import.
+- Zotero 10.0.6 in `D:/Zotero` detects installed/active plugin 1.5.1. A local
+  settings-preview package adds a PreferencePanes registration and a Tools
+  menu; the user still needs to install this package and validate the native
+  settings UI and real Core pairing. A pre-migration device record does not
+  prove a current-machine connection.
+- The user confirms the first settings preview displays its pane, but its
+  buttons were inactive: handlers called the nonexistent `getPaneScope()`.
+  Preview 2 uses native `getScope()`, verified against the installed Zotero
+  application resource. Regression checks execute all five button handlers.
+  The user confirms Preview 2 buttons respond and connection succeeds.
+  Core records a new device pairing at 2026-10-12 08:48:27 Asia/Shanghai.
+  The displayed failed analysis is a 2026-07-28 legacy job targeting the
+  previous machine's missing Vault path; no new analysis failure was observed.
+  The user confirms the paper, PDF and AI Markdown are visible after import.
+  Core verifies their new mapping at 2026-10-12 08:50:06 Asia/Shanghai; PDF
+  SHA-256 equals the successful Astra analysis source hash. The new render job
+  completes, and all 137 protected snapshot files remain byte-identical.
+  After Core restarts (PID 30976 → 30464), the user confirms connection without
+  re-pairing. The current device's `last_used_at` advances to 2026-10-12
+  08:52:37 Asia/Shanghai, confirming session refresh. A new page-7 highlight
+  `ZENNESWW` arrives in the SYSTEM_MANAGED mirror with an exact Chinese test
+  comment and two PDF position rectangles. The annotation count grows from
+  one historical record to two; no historical mirror is removed. Health
+  remains clean and all 137 protected files remain unchanged.
+- `status --vault` reads modern plugin-state runtime rather than stale
+  settings; custom Zotero executable discovery also checks PATH.
+- A third local settings preview distinguishes current-day and historical
+  failures, shows Beijing timestamps and paper identities, and authenticates
+  the Control Center badge through jobs access. Regression checks cover UTC
+  day rollover, old active jobs, unknown dates, 401 and closing during refresh.
+  This preview's changed native UI remains unverified until installed; the
+  already-installed Preview 2 workflow remains the real end-to-end evidence.
+
+Automatic publishing remains disabled. This work does not publish a Release,
+push a Feed, change schemas/prompts, or migrate generated paper data.
+
+The Windows Core launcher no longer combines DETACHED_PROCESS with
+CREATE_NO_WINDOW. A real venv subprocess regression verifies a zero console
+handle. The old visible Core process exits after a managed restart; new Core
+PID 41672 serves authenticated jobs (HTTP 200) with no active jobs. Zotero
+pairing data is retained; this backend fix requires no XPI change.
+
 ## 2026-08-11 application service convergence
 
 PR #19 merged into `main` as `0b6573f490e8f3f2c23620b9007e443721ccac42`.
@@ -136,9 +301,10 @@ optional when Mock or non-AI workflows are used.
 4. Run `paperflow migrate workspace-v3 --dry-run`, review and apply it, then run
    `paperflow migrate verify-workspace-v3`, `paperflow doctor`, `paperflow
    audit`, `paperflow paths validate`, and `paperflow workspace validate`.
-5. Run the default pytest suite and the two Node integration suites when
+5. Run the default pytest suite and all nine Node integration suites when
    developing from source.
 
-No Windows Task Scheduler registration or user `PATH` mutation is required for
-normal automation. Scheduled work runs only while Obsidian Desktop is open and
-catches up after the next launch when configured.
+Default Obsidian automation needs no Windows Task Scheduler registration or
+user PATH mutation and catches up after launch. The optional Core owner and
+current-user login task allow scheduling while Obsidian is closed, provided
+the computer is running and the user is logged in.

@@ -269,24 +269,43 @@ async function openReadingWorkspace(app, options = {}) {
     `---\ntype: paperflow-community-note\npaper_uid: ${metadata.paper_uid}\ncommunity_count: 0\n---\n\n# 社区观点\n\n> 社区订阅是只读缓存，不会写入个人标注或个人评审。\n`
   );
 
-  const pdfLeaf = app.workspace.getLeaf("split", "vertical");
-  await pdfLeaf.openFile(pdf);
-  const annotationLeaf = app.workspace.getRightLeaf(false);
+  const existingLeaf = file => app.workspace.getLeavesOfType?.(
+    file.extension === "pdf" ? "pdf" : "markdown"
+  )?.find(leaf => leaf.view?.file?.path === file.path);
+  const pdfLeaf = existingLeaf(pdf) || app.workspace.getLeaf("split", "vertical");
+  // PDF++ can leave openFile pending while its viewer loads. Open the other
+  // panes immediately and bound the wait so the reading command stays usable.
+  const pdfOpening = Promise.resolve(pdfLeaf.openFile(pdf)).then(
+    () => ({ ready: true }), error => ({ error })
+  );
+  const annotationLeaf = existingLeaf(annotation) || app.workspace.getRightLeaf(false);
   if (!annotationLeaf) throw new Error("Unable to create the annotation leaf");
   await annotationLeaf.openFile(annotation);
-  const reviewLeaf = app.workspace.createLeafBySplit(pdfLeaf, "horizontal");
+  const reviewLeaf = existingLeaf(review) || app.workspace.createLeafBySplit(pdfLeaf, "horizontal");
   await reviewLeaf.openFile(review);
-  const communityLeaf = app.workspace.getRightLeaf(true);
+  const communityLeaf = existingLeaf(community) || app.workspace.getRightLeaf(true);
   if (!communityLeaf) throw new Error("Unable to create the Community leaf");
   await communityLeaf.openFile(community);
+  await app.workspace.revealLeaf(annotationLeaf);
+  await app.workspace.revealLeaf(communityLeaf);
   await app.workspace.revealLeaf(pdfLeaf);
   app.workspace.setActiveLeaf(pdfLeaf, { focus: true });
+  let pdfTimer;
+  const pdfState = await Promise.race([
+    pdfOpening,
+    new Promise(resolve => {
+      pdfTimer = setTimeout(() => resolve({ ready: false }), options.pdfLoadTimeoutMs ?? 5000);
+    })
+  ]);
+  clearTimeout(pdfTimer);
+  if (pdfState.error) throw pdfState.error;
   return {
     paper: paper.path,
     pdf: pdf.path,
     annotation: annotation.path,
     review: review.path,
-    community: community.path
+    community: community.path,
+    ...(pdfState.ready ? {} : { pdfLoading: true })
   };
 }
 
@@ -676,6 +695,17 @@ function providerName(value) {
 
 function controlCommands(action, payload = {}) {
   switch (action) {
+    case "onboard-plan":
+      return [["workspace", "onboard", "--vault", cleanText(payload.vault, "Vault", 4096)]];
+    case "onboard-apply":
+      return [["workspace", "onboard", "--vault", cleanText(payload.vault, "Vault", 4096),
+        "--apply", "--confirm-digest", cleanText(payload.digest, "Preview digest", 64)]];
+    case "core-start":
+      return [["zotero", "service", "start", "--vault", cleanText(payload.vault, "Vault", 4096)]];
+    case "onboard-form":
+      return [["workspace", "onboard", "--vault", cleanText(payload.vault, "Vault", 4096), "--prepare-form"]];
+    case "onboard-core":
+      return [["workspace", "onboard", "--vault", cleanText(payload.vault, "Vault", 4096), "--check-core"]];
     case "status":
       return [["status"]];
     case "doctor":
@@ -1092,6 +1122,27 @@ function mergedSettings(value) {
   };
 }
 
+function probeSetupRuntime(python) {
+  return new Promise((resolve, reject) => {
+    const code = "import json,sys; import paperflow.cli; from paperflow._version import __version__; from paperflow.obsidian.onboarding import setup_plan,check_core,prepare_form; print(json.dumps({'version':__version__,'python':sys.executable,'onboarding':True}))";
+    const child = spawn(python, ["-c", code], {
+      shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PYTHONUTF8: "1" }
+    });
+    let stdout = "", stderr = "";
+    const timer = setTimeout(() => { child.kill(); reject(new Error(text("环境检测超时", "Runtime check timed out"))); }, 10000);
+    child.stdout.on("data", data => { stdout = (stdout + data).slice(-32768); });
+    child.stderr.on("data", data => { stderr = (stderr + data).slice(-4096); });
+    child.on("error", error => { clearTimeout(timer); reject(error); });
+    child.on("close", status => {
+      clearTimeout(timer);
+      if (status !== 0) return reject(new Error(text("此 Python 环境缺少支持首次向导的 PaperFlow Core，请安装或升级 Core。", "This Python environment needs a PaperFlow Core version with setup support.") + "\n" + stderr));
+      try { resolve(JSON.parse(stdout.trim().split(/\r?\n/).pop())); }
+      catch { reject(new Error(text("Core 返回了无效的环境信息", "Invalid Core runtime response"))); }
+    });
+  });
+}
+
 class PaperFlowAutomationPlugin extends Plugin {
   async onload() {
     this.settings = mergedSettings(await this.loadData());
@@ -1135,6 +1186,11 @@ class PaperFlowAutomationPlugin extends Plugin {
       id: "open-control-center",
       name: text("打开控制中心", "Open Control Center"),
       callback: () => void this.activateControlCenter()
+    });
+    this.addCommand({
+      id: "setup-workspace",
+      name: text("首次设置 / 初始化资料库", "First-run setup / Initialize vault"),
+      callback: () => this.openSetupWizard()
     });
     this.addCommand({
       id: "open-paper-reading-workspace",
@@ -1197,6 +1253,11 @@ class PaperFlowAutomationPlugin extends Plugin {
     this.addSettingTab(new PaperFlowAutomationSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(async () => {
+      if (!this.hasWorkspace()) {
+        this.updateStatus(text("PaperFlow：请完成首次设置", "PaperFlow: first-run setup needed"));
+        this.openSetupWizard();
+        return;
+      }
       await this.startAutomation();
       if (this.settings.openControlCenterOnStartup) {
         try {
@@ -1215,6 +1276,7 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   onunload() {
+    this.setupWizard?.close();
     this.unloading = true;
     this.started = false;
     this.propertyLabelStyle?.remove();
@@ -1397,6 +1459,10 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   async startAutomation() {
+    if (!this.hasWorkspace()) {
+      this.updateStatus(text("PaperFlow：请完成首次设置", "PaperFlow: first-run setup needed"));
+      return;
+    }
     if (this.started) return;
     this.started = true;
     if (!Platform.isDesktopApp) {
@@ -1497,12 +1563,48 @@ class PaperFlowAutomationPlugin extends Plugin {
     return false;
   }
 
+  async coreOwnsAutomation() {
+    const root = this.vaultRoot();
+    try {
+      const state = JSON.parse(await fs.promises.readFile(path.join(root, ".paperflow/runtime/plugin-state.json"), "utf8"));
+      this.settings.runtime = { ...this.settings.runtime, ...state };
+    } catch (_error) {}
+    try {
+      const session = JSON.parse(await fs.promises.readFile(path.join(root, ".paperflow/state/zotero-core-session.json"), "utf8"));
+      const url = new URL(session.base_url);
+      if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return false;
+      // Renderer fetch is subject to CORS. Use the desktop plugin's Node HTTP
+      // client for this bounded, read-only loopback health probe.
+      return await new Promise((resolve) => {
+        const request = require("http").get(`${url.origin}/health`, (response) => {
+          if (response.statusCode !== 200) { response.resume(); resolve(false); return; }
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk) => {
+            body += chunk;
+            if (body.length > 65536) { request.destroy(); resolve(false); }
+          });
+          response.on("error", () => resolve(false));
+          response.on("end", () => {
+            try {
+              const health = JSON.parse(body);
+              resolve(Boolean(health.ok && health.service === "paperflow-core" && health.status === "ready" && health.scheduler?.owner === "core" && !health.scheduler.error));
+            } catch (_error) { resolve(false); }
+          });
+        });
+        request.setTimeout(1500, () => { request.destroy(); resolve(false); });
+        request.on("error", () => resolve(false));
+      });
+    } catch (_error) { return false; }
+  }
+
   async checkAutomationTracks() {
+    const coreOwner = await this.coreOwnsAutomation();
     if (!this.settings.enabled || this.runningJob) return;
-    if (await this.checkDaily()) return;
+    if (!coreOwner && await this.checkDaily()) return;
     const runtime = this.settings.runtime;
     if (
-      this.settings.sourceSyncEnabled &&
+      !coreOwner && this.settings.sourceSyncEnabled &&
       intervalDue(
         runtime.lastSourceSyncAt,
         this.settings.sourceSyncIntervalMinutes
@@ -1533,6 +1635,7 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   async runJob(kind, trigger) {
+    if (["daily", "inbox", "source-sync"].includes(kind) && trigger !== "manual" && await this.coreOwnsAutomation()) return;
     if (!this.settings.enabled) {
       if (trigger === "manual") new Notice(text("PaperFlow 自动化当前已停用。", "PaperFlow automation is disabled."));
       return;
@@ -1624,7 +1727,19 @@ class PaperFlowAutomationPlugin extends Plugin {
     }
   }
 
-  async runControlAction(action, payload = {}) {
+  hasWorkspace() {
+    return fs.existsSync(path.join(this.vaultRoot(), ".paperflow", "workspace.yaml"));
+  }
+
+  openSetupWizard() {
+    if (!this.setupWizard) {
+      this.setupWizard = new PaperFlowSetupModal(this.app, this);
+      this.setupWizard.open();
+    }
+    return this.setupWizard;
+  }
+
+  async runControlAction(action, payload = {}, options = {}) {
     let commands;
     try {
       commands = controlCommands(action, payload);
@@ -1652,9 +1767,9 @@ class PaperFlowAutomationPlugin extends Plugin {
       !path.isAbsolute(relativePython) &&
       fs.existsSync(vaultPython);
     const python =
-      this.settings.preferVaultPython && validVaultPython
+      options.pythonOverride || (this.settings.preferVaultPython && validVaultPython
         ? vaultPython
-        : String(this.settings.pythonExecutable || "python");
+        : String(this.settings.pythonExecutable || "python"));
     const source = "";
     const started = Date.now();
     const output = [];
@@ -1979,6 +2094,149 @@ class PaperFlowAnnotationModal extends Modal {
 
   onClose() {
     this.contentEl.empty();
+  }
+}
+
+class PaperFlowSetupModal extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+    this.stage = "environment";
+    this.probe = probeSetupRuntime;
+    const local = path.resolve(plugin.vaultRoot(), plugin.settings.pythonRelativePath);
+    const relative = path.relative(plugin.vaultRoot(), local);
+    const safeLocal = !relative.startsWith("..") && !path.isAbsolute(relative);
+    this.python = safeLocal && fs.existsSync(local) && fs.statSync(local).isFile()
+      ? local : plugin.settings.pythonExecutable || "python";
+    this.busy = false;
+    this.closed = false;
+    this.message = "";
+  }
+
+  onOpen() { this.render(); }
+  onClose() { this.closed = true; this.plugin.setupWizard = null; this.contentEl.empty(); }
+
+  button(parent, label, action, primary = false) {
+    const button = parent.createEl("button", { text: label, cls: primary ? "mod-cta" : "" });
+    button.disabled = this.busy;
+    button.addEventListener("click", () => void this.perform(action));
+    return button;
+  }
+
+  async perform(action) {
+    if (this.busy || this.closed) return;
+    this.busy = true; this.message = text("正在检查，请稍候…", "Checking…"); this.render();
+    try { await action(); }
+    catch (error) { this.message = error.message; }
+    finally { this.busy = false; if (!this.closed) this.render(); }
+  }
+
+  async command(action, extra = {}) {
+    const result = await this.plugin.runControlAction(action, {
+      vault: this.plugin.vaultRoot(), ...extra
+    }, { pythonOverride: this.python });
+    if (result.code !== 0) throw new Error(result.stderr || result.stdout || "Core command failed");
+    return JSON.parse(result.stdout);
+  }
+
+  async preview() {
+    this.runtime = await this.probe(this.python);
+    if (this.closed) return;
+    this.python = this.runtime.python || this.python;
+    this.plan = await this.command("onboard-plan");
+    this.stage = this.plan.status === "ready" ? "connections" : "preview";
+    this.message = this.plan.errors?.length ? this.plan.errors.join("\n") : "";
+  }
+
+  async verifyCore() {
+    const core = await this.command("onboard-core");
+    if (core.status !== "verified" || !core.authenticated) throw new Error(text("Core 连接未验证", "Core connection is unverified"));
+    this.coreUrl = core.base_url;
+    return core;
+  }
+
+  async initialize() {
+    // Persist the safe first-run default before starting a write operation.
+    // Closing the modal or app must not leave a new vault's scheduler enabled.
+    if (!this.plugin.hasWorkspace()) {
+      this.plugin.settings.enabled = false;
+      await this.plugin.saveSettings();
+    }
+    this.result = await this.command("onboard-apply", { digest: this.plan.digest });
+    if (this.result.errors?.length) throw new Error(this.result.errors.join("\n"));
+    this.plugin.settings.pythonExecutable = this.python;
+    this.plugin.settings.preferVaultPython = false;
+    if (this.result.initialized) this.plugin.settings.enabled = false;
+    await this.plugin.loadWorkspaceTimezone();
+    await this.plugin.saveSettings();
+    if (this.closed) return;
+    this.stage = "connections";
+    this.message = text("资料库已初始化，自动调度暂未启用。", "Vault initialized. Automatic scheduling remains off.");
+  }
+
+  render() {
+    const el = this.contentEl;
+    el.empty(); el.addClass("paperflow-setup");
+    el.createEl("div", { cls: "paperflow-eyebrow", text: "PAPERFLOW / FIRST RUN" });
+    el.createEl("h2", { text: text("建立你的论文工作台", "Set up your paper workspace") });
+    el.createEl("p", { cls: "paperflow-setup-lead", text: text("从当前资料库开始，让论文、分析与个人笔记各归其位。", "Connect papers, analyses and personal notes in your current vault.") });
+    const steps = el.createDiv({ cls: "paperflow-setup-steps" });
+    for (const [key, label] of [["environment", "01 环境"], ["preview", "02 资料库"], ["connections", "03 连接"]]) {
+      steps.createSpan({ text: label, cls: this.stage === key ? "is-active" : "" });
+    }
+    el.createEl("p", { cls: "paperflow-setup-path", text: this.plugin.vaultRoot() });
+    if (this.message) el.createEl("p", { cls: "paperflow-setup-message", text: this.message });
+    if (this.stage === "environment") {
+      el.createEl("h3", { text: text("检测本机 Core", "Check local Core") });
+      el.createEl("p", { text: text("选择已安装 PaperFlow Core 的 Python 环境。检测不会初始化资料库。", "Choose a Python environment with PaperFlow Core installed. This check does not initialize the vault.") });
+      const input = el.createEl("input", { cls: "paperflow-setup-python", attr: { "aria-label": "Python executable" } });
+      input.value = this.python; input.disabled = this.busy;
+      input.addEventListener("input", () => { this.python = input.value.trim(); });
+      this.button(el, text("检测并预览", "Check and preview"), () => this.preview(), true);
+      el.createEl("p", { text: text("尚未安装 Core？安装发行包后，回到这里重新检测。两个插件本身不包含 Python 与 AI 服务。", "Install the Core release first if needed. The plugins do not bundle Python or an AI service.") });
+      el.createEl("a", { text: text("打开 Core 安装说明", "Core installation guide"), attr: { href: "https://github.com/threeyang3/PaperRead/blob/main/docs/installation/windows.md" } });
+    } else if (this.stage === "preview") {
+      el.createEl("h3", { text: text("确认初始化内容", "Review initialization") });
+      el.createEl("p", { text: text(`将创建 ${this.plan.changes.length} 项配置、模板、Base 和入门页。保留已有笔记；执行前备份配置。`, `Create ${this.plan.changes.length} configuration, template, Base and welcome files. Existing notes stay intact; configuration is backed up first.`) });
+      const list = el.createEl("ul", { cls: "paperflow-setup-preview" });
+      for (const name of (this.plan.conflicts?.length ? this.plan.conflicts : this.plan.folders)) list.createEl("li", { text: name });
+      if (this.plan.conflicts?.length) el.createEl("p", { text: text("检测到同名文件，初始化已阻止。请保留原文件并处理冲突后重新检测。", "Conflicting files prevent initialization. Resolve them and preview again.") });
+      else this.button(el, text("初始化当前资料库", "Initialize this vault"), () => this.initialize(), true);
+      this.button(el, text("重新检测", "Check again"), () => this.preview());
+    } else {
+      el.createEl("h3", { text: this.plan?.errors?.length
+        ? text("已有资料库需要检查", "Existing workspace needs attention")
+        : text("资料库已就绪，完成连接", "Vault ready — finish connections") });
+      el.createEl("p", { text: text("接下来配置 AI、连接 Zotero，并导入第一篇论文。已有资料库不会再次初始化。", "Configure AI, pair Zotero and import your first paper. Existing workspaces are never reinitialized.") });
+      this.button(el, text("启动 / 检查 Core", "Start / check Core"), async () => {
+        await this.command("core-start");
+        const core = await this.verifyCore();
+        this.message = text(`Core 连接已验证：${core.base_url}`, `Core connection verified: ${core.base_url}`);
+      });
+      this.button(el, text("复制 Zotero 配对令牌", "Copy Zotero pairing token"), async () => {
+        await this.verifyCore();
+        const token = fs.readFileSync(path.join(this.plugin.vaultRoot(), ".paperflow/runtime/zotero-core-session.token"), "utf8").trim();
+        await navigator.clipboard.writeText(token);
+        this.message = text(`令牌已复制。打开 Zotero 设置 → PaperFlow，连接 ${this.coreUrl}。`, `Token copied. Open Zotero Settings → PaperFlow and connect to ${this.coreUrl}.`);
+      });
+      el.createEl("p", { text: text("手动录入请安装并启用 Form Flow；PDF++ 可选，用于 Obsidian PDF 选区标注。", "Install and enable Form Flow for manual entry. PDF++ is optional for PDF selection annotations.") });
+      this.button(el, text("准备手动录入表单", "Prepare manual entry form"), async () => {
+        const result = await this.command("onboard-form");
+        this.message = result.status === "needs-attention"
+          ? text(`录入表单需要合并，请保留个人修改：${(result.conflicts || []).join("、")}`, `Form needs merge review; keep personal edits: ${(result.conflicts || []).join(", ")}`)
+          : result.status === "prepared"
+          ? text("录入表单已准备，请在 Form Flow 中打开 Paper Request。", "Form ready. Open Paper Request in Form Flow.")
+          : text("请先在 Obsidian 社区插件中安装并启用 Form Flow（至少 0.0.8），再点击此按钮。", "Install and enable Form Flow (at least 0.0.8), then try again.");
+      });
+      this.button(el, text("配置 AI / 导入论文", "Configure AI / import papers"), async () => {
+        this.plugin.settings.pythonExecutable = this.python;
+        this.plugin.settings.preferVaultPython = false;
+        await this.plugin.saveSettings();
+        await this.plugin.activateControlCenter(); this.close();
+      }, true);
+    }
+    const footer = el.createDiv({ cls: "paperflow-modal-actions" });
+    this.button(footer, text("稍后继续", "Continue later"), async () => this.close());
   }
 }
 
@@ -3117,10 +3375,14 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: text("PaperFlow 自动化", "PaperFlow Automation") });
+    new Setting(containerEl)
+      .setName(text("首次设置 / 初始化资料库", "First-run setup / Initialize vault"))
+      .setDesc(text("检查 Core、预览初始化内容，并完成 Zotero 与 AI 配置。", "Check Core, preview vault initialization, and finish Zotero and AI setup."))
+      .addButton(button => button.setButtonText(text("打开向导", "Open setup")).onClick(() => this.plugin.openSetupWizard()));
     containerEl.createEl("p", {
       text: text(
-        "调度由 Obsidian 插件生命周期驱动。Obsidian 关闭时不会运行；错过每日时间会在下次打开后补跑。",
-        "Scheduling is driven by the Obsidian plugin lifecycle. Nothing runs while Obsidian is closed; missed daily work catches up after the next launch."
+        "配置为 Core 接管时，自动任务可在 Obsidian 关闭后继续；其余情况由插件在资料库打开时调度。",
+        "With Core ownership enabled, automatic tasks can continue while Obsidian is closed; otherwise the plugin schedules tasks while the vault is open."
       )
     });
 
@@ -3230,6 +3492,8 @@ class PaperFlowAutomationSettingTab extends PluginSettingTab {
 
 module.exports = PaperFlowAutomationPlugin;
 module.exports.__test = {
+  probeSetupRuntime,
+  PaperFlowSetupModal,
   PAPER_PROPERTY_LABELS_ZH,
   controlCommands,
   activePaperContext,
