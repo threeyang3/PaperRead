@@ -51,12 +51,7 @@ def screen_relevance(root: Path, papers: list[PaperMetadata], provider: str, mod
         screened: dict[str, dict] = {}
         for start in range(0, len(papers), 20):
             batch = papers[start:start + 20]
-            prompt = template + f"
-
-Threshold: {threshold}
-
-CANDIDATES:
-" + json.dumps(_payload(batch), ensure_ascii=False)
+            prompt = template + f"\n\nThreshold: {threshold}\n\nCANDIDATES:\n" + json.dumps(_payload(batch), ensure_ascii=False)
             result = chat_json(
                 base_url=config.base_url,
                 api_key_env=config.api_key_env,
