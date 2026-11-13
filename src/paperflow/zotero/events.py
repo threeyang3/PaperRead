@@ -65,8 +65,17 @@ class ZoteroEventProcessor:
                     "pdf_sha256": digest,
                     "analysis_profile": profile,
                 }
-            elif digest and digest == previous.get("pdf_sha256") and profile and profile == previous.get("analysis_profile"):
-                current = {**previous, "state": "complete", "reason": "same-hash-and-profile"}
+            elif (
+                digest
+                and digest == previous.get("pdf_sha256")
+                and profile
+                and profile == previous.get("analysis_profile")
+                and previous.get("state") == "queued"
+            ):
+                # Repeated Zotero events are not evidence of a finished
+                # analysis. Keep the already queued job, but don't enqueue a
+                # duplicate. A later canonical reuse signal completes it.
+                current = {**previous, "state": "queued", "reason": "already-queued"}
             else:
                 current = {**previous, "state": "queued", "reason": "ready-for-analysis", "pdf_sha256": digest, "analysis_profile": profile, "debounce_seconds": self.debounce_seconds}
         current["updated_at"] = iso_beijing()
@@ -89,7 +98,7 @@ class ZoteroEventProcessor:
             "item_key": item_key,
             "state": current["state"],
             "previous_state": previous.get("state", ""),
-            "queue_analysis": current["state"] == "queued" and self.auto_queue,
+            "queue_analysis": current.get("reason") == "ready-for-analysis" and self.auto_queue,
             "queue_render": queue_render,
             "reuse_analysis": current.get("reason") == "canonical-analysis-reused",
             "reason": str(current.get("reason") or ""),

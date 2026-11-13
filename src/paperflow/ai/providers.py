@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
@@ -11,6 +12,8 @@ from typing import Any
 from paperflow.ai.claude_adapter import ClaudeAdapter
 from paperflow.ai.codex_adapter import CodexAdapter
 from paperflow.ai.mock_adapter import MockAdapter
+from paperflow.ai.http_client import api_endpoint
+from paperflow.ai.openai_compatible_adapter import OpenAICompatibleAdapter
 from paperflow.ai.chatgpt_web_adapter import (
     ChatGPTWebAdapter,
     default_edge_path,
@@ -63,6 +66,10 @@ class Provenance:
 
 
 def validate_extra_args(provider: str, values: list[str]) -> list[str]:
+    if provider not in {"codex", "claude"}:
+        if values:
+            raise ValueError("API and non-CLI providers do not accept extra CLI arguments")
+        return []
     allowed = SAFE_CODEX_ARGS if provider == "codex" else SAFE_CLAUDE_ARGS
     for value in values:
         normalized = value.casefold()
@@ -204,6 +211,37 @@ class ClaudeProvider(CLIProvider):
         ).analyze(metadata, text_path)
 
 
+class OpenAIAPIProvider(AIProvider):
+    name = "openai-api"
+
+    def check_available(self) -> CapabilityReport:
+        try:
+            url = api_endpoint(self.config.base_url)
+            self.validate_config()
+        except ValueError as exc:
+            return CapabilityReport(self.name, False, "HTTPS API", detail=str(exc))
+        present = bool(os.environ.get(self.config.api_key_env, ""))
+        return CapabilityReport(
+            self.name, present, url, version="chat-completions",
+            analyze_help_available=present,
+            detail="credential available" if present else f"missing {self.config.api_key_env}",
+        )
+
+    def validate_config(self) -> None:
+        super().validate_config()
+        api_endpoint(self.config.base_url)
+
+    def analyze(self, metadata: Any, text_path: Path, profile: AIProfile) -> Any:
+        return OpenAICompatibleAdapter(
+            self.root,
+            model=profile.model or self.config.model,
+            base_url=self.config.base_url,
+            api_key_env=self.config.api_key_env,
+            timeout=profile.timeout_seconds,
+            max_tokens=self.config.max_output_tokens,
+        ).analyze(metadata, text_path)
+
+
 class MockProvider(AIProvider):
     name = "mock"
 
@@ -283,6 +321,7 @@ def make_provider(name: str, root: Path, config: ProviderConfig) -> AIProvider:
         "codex": CodexProvider,
         "claude": ClaudeProvider,
         "chatgpt-web": ChatGPTWebProvider,
+        "openai-api": OpenAIAPIProvider,
         "mock": MockProvider,
     }
     try:

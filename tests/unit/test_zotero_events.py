@@ -14,7 +14,9 @@ def test_connector_event_state_machine_waits_for_pdf_and_collection(tmp_path: Pa
     queued = processor.handle({"item_key": "ABCD1234", "event": "modify", "has_pdf": True, "pdf_stable": True, "in_collection": True, "identity_resolved": True, "pdf_sha256": "a" * 64, "analysis_profile": "full_analysis"})
     assert queued["state"] == "queued"
     complete = processor.handle({"item_key": "ABCD1234", "event": "modify", "has_pdf": True, "pdf_stable": True, "in_collection": True, "identity_resolved": True, "pdf_sha256": "a" * 64, "analysis_profile": "full_analysis"})
-    assert complete["state"] == "complete"
+    assert complete["state"] == "queued"
+    assert complete["reason"] == "already-queued"
+    assert complete["queue_analysis"] is False
 
 
 def test_connector_event_ignores_non_regular_and_delete(tmp_path: Path) -> None:
@@ -60,7 +62,26 @@ def test_canonical_reuse_renders_after_same_hash_pipeline_completion(tmp_path: P
         "analysis_profile": "full_analysis",
     }
     assert processor.handle(base)["state"] == "queued"
-    assert processor.handle(base)["reason"] == "same-hash-and-profile"
+    assert processor.handle(base)["reason"] == "already-queued"
     recovered = processor.handle({**base, "analysis_reusable": True})
     assert recovered["reason"] == "canonical-analysis-reused"
     assert recovered["queue_render"] is True
+
+def test_same_identity_after_failed_event_is_not_falsely_complete(tmp_path: Path) -> None:
+    processor = ZoteroEventProcessor(tmp_path)
+    event = {
+        "item_key": "RETRY123",
+        "event": "modify",
+        "has_pdf": True, "pdf_stable": True, "in_collection": True,
+        "identity_resolved": True, "pdf_sha256": "a" * 64,
+        "analysis_profile": "full_analysis",
+    }
+    first = processor.handle(event)
+    assert first["queue_analysis"] is True
+    duplicate = processor.handle(event)
+    assert duplicate["state"] == "queued"
+    assert duplicate["queue_analysis"] is False
+    # An explicit canonical-reuse signal, not an identical event, may finish.
+    final = processor.handle({**event, "analysis_reusable": True})
+    assert final["state"] == "complete"
+    assert final["queue_render"] is True
