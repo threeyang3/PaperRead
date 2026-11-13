@@ -1249,8 +1249,23 @@ class PaperFlowCoreService:
             record = None
         if record is None:
             base = data_root(self.root) / "ai"
-            component = safe_component(paper_uid.replace(":", "_"))
-            candidates = sorted(base.glob(f"*/{component}/v*/*.json"), key=lambda path: path.stat().st_mtime)
+            # The versioned store uses the *bare* arXiv ID as its path
+            # component, while standalone and legacy stores use arxiv_<id>.
+            # Consult both layouts rather than reporting an existing result
+            # as "not-analyzed" in Zotero's reader workspace.
+            components = [safe_component(paper_uid.replace(":", "_"))]
+            if paper_uid.casefold().startswith("arxiv:"):
+                components.append(safe_component(paper_uid.partition(":")[2]))
+            candidates: list[Path] = []
+            if base.is_dir():
+                for profile_dir in base.iterdir():
+                    if not profile_dir.is_dir():
+                        continue
+                    for component in dict.fromkeys(components):
+                        folder = profile_dir / component
+                        if folder.is_dir():
+                            candidates.extend(path for path in folder.glob("v*/*.json") if path.is_file())
+            candidates.sort(key=lambda path: path.stat().st_mtime)
             for candidate in reversed(candidates):
                 if candidate.name == "current.json":
                     continue
@@ -1258,7 +1273,11 @@ class PaperFlowCoreService:
                     value = json.loads(candidate.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     continue
-                if isinstance(value, dict) and value.get("paper_uid") == paper_uid:
+                if (
+                    isinstance(value, dict)
+                    and value.get("paper_uid") == paper_uid
+                    and value.get("status") == "complete"
+                ):
                     record = value
                     break
         if not isinstance(record, dict):
@@ -1631,7 +1650,7 @@ class PaperFlowCoreService:
                         profile = str(policy.get("profile") or profile)
             except (OSError, ValueError):
                 pass
-        if provider not in {"codex", "claude", "chatgpt-web", "mock", ""}:
+        if provider not in {"codex", "claude", "chatgpt-web", "openai-api", "mock", ""}:
             raise ValueError(f"unsupported analysis provider: {provider}")
         return {"analysis_profile": profile, "provider": provider, "model": model}
 

@@ -128,7 +128,7 @@ class PathTemplateSettings(StrictModel):
 
 
 class ProviderConfig(StrictModel):
-    executable: str
+    executable: str = ""
     model: str = ""
     profile: str = ""
     reasoning_effort: str = ""
@@ -141,10 +141,12 @@ class ProviderConfig(StrictModel):
     base_url: str = "https://chatgpt.com/"
     allow_pdf_upload: bool = False
     model_preference: list[str] = Field(default_factory=list)
+    api_key_env: str = "PAPERFLOW_OPENAI_API_KEY"
+    max_output_tokens: int = Field(default=8192, ge=256, le=65536)
 
 
 class AIProfile(StrictModel):
-    provider: Literal["codex", "claude", "chatgpt-web", "mock"]
+    provider: Literal["codex", "claude", "chatgpt-web", "openai-api", "mock"]
     model: str = ""
     timeout_seconds: int = Field(default=1800, ge=1, le=14400)
     reasoning_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = ""
@@ -424,6 +426,14 @@ def default_workspace_dict() -> dict[str, Any]:
                     "timeout_seconds": 1800,
                     "extra_args": [],
                 },
+                "openai-api": {
+                    "executable": "",
+                    "model": "",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "PAPERFLOW_OPENAI_API_KEY",
+                    "max_output_tokens": 8192,
+                    "extra_args": [],
+                },
                 "mock": {
                     "executable": "mock",
                     "model": "deterministic-v1",
@@ -467,6 +477,15 @@ def default_workspace_dict() -> dict[str, Any]:
                 },
                 "fallback_analysis": {
                     "provider": "claude",
+                    "model": "",
+                    "timeout_seconds": 1800,
+                    "reasoning_effort": "",
+                    "fallback_profile": "",
+                    "reuse_feed_analysis": True,
+                    "reanalyze_when": "identity-changed",
+                },
+                "api_analysis": {
+                    "provider": "openai-api",
                     "model": "",
                     "timeout_seconds": 1800,
                     "reasoning_effort": "",

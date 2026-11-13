@@ -37,3 +37,45 @@ The real-provider acceptance test used the locally configured Xiaomi endpoint
 and explicit `mimo-v2.5` model to import and analyze π0 (`2410.24164`), FAST
 (`2501.09747`), and π0.5 (`2504.16054`). Every persisted analysis records
 `provider=claude`, `model=mimo-v2.5`, prompt version, source hash, and profile.
+
+## Optional direct API provider (no local Agent CLI)
+
+Select `openai-api` in an AI profile to use HTTPS Chat Completions directly
+(for compatible OpenAI/DeepSeek endpoints). The default CLI profiles remain
+unchanged for backwards compatibility. Configure a workspace provider:
+
+```yaml
+ai:
+  providers:
+    openai-api:
+      executable: ""
+      model: "YOUR_SUPPORTED_MODEL"
+      base_url: "https://api.openai.com/v1"
+      api_key_env: "PAPERFLOW_OPENAI_API_KEY"
+      max_output_tokens: 8192
+      extra_args: []
+  profiles:
+    full_analysis:
+      provider: "openai-api"
+      model: "YOUR_SUPPORTED_MODEL"
+```
+
+Set `PAPERFLOW_OPENAI_API_KEY` in the **process environment**; never put a
+literal token in a Vault YAML file, a plugin preference, or Git. For another
+provider, set its HTTPS Chat Completions base URL and choose a supported model.
+The same provider can be selected for the `triage` profile, removing the
+discovery screening dependency on Codex CLI as well.
+
+Requests follow no redirects, read an environment key, bound response size,
+and validate structured JSON against PaperFlow's schema before persistence.
+They currently send *text extracted from the PDF*, not page images; scanned
+figures and missing sections require a separate verification workflow.
+Prompt/metadata/text are transmitted to the configured API host: confirm data
+handling and pricing first. This is an **opt-in backend**, not yet a native
+Zotero/Obsidian API chat UI or a cloud scheduler. Native-client and live-key
+tests are required before declaring a CLI-free release complete.
+
+For standalone Zotero Core, put `analysis.provider: openai-api` and
+`analysis.providers.openai-api` with the same base_url/model/env settings in
+`config.yaml`. Core still runs locally in this mode; you no longer need an
+Agent CLI.

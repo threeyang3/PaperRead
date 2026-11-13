@@ -170,8 +170,9 @@ def _make_standalone_adapter(root: Path, policy: dict[str, Any], provider: str, 
     from paperflow.ai.chatgpt_web_adapter import ChatGPTWebAdapter
     from paperflow.ai.claude_adapter import ClaudeAdapter
     from paperflow.ai.codex_adapter import CodexAdapter
+    from paperflow.ai.openai_compatible_adapter import OpenAICompatibleAdapter
 
-    allowed = {"mock", "claude", "codex", "chatgpt-web"}
+    allowed = {"mock", "claude", "codex", "chatgpt-web", "openai-api"}
     if provider not in allowed:
         raise ValueError(f"unsupported standalone provider: {provider}")
     if provider == "mock":
@@ -181,6 +182,17 @@ def _make_standalone_adapter(root: Path, policy: dict[str, Any], provider: str, 
     extra_args = config.get("extra_args") or []
     if not isinstance(extra_args, list) or not all(isinstance(item, str) for item in extra_args):
         raise ValueError(f"analysis.providers.{provider}.extra_args must be a list of strings")
+    if provider == "openai-api":
+        if extra_args:
+            raise ValueError("openai-api does not support CLI extra_args")
+        return OpenAICompatibleAdapter(
+            root,
+            model=model,
+            base_url=str(config.get("base_url") or "https://api.openai.com/v1"),
+            api_key_env=str(config.get("api_key_env") or "PAPERFLOW_OPENAI_API_KEY"),
+            timeout=timeout,
+            max_tokens=int(config.get("max_output_tokens") or 8192),
+        )
     if provider == "claude":
         return ClaudeAdapter(
             root,

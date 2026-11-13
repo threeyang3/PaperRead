@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator
 from paperflow.models import PaperMetadata
 from paperflow.utils import atomic_write, iso_beijing
 from .codex_runtime import CODEX_ISOLATION_ARGS, isolated_codex_environment
+from .http_client import chat_json
 
 
 def _payload(papers: list[PaperMetadata]) -> list[dict]:
@@ -37,8 +38,42 @@ def screen_relevance(root: Path, papers: list[PaperMetadata], provider: str, mod
         return {}
     if provider == "mock":
         return mock_relevance(papers)
-    if provider != "codex":
+    if provider not in {"codex", "openai-api"}:
         raise ValueError(f"Unsupported relevance provider: {provider}")
+    if provider == "openai-api":
+        from paperflow.workspace import load_workspace_settings
+
+        _, settings = load_workspace_settings(root)
+        config = settings.ai.providers["openai-api"]
+        schema_path = root / ".paperflow/schemas/paper-relevance.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        template = (root / ".paperflow/prompts/paper-relevance-v1.md").read_text(encoding="utf-8")
+        screened: dict[str, dict] = {}
+        for start in range(0, len(papers), 20):
+            batch = papers[start:start + 20]
+            prompt = template + f"\n\nThreshold: {threshold}\n\nCANDIDATES:\n" + json.dumps(_payload(batch), ensure_ascii=False)
+            result = chat_json(
+                base_url=config.base_url,
+                api_key_env=config.api_key_env,
+                model=model or config.model,
+                system_prompt="Screen research relevance. Respond with the requested JSON schema.",
+                user_prompt=prompt,
+                timeout=timeout,
+                max_tokens=config.max_output_tokens,
+            )
+            Draft202012Validator(schema).validate(result)
+            expected = {paper.paper_uid for paper in batch}
+            values = result["results"]
+            actual = [item["paper_uid"] for item in values]
+            if set(actual) != expected or len(actual) != len(expected):
+                raise ValueError("Relevance output must contain exactly one result per candidate")
+            screened.update({
+                item["paper_uid"]: {
+                    "score": item["score"], "reason": item["reason"],
+                    "recommended": item["recommended"],
+                } for item in values
+            })
+        return screened
     executable = shutil.which("codex")
     if not executable:
         raise RuntimeError("Codex CLI not found for lightweight relevance screening")
