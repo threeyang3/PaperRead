@@ -54,7 +54,13 @@ def chat_json(
     key = os.environ.get(api_key_env, "")
     if not key:
         raise RuntimeError(f"API credential not configured: {api_key_env}")
-    if not model.strip():
+    if not isinstance(key, str) or "\r" in key or "\n" in key:
+        raise ValueError("Invalid API credential")
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 14400:
+        raise ValueError("Invalid API timeout")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or not 1 <= max_tokens <= 65536:
+        raise ValueError("Invalid API output budget")
+    if not isinstance(model, str) or not model.strip():
         raise ValueError("API provider requires an explicit model")
     url = api_endpoint(base_url)
     payload = json.dumps({
@@ -83,16 +89,20 @@ def chat_json(
     except urllib.error.HTTPError as exc:
         # Do not include provider response bodies: they may echo prompts/data.
         raise RuntimeError(f"API returned HTTP {exc.code}") from None
-    except urllib.error.URLError as exc:
-        raise RuntimeError("API network request failed") from exc
+    except (urllib.error.URLError, TimeoutError):
+        raise RuntimeError("API network request failed") from None
     envelope = json.loads(data.decode("utf-8"))
+    if not isinstance(envelope, dict):
+        raise ValueError("API response must be an object")
     choices = envelope.get("choices") or []
     if not isinstance(choices, list) or not choices:
         raise ValueError("API response has no choices")
     chosen = choices[0]
-    if chosen.get("finish_reason") not in ("stop", None):
+    if not isinstance(chosen, dict) or chosen.get("finish_reason") != "stop":
         raise ValueError("API response is incomplete or refused")
     message = chosen.get("message") or {}
+    if not isinstance(message, dict) or message.get("refusal"):
+        raise ValueError("API response is malformed or refused")
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("API returned empty structured content")

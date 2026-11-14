@@ -6,6 +6,7 @@ const observers = [];
 const annotationTimers = new Map();
 const projectionTimers = new Map();
 let menuItem = null;
+let researchMenuItem = null;
 let collectionMenuItem = null;
 let migrateMenuItem = null;
 let migrationSnapshotMenuItem = null;
@@ -923,9 +924,40 @@ function addMenuItem() {
   controlCenterMenuItem.setAttribute("label", "PaperFlow：打开控制中心");
   controlCenterMenuItem.addEventListener("command", openControlCenter);
   menu.appendChild(controlCenterMenuItem);
+  researchMenuItem = win.document.createXULElement
+    ? win.document.createXULElement("menuitem") : win.document.createElement("menuitem");
+  researchMenuItem.id = "paperflow-zotero-research-memory";
+  researchMenuItem.setAttribute("label", "PaperFlow：研究记忆（无需 Core）");
+  researchMenuItem.addEventListener("command", openResearchMemory);
+  menu.appendChild(researchMenuItem);
+}
+
+async function openResearchMemory() {
+  try {
+    if (!services?.scriptloader) throw new Error("Zotero script loader unavailable");
+    if (!globalThis.PaperFlowOpenResearch) {
+      for (const name of ["model", "storage", "client", "panel"]) {
+        services.scriptloader.loadSubScript(pluginScriptURI(`research-memory/${name}.js`), globalThis);
+      }
+      services.scriptloader.loadSubScript(pluginScriptURI("src/research-memory.js"), globalThis);
+    }
+    const Api = loadZoteroApi();
+    const api = Api ? new Api(Zotero) : null;
+    let item = api?.selectedItems()[0];
+    // Attachment/annotation selection resolves only its own ancestry.
+    for (let depth = 0; item?.parentID && depth < 3; depth++) item = await api.getItemById(item.parentID);
+    await globalThis.PaperFlowOpenResearch({
+      paper_uid: item && api ? api.paperUid(item) : "",
+      title: item?.getField?.("title") || "",
+      notify,
+      confirm: text => confirmAction("PaperFlow 研究记忆", text),
+    });
+  } catch (error) { notify(`研究记忆打开失败：${error.message}`); }
 }
 
 function removeMenuItem() {
+  if (researchMenuItem?.parentNode) researchMenuItem.parentNode.removeChild(researchMenuItem);
+  researchMenuItem = null;
   if (menuItem && menuItem.parentNode) menuItem.parentNode.removeChild(menuItem);
   if (collectionMenuItem && collectionMenuItem.parentNode) collectionMenuItem.parentNode.removeChild(collectionMenuItem);
   if (migrateMenuItem && migrateMenuItem.parentNode) migrateMenuItem.parentNode.removeChild(migrateMenuItem);
@@ -1011,6 +1043,7 @@ function startup(data = {}) {
 }
 
 function shutdown() {
+  globalThis.PaperFlowResearchClose?.();
   for (const timer of annotationTimers.values()) clearTimeout(timer);
   annotationTimers.clear();
   for (const timer of projectionTimers.values()) clearTimeout(timer);

@@ -96,6 +96,9 @@ def audit_archive(path: Path, *, template_vault: bool = False) -> None:
 
 
 def main() -> None:
+    from sync_research_assets import sync
+
+    sync(check=True)
     licence_files = [
         path
         for path in [ROOT / "LICENSE", ROOT / "LICENSE.md", ROOT / "LICENSE-TODO.md"]
@@ -225,7 +228,10 @@ def main() -> None:
     obsidian_plugin = DIST / f"PaperFlow-Obsidian-{VERSION}.zip"
     zip_tree(obsidian_plugin, obsidian_source, "paperflow-automation")
     audit_archive(obsidian_plugin)
-    for name in ["main.js", "manifest.json", "styles.css"]:
+    from bundle_research import bundle_main
+
+    (DIST / "main.js").write_text(bundle_main(), encoding="utf-8")
+    for name in ["manifest.json", "styles.css"]:
         shutil.copy2(obsidian_source / name, DIST / name)
 
     zip_tree(DIST / f"schemas-{VERSION}.zip", ROOT / "schemas", "schemas")
