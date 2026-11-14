@@ -816,10 +816,16 @@ def _install_automation_plugin(
         "manifest.json",
         "styles.css",
         "scheduler-core.js",
+        "research.js",
+        "research-memory/model.js",
+        "research-memory/storage.js",
+        "research-memory/client.js",
+        "research-memory/panel.js",
         "README.md",
     ]:
         source = bundle / name
         target = target_root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
         source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
         if not target.exists():
             shutil.copy2(source, target)

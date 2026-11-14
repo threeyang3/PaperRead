@@ -1,6 +1,7 @@
 """Schema-validated analysis through a configured HTTPS model API."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from paperflow.models import Analysis, PaperMetadata
@@ -27,11 +28,14 @@ class OpenAICompatibleAdapter:
         self.max_tokens = max_tokens
 
     def analyze(self, metadata: PaperMetadata, text_path: Path) -> Analysis:
+        schema_file = schema_path(self.root)
+        schema = json.loads(schema_file.read_text(encoding="utf-8"))
         value = chat_json(
             base_url=self.base_url,
             api_key_env=self.api_key_env,
             model=self.model,
-            system_prompt=prompt_path(self.root).read_text(encoding="utf-8"),
+            system_prompt=(prompt_path(self.root).read_text(encoding="utf-8")
+                + "\n\nOUTPUT JSON SCHEMA:\n" + json.dumps(schema, ensure_ascii=False)),
             user_prompt=(
                 "METADATA:\n" + metadata.model_dump_json(indent=2)
                 + "\n\nPAPER TEXT:\n"
@@ -42,4 +46,4 @@ class OpenAICompatibleAdapter:
             max_tokens=self.max_tokens,
         )
         validate_text_quality(value, label="api-analysis")
-        return validate_analysis(value, schema_path(self.root))
+        return validate_analysis(value, schema_file)

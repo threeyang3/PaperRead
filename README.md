@@ -250,3 +250,7 @@ documents are:
 
 Old-version guides and completed design audits are kept under
 [`docs/archive`](docs/archive/README.md) for historical reference only.
+
+## Research Memory preview
+
+新增无需 Agent CLI/Core 的研究记忆入口：会话与选定材料留档、浏览器 JSON 文件回传、API 生成候选结论、人工采纳及安全导出。**不是自动浏览器抓取，也没有启用云端发布。**使用方法、存储位置、验证边界见 [研究记忆说明](docs/research-memory.md)。原始会话默认为本地私有数据。

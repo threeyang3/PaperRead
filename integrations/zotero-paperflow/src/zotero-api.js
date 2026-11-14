@@ -100,6 +100,15 @@ class PaperFlowZoteroApi {
     return "";
   }
 
+  arxivVersion(item) {
+    const values = [this._field(item, "url"), this._field(item, "extra"), this._field(item, "archiveLocation")];
+    for (const value of values) {
+      const match = value.match(/(?:arxiv(?:\.org)?\/(?:abs|pdf)\/|arXiv:)\s*[0-9]{4}\.[0-9]{4,5}v([1-9][0-9]*)(?:\.pdf)?(?:[\s?#]|$)/i);
+      if (match && Number.isSafeInteger(Number(match[1]))) return Number(match[1]);
+    }
+    return 1; // Existing importer contract; unversioned URLs remain version-unknown to Research Memory.
+  }
+
   _attachmentKeys(item) {
     if (!item || typeof item.getAttachments !== "function") return [];
     try {
@@ -161,7 +170,7 @@ class PaperFlowZoteroApi {
       paper_uid: paperUid,
       paper_source: arxivMatch ? "arxiv" : "doi",
       paper_arxiv_id: arxivMatch ? arxivMatch[1].replace(/v\d+$/i, "") : "",
-      paper_arxiv_version: 1,
+      paper_arxiv_version: this.arxivVersion(paper),
       paper_doi: doi,
       paper_title: title,
       paper_authors: authors,

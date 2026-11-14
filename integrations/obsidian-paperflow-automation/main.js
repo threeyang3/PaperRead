@@ -1095,6 +1095,14 @@ function mergedSettings(value) {
 class PaperFlowAutomationPlugin extends Plugin {
   async onload() {
     this.settings = mergedSettings(await this.loadData());
+    this.addCommand({
+      id: "open-research-memory",
+      name: "研究记忆：对话、证据与结论（无需 Core）",
+      callback: async () => {
+        try { await require("./research.js").open(this); }
+        catch (error) { new Notice(`研究记忆打开失败：${error.message}`, 12000); }
+      }
+    });
     await this.loadRuntimeState();
     await this.loadWorkspaceTimezone();
     this.lastStaticSettings = this.staticSettingsJson();
@@ -1215,6 +1223,8 @@ class PaperFlowAutomationPlugin extends Plugin {
   }
 
   onunload() {
+    this.researchModal?.close();
+    this.researchModal = null;
     this.unloading = true;
     this.started = false;
     this.propertyLabelStyle?.remove();
